@@ -69,3 +69,7 @@ async def discovery_detail_page(request: Request, report_id: int):
 @router.get("/portfolio", response_class=HTMLResponse)
 async def portfolio_page(request: Request):
     return templates.TemplateResponse("portfolio/index.html", {"request": request})
+
+@router.get("/performance", response_class=HTMLResponse)
+async def performance_page(request: Request):
+    return templates.TemplateResponse("performance/index.html", {"request": request})

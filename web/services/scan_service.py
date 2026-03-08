@@ -1,7 +1,12 @@
 """Daily scan wrapper service."""
 import logging
-from datetime import date
+from datetime import datetime, timedelta, timezone
 from web.db.connection import get_db
+
+KST = timezone(timedelta(hours=9))
+
+def _today_kst() -> str:
+    return datetime.now(KST).strftime("%Y-%m-%d")
 from web.services.signal_service import SignalService
 
 logger = logging.getLogger("money_mani.web.services.scan")
@@ -29,7 +34,7 @@ class ScanService:
 
         return {
             "scan_id": scan_id,
-            "date": result.get("date", str(date.today())),
+            "date": result.get("date", _today_kst()),
             "signals_count": len(signals),
             "skipped": result.get("skipped", False),
         }
@@ -40,7 +45,7 @@ class ScanService:
                 """INSERT INTO scan_history (scan_date, signals_count, markets_open)
                    VALUES (?, ?, ?)""",
                 (
-                    result.get("date", str(date.today())),
+                    result.get("date", _today_kst()),
                     len(result.get("signals", [])),
                     "KRX,US" if not result.get("skipped") else "",
                 ),

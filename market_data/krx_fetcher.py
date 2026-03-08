@@ -2,7 +2,9 @@
 
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 import pandas as pd
 from pykrx import stock as krx
@@ -30,7 +32,7 @@ class KRXFetcher:
             DataFrame with columns: Open, High, Low, Close, Volume
         """
         start_fmt = start.replace("-", "")
-        end_fmt = (end or datetime.now().strftime("%Y%m%d")).replace("-", "")
+        end_fmt = (end or datetime.now(KST).strftime("%Y%m%d")).replace("-", "")
         logger.info(f"Fetching KRX OHLCV: {ticker} ({start_fmt}~{end_fmt})")
         df = krx.get_market_ohlcv(start_fmt, end_fmt, ticker)
         self._wait()
@@ -44,7 +46,7 @@ class KRXFetcher:
     def get_fundamentals(self, ticker: str, start: str, end: str = None) -> pd.DataFrame:
         """Get fundamental data (PER, PBR, EPS, BPS, DIV)."""
         start_fmt = start.replace("-", "")
-        end_fmt = (end or datetime.now().strftime("%Y%m%d")).replace("-", "")
+        end_fmt = (end or datetime.now(KST).strftime("%Y%m%d")).replace("-", "")
         logger.info(f"Fetching KRX fundamentals: {ticker}")
         df = krx.get_market_fundamental(start_fmt, end_fmt, ticker)
         self._wait()
@@ -53,7 +55,7 @@ class KRXFetcher:
     def get_investor_flows(self, ticker: str, start: str, end: str = None) -> pd.DataFrame:
         """Get investor trading data (institutional, foreign, individual)."""
         start_fmt = start.replace("-", "")
-        end_fmt = (end or datetime.now().strftime("%Y%m%d")).replace("-", "")
+        end_fmt = (end or datetime.now(KST).strftime("%Y%m%d")).replace("-", "")
         logger.info(f"Fetching KRX investor flows: {ticker}")
         df = krx.get_market_trading_value_by_date(start_fmt, end_fmt, ticker)
         self._wait()
@@ -61,17 +63,17 @@ class KRXFetcher:
 
     def get_top_tickers(self, market: str = "KOSPI", n: int = 30) -> list[str]:
         """Get top N tickers by market cap."""
-        today = datetime.now().strftime("%Y%m%d")
+        today = datetime.now(KST).strftime("%Y%m%d")
         logger.info(f"Fetching top {n} {market} tickers")
         df = krx.get_market_cap(today, market=market)
         self._wait()
         if df.empty:
-            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+            yesterday = (datetime.now(KST) - timedelta(days=1)).strftime("%Y%m%d")
             df = krx.get_market_cap(yesterday, market=market)
             self._wait()
         return df.head(n).index.tolist()
 
     def get_ticker_name(self, ticker: str) -> str:
         """Get company name for a ticker."""
-        today = datetime.now().strftime("%Y%m%d")
+        today = datetime.now(KST).strftime("%Y%m%d")
         return krx.get_market_ticker_name(ticker)

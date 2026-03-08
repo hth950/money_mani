@@ -1,7 +1,8 @@
 """Daily morning scan: run validated strategies on latest data and alert."""
 
+import gc
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 
 from market_data import KRXFetcher, USFetcher
 from market_data.calendar import KRXCalendar, NYSECalendar
@@ -10,8 +11,22 @@ from backtester.signals import SignalGenerator
 from alerts.discord_webhook import DiscordNotifier
 from alerts.email_sender import EmailSender
 from utils.config_loader import load_config
+from web.db.connection import get_db
+from web.services.signal_service import SignalService
+from web.services.performance_service import PerformanceService
+
+KST = timezone(timedelta(hours=9))
 
 logger = logging.getLogger("money_mani.pipeline.daily_scan")
+
+TOP_N_STRATEGIES = 3
+
+
+_sent_signals_today: dict[str, set] = {}  # date_str -> set of "strategy|ticker|signal_type"
+
+
+def _signal_key(sig: dict) -> str:
+    return f"{sig['strategy_name']}|{sig['ticker']}|{sig['signal_type']}"
 
 
 class DailyScan:
@@ -24,10 +39,39 @@ class DailyScan:
         self.nyse_cal = NYSECalendar()
         self.discord = DiscordNotifier()
         self.email = EmailSender(self.config.get("notifications", {}).get("email", {}))
+        self.signal_service = SignalService()
+        self.perf_service = PerformanceService()
+
+    def _get_top_strategies(self) -> list:
+        """Get top N strategies ranked by avg(sharpe + win_rate + return)."""
+        with get_db() as db:
+            rows = db.execute("""
+                SELECT strategy_name,
+                       AVG(total_return) as avg_return,
+                       AVG(sharpe_ratio) as avg_sharpe,
+                       AVG(win_rate) as avg_win_rate
+                FROM backtest_results
+                WHERE is_valid = 1
+                GROUP BY strategy_name
+                ORDER BY (AVG(sharpe_ratio) + AVG(win_rate) + AVG(total_return) / 100) DESC
+                LIMIT ?
+            """, (TOP_N_STRATEGIES,)).fetchall()
+
+        top_names = [row["strategy_name"] for row in rows]
+        if top_names:
+            logger.info(f"Top {len(top_names)} strategies: {top_names}")
+
+        strategies = []
+        for name in top_names:
+            try:
+                strategies.append(self.registry.load(name))
+            except Exception:
+                logger.warning(f"Could not load strategy: {name}")
+        return strategies
 
     def run(self) -> dict:
         """Execute daily scan."""
-        today = date.today()
+        today = datetime.now(KST).date()
         is_krx_day = self.krx_cal.is_trading_day(today)
         is_nyse_day = self.nyse_cal.is_trading_day(today)
 
@@ -35,7 +79,10 @@ class DailyScan:
             logger.info(f"{today}: No markets open today. Skipping scan.")
             return {"date": str(today), "signals": [], "skipped": True}
 
-        strategies = self.registry.get_validated()
+        # Use top 3 strategies from backtest results, fallback to all validated
+        strategies = self._get_top_strategies()
+        if not strategies:
+            strategies = self.registry.get_validated()
         if not strategies:
             logger.warning("No validated strategies found.")
             return {"date": str(today), "signals": [], "skipped": False}
@@ -114,27 +161,57 @@ class DailyScan:
                         logger.info(f"Signal: {signal_type} {ticker} ({strat.name})")
                 except Exception as e:
                     logger.error(f"Scan error {strat.name}/{ticker}: {e}")
+            gc.collect()
 
         return signals
 
     def _send_alerts(self, signals, date_str):
-        """Send alerts via Discord and email."""
-        # Individual signal alerts
+        """Send alerts via Discord and email, skipping duplicates."""
+        global _sent_signals_today
+
+        # Initialize today's set if needed
+        if date_str not in _sent_signals_today:
+            _sent_signals_today.clear()  # Clear old dates
+            _sent_signals_today[date_str] = set()
+
+        # Filter out already-sent signals
+        new_signals = []
         for sig in signals:
+            key = _signal_key(sig)
+            if key not in _sent_signals_today[date_str]:
+                _sent_signals_today[date_str].add(key)
+                new_signals.append(sig)
+            else:
+                logger.info(f"Skipping duplicate signal: {key}")
+
+        if not new_signals:
+            logger.info(f"{date_str}: All signals already sent. Skipping alerts.")
+            return
+
+        # Save signals to DB and track performance
+        for sig in new_signals:
+            try:
+                sig_id = self.signal_service.save_signal(sig)
+                self.perf_service.record_signal(sig, signal_id=sig_id)
+            except Exception as e:
+                logger.error(f"Failed to save signal to DB: {e}")
+
+        # Individual signal alerts
+        for sig in new_signals:
             self.discord.send_signal_alert(sig)
 
-        # Daily summary
-        self.discord.send_daily_summary(signals, date_str)
+        # Daily summary (only new signals)
+        self.discord.send_daily_summary(new_signals, date_str)
 
         # Email backup
         if self.config.get("notifications", {}).get("email", {}).get("enabled"):
             summary = "\n".join(
                 f"- {s['signal_type']} {s['ticker_name']}({s['ticker']}) @ {s['price']:,.0f} [{s['strategy_name']}]"
-                for s in signals
+                for s in new_signals
             )
             self.email.send(
-                subject=f"[money_mani] {date_str} 매매 시그널 ({len(signals)}건)",
+                subject=f"[money_mani] {date_str} 매매 시그널 ({len(new_signals)}건)",
                 body=f"일일 스캔 결과:\n\n{summary}",
             )
 
-        logger.info(f"Sent {len(signals)} signal alerts")
+        logger.info(f"Sent {len(new_signals)} new signal alerts (skipped {len(signals) - len(new_signals)} duplicates)")

@@ -259,3 +259,94 @@ class AlertFormatter:
             "fields": fields,
             "footer": {"text": "Money Mani 전략 탐색 시스템"},
         }
+
+    @staticmethod
+    def format_performance_report(summary: dict, report_type: str = "daily") -> dict:
+        """Format a performance report as a Discord embed.
+
+        Args:
+            summary: Performance summary dict from PerformanceService.
+            report_type: 'daily' or 'weekly'.
+
+        Returns:
+            Discord embed dict.
+        """
+        period = summary.get("period", "")
+        total = summary.get("total_signals", 0)
+        avg_pnl = summary.get("avg_pnl_pct", 0)
+        total_pnl = summary.get("total_pnl_pct", 0)
+        win_rate = summary.get("win_rate", 0)
+
+        if total_pnl > 0:
+            color = AlertFormatter.COLOR_BUY
+        elif total_pnl < 0:
+            color = AlertFormatter.COLOR_SELL
+        else:
+            color = AlertFormatter.COLOR_INFO
+
+        pnl_sign = "+" if total_pnl >= 0 else ""
+        avg_sign = "+" if avg_pnl >= 0 else ""
+        type_label = "일일" if report_type == "daily" else "주간"
+
+        fields = [
+            {"name": "기간", "value": period, "inline": True},
+            {"name": "총 시그널", "value": f"{total}건", "inline": True},
+            {"name": "승률", "value": f"{win_rate:.1f}%", "inline": True},
+            {"name": "총 수익률", "value": f"{pnl_sign}{total_pnl:.2f}%", "inline": True},
+            {"name": "평균 수익률", "value": f"{avg_sign}{avg_pnl:.2f}%", "inline": True},
+            {
+                "name": "매수/매도",
+                "value": f"{summary.get('buy_signals', 0)}건 / {summary.get('sell_signals', 0)}건",
+                "inline": True,
+            },
+            {
+                "name": "승/패",
+                "value": f"{summary.get('win_count', 0)}승 {summary.get('lose_count', 0)}패",
+                "inline": True,
+            },
+        ]
+
+        best = summary.get("best")
+        if best:
+            b_sign = "+" if best["pnl_pct"] >= 0 else ""
+            fields.append({
+                "name": "최고 수익",
+                "value": f"{best.get('ticker_name', best['ticker'])} ({best['signal_type']}) {b_sign}{best['pnl_pct']:.2f}%",
+                "inline": True,
+            })
+
+        worst = summary.get("worst")
+        if worst:
+            w_sign = "+" if worst["pnl_pct"] >= 0 else ""
+            fields.append({
+                "name": "최저 수익",
+                "value": f"{worst.get('ticker_name', worst['ticker'])} ({worst['signal_type']}) {w_sign}{worst['pnl_pct']:.2f}%",
+                "inline": True,
+            })
+
+        # Signal details list
+        records = summary.get("records", [])
+        if records:
+            lines = []
+            for r in records[:10]:
+                emoji = "🟢" if (r.get("pnl_pct") or 0) >= 0 else "🔴"
+                name = r.get("ticker_name") or r.get("ticker", "?")
+                r_sign = "+" if (r.get("pnl_pct") or 0) >= 0 else ""
+                sig_type = "매수" if r.get("signal_type") == "BUY" else "매도"
+                lines.append(
+                    f"{emoji} {name} [{sig_type}] "
+                    f"{r.get('signal_price', 0):,.0f} → {r.get('close_price', 0):,.0f} "
+                    f"({r_sign}{r.get('pnl_pct', 0):.2f}%)"
+                )
+            fields.append({
+                "name": "시그널 상세",
+                "value": "\n".join(lines),
+                "inline": False,
+            })
+
+        return {
+            "title": f"📈 {type_label} 시그널 성과 리포트 ({period})",
+            "color": color,
+            "fields": fields,
+            "footer": {"text": "Money Mani 성과 추적 시스템"},
+        }

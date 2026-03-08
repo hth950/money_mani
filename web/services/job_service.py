@@ -7,6 +7,9 @@ from web.db.connection import get_db
 
 logger = logging.getLogger("money_mani.web.services.job")
 
+# Max 1 concurrent background job (low-memory server)
+_job_semaphore = asyncio.Semaphore(1)
+
 
 class JobService:
     """Track and execute background jobs."""
@@ -58,13 +61,15 @@ class JobService:
         job_id = self.create_job(job_name)
 
         async def _run():
-            try:
-                result = await asyncio.to_thread(func, *args, **kwargs)
-                summary = str(result)[:500] if result else "Completed"
-                self.complete_job(job_id, summary)
-            except Exception as e:
-                logger.error(f"Job {job_name} (#{job_id}) failed: {e}")
-                self.fail_job(job_id, f"{type(e).__name__}: {str(e)}")
+            async with _job_semaphore:
+                try:
+                    logger.info(f"Job {job_name} (#{job_id}) started (waiting jobs queued)")
+                    result = await asyncio.to_thread(func, *args, **kwargs)
+                    summary = str(result)[:500] if result else "Completed"
+                    self.complete_job(job_id, summary)
+                except Exception as e:
+                    logger.error(f"Job {job_name} (#{job_id}) failed: {e}")
+                    self.fail_job(job_id, f"{type(e).__name__}: {str(e)}")
 
         asyncio.create_task(_run())
         return job_id

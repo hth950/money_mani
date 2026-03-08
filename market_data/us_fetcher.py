@@ -1,7 +1,9 @@
 """US stock data fetcher using yfinance."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 import pandas as pd
 import yfinance as yf
@@ -22,7 +24,7 @@ class USFetcher:
         Returns:
             DataFrame with columns: Open, High, Low, Close, Volume
         """
-        end = end or datetime.now().strftime("%Y-%m-%d")
+        end = end or datetime.now(KST).strftime("%Y-%m-%d")
         logger.info(f"Fetching US OHLCV: {ticker} ({start}~{end})")
         stock = yf.Ticker(ticker)
         df = stock.history(start=start, end=end)

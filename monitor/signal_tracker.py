@@ -2,7 +2,9 @@
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 logger = logging.getLogger("money_mani.monitor.signal_tracker")
 
@@ -49,12 +51,12 @@ class SignalTracker:
 
         # Check cooldown
         last = self._last_alert.get(key)
-        if last and (datetime.now() - last) < self._cooldown:
+        if last and (datetime.now(KST) - last) < self._cooldown:
             logger.debug(f"Cooldown active for {key}, suppressing alert")
             return None
 
         # Transition detected
-        self._last_alert[key] = datetime.now()
+        self._last_alert[key] = datetime.now(KST)
         logger.info(f"Signal transition: {ticker}/{strategy_name} {prev} -> {signal}")
         return SignalEvent(
             ticker=ticker,

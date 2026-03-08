@@ -98,3 +98,47 @@ CREATE TABLE IF NOT EXISTS job_runs (
     started_at TEXT DEFAULT (datetime('now')),
     finished_at TEXT
 );
+
+-- Signal performance tracking: records every signal + closing price + P&L
+CREATE TABLE IF NOT EXISTS signal_performance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id INTEGER REFERENCES signals(id) ON DELETE SET NULL,
+    strategy_name TEXT,
+    ticker TEXT,
+    ticker_name TEXT,
+    market TEXT,
+    signal_type TEXT CHECK(signal_type IN ('BUY', 'SELL')),
+    signal_price REAL,
+    close_price REAL,
+    pnl_amount REAL,
+    pnl_pct REAL,
+    signal_date TEXT,
+    evaluated_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sigperf_date ON signal_performance (signal_date);
+CREATE INDEX IF NOT EXISTS idx_sigperf_ticker ON signal_performance (ticker);
+CREATE INDEX IF NOT EXISTS idx_sigperf_strategy ON signal_performance (strategy_name);
+
+-- Daily/weekly performance reports
+CREATE TABLE IF NOT EXISTS performance_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_date TEXT,
+    report_type TEXT CHECK(report_type IN ('daily', 'weekly')),
+    total_signals INTEGER,
+    buy_signals INTEGER,
+    sell_signals INTEGER,
+    avg_pnl_pct REAL,
+    total_pnl_pct REAL,
+    best_pnl_pct REAL,
+    worst_pnl_pct REAL,
+    win_count INTEGER,
+    lose_count INTEGER,
+    win_rate REAL,
+    details_json TEXT,
+    discord_sent INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_perfreport_date ON performance_reports (report_date, report_type);

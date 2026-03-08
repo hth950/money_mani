@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}성과 추적 - Money Mani{% endblock %}
+{% block content %}
+<h2>시그널 성과 추적</h2>
+<p>매수/매도 시그널 발생 후 종가 기준 손익을 추적합니다.</p>
+
+<!-- Period selector -->
+<div style="display:flex;gap:1rem;align-items:center;margin-bottom:1rem;">
+    <button class="outline" onclick="loadDaily()">오늘</button>
+    <button class="outline" onclick="loadWeekly()">주간</button>
+    <label>날짜 선택:
+        <input type="date" id="dateInput" onchange="loadDaily(this.value)" style="width:auto;">
+    </label>
+</div>
+
+<!-- Summary cards -->
+<div id="summaryCards" class="grid" style="margin-bottom:2rem;">
+    <article>
+        <header>총 시그널</header>
+        <p id="totalSignals" style="font-size:2rem;text-align:center;">-</p>
+    </article>
+    <article>
+        <header>총 수익률</header>
+        <p id="totalPnl" style="font-size:2rem;text-align:center;">-</p>
+    </article>
+    <article>
+        <header>승률</header>
+        <p id="winRate" style="font-size:2rem;text-align:center;">-</p>
+    </article>
+    <article>
+        <header>승 / 패</header>
+        <p id="winLose" style="font-size:2rem;text-align:center;">-</p>
+    </article>
+</div>
+
+<!-- Best / Worst -->
+<div class="grid" style="margin-bottom:2rem;">
+    <article>
+        <header>최고 수익 시그널</header>
+        <p id="bestSignal" style="text-align:center;">-</p>
+    </article>
+    <article>
+        <header>최저 수익 시그널</header>
+        <p id="worstSignal" style="text-align:center;">-</p>
+    </article>
+</div>
+
+<!-- Records table -->
+<h3>시그널 상세 기록</h3>
+<figure>
+<table role="grid">
+    <thead>
+        <tr>
+            <th>날짜</th>
+            <th>종목</th>
+            <th>전략</th>
+            <th>신호</th>
+            <th>시그널가</th>
+            <th>종가</th>
+            <th>손익(%)</th>
+        </tr>
+    </thead>
+    <tbody id="recordsBody">
+        <tr><td colspan="7" style="text-align:center;">데이터를 불러오는 중...</td></tr>
+    </tbody>
+</table>
+</figure>
+
+<!-- Report history -->
+<h3>리포트 이력</h3>
+<figure>
+<table role="grid">
+    <thead>
+        <tr>
+            <th>날짜</th>
+            <th>유형</th>
+            <th>시그널 수</th>
+            <th>총 수익률</th>
+            <th>승률</th>
+            <th>Discord</th>
+        </tr>
+    </thead>
+    <tbody id="reportsBody">
+        <tr><td colspan="6" style="text-align:center;">데이터를 불러오는 중...</td></tr>
+    </tbody>
+</table>
+</figure>
+
+<script>
+function fmt(v, digits=2) {
+    if (v === null || v === undefined) return '-';
+    const n = Number(v);
+    const sign = n >= 0 ? '+' : '';
+    return sign + n.toFixed(digits) + '%';
+}
+
+function fmtPrice(v) {
+    if (!v) return '-';
+    return Number(v).toLocaleString('ko-KR', {maximumFractionDigits: 0});
+}
+
+function colorClass(v) {
+    if (v > 0) return 'color:#00B050;font-weight:bold;';
+    if (v < 0) return 'color:#FF0000;font-weight:bold;';
+    return '';
+}
+
+function updateSummary(data) {
+    document.getElementById('totalSignals').textContent = (data.total_signals || 0) + '건';
+    const pnl = data.total_pnl_pct || 0;
+    const el = document.getElementById('totalPnl');
+    el.textContent = fmt(pnl);
+    el.style.cssText = colorClass(pnl);
+    el.style.fontSize = '2rem';
+    el.style.textAlign = 'center';
+    document.getElementById('winRate').textContent = (data.win_rate || 0).toFixed(1) + '%';
+    document.getElementById('winLose').textContent =
+        (data.win_count || 0) + '승 ' + (data.lose_count || 0) + '패';
+
+    const best = data.best;
+    if (best) {
+        const bName = best.ticker_name || best.ticker;
+        document.getElementById('bestSignal').innerHTML =
+            `<span style="${colorClass(best.pnl_pct)}">${bName} (${best.signal_type}) ${fmt(best.pnl_pct)}</span>`;
+    } else {
+        document.getElementById('bestSignal').textContent = '-';
+    }
+
+    const worst = data.worst;
+    if (worst) {
+        const wName = worst.ticker_name || worst.ticker;
+        document.getElementById('worstSignal').innerHTML =
+            `<span style="${colorClass(worst.pnl_pct)}">${wName} (${worst.signal_type}) ${fmt(worst.pnl_pct)}</span>`;
+    } else {
+        document.getElementById('worstSignal').textContent = '-';
+    }
+}
+
+function renderRecords(records) {
+    const tbody = document.getElementById('recordsBody');
+    if (!records || records.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">기록이 없습니다.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = records.map(r => {
+        const pnl = r.pnl_pct;
+        const sigEmoji = r.signal_type === 'BUY' ? '🟢 매수' : '🔴 매도';
+        return `<tr>
+            <td>${r.signal_date || '-'}</td>
+            <td>${r.ticker_name || r.ticker}</td>
+            <td>${r.strategy_name || '-'}</td>
+            <td>${sigEmoji}</td>
+            <td>${fmtPrice(r.signal_price)}</td>
+            <td>${fmtPrice(r.close_price)}</td>
+            <td style="${colorClass(pnl)}">${fmt(pnl)}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function loadDaily(date) {
+    const url = date ? `/api/performance/daily?date=${date}` : '/api/performance/daily';
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        updateSummary(data);
+        renderRecords(data.records || []);
+    } catch(e) {
+        console.error('Failed to load daily performance:', e);
+    }
+}
+
+async function loadWeekly() {
+    try {
+        const res = await fetch('/api/performance/weekly');
+        const data = await res.json();
+        updateSummary(data);
+        renderRecords(data.records || []);
+    } catch(e) {
+        console.error('Failed to load weekly performance:', e);
+    }
+}
+
+async function loadReports() {
+    try {
+        const res = await fetch('/api/performance/reports');
+        const data = await res.json();
+        const tbody = document.getElementById('reportsBody');
+        const reports = data.reports || [];
+        if (reports.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">리포트가 없습니다.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = reports.map(r => {
+            const pnl = r.total_pnl_pct || 0;
+            const typeLabel = r.report_type === 'daily' ? '일일' : '주간';
+            const sent = r.discord_sent ? '✅' : '❌';
+            return `<tr>
+                <td>${r.report_date || '-'}</td>
+                <td>${typeLabel}</td>
+                <td>${r.total_signals || 0}건</td>
+                <td style="${colorClass(pnl)}">${fmt(pnl)}</td>
+                <td>${(r.win_rate || 0).toFixed(1)}%</td>
+                <td>${sent}</td>
+            </tr>`;
+        }).join('');
+    } catch(e) {
+        console.error('Failed to load reports:', e);
+    }
+}
+
+// Initial load
+loadDaily();
+loadReports();
+</script>
+{% endblock %}

@@ -1,7 +1,9 @@
 """Trading calendar for KRX and NYSE."""
 
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 logger = logging.getLogger("money_mani.market_data.calendar")
 
@@ -43,7 +45,7 @@ class KRXCalendar:
     """Korean Exchange trading calendar."""
 
     def is_trading_day(self, d: date = None) -> bool:
-        d = d or date.today()
+        d = d or datetime.now(KST).date()
         if d.weekday() >= 5:
             return False
         if d in KRX_HOLIDAYS_2026:
@@ -51,14 +53,14 @@ class KRXCalendar:
         return True
 
     def next_trading_day(self, d: date = None) -> date:
-        d = d or date.today()
+        d = d or datetime.now(KST).date()
         d = d + timedelta(days=1)
         while not self.is_trading_day(d):
             d += timedelta(days=1)
         return d
 
     def last_n_trading_days(self, n: int, from_date: date = None) -> list[date]:
-        d = from_date or date.today()
+        d = from_date or datetime.now(KST).date()
         days = []
         while len(days) < n:
             if self.is_trading_day(d):
@@ -68,7 +70,7 @@ class KRXCalendar:
 
     def is_market_open(self) -> bool:
         """Check if KRX is currently open (09:00-15:30 KST)."""
-        now = datetime.now()
+        now = datetime.now(KST)
         if not self.is_trading_day(now.date()):
             return False
         market_open = now.replace(hour=9, minute=0, second=0)
@@ -80,7 +82,7 @@ class NYSECalendar:
     """NYSE trading calendar."""
 
     def is_trading_day(self, d: date = None) -> bool:
-        d = d or date.today()
+        d = d or datetime.now(KST).date()
         if d.weekday() >= 5:
             return False
         if d in NYSE_HOLIDAYS_2026:
