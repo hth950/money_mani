@@ -73,13 +73,12 @@ class NightlyOrchestrator:
         return None
 
     def _run_knowledge_tasks(self):
-        """Placeholder for Phase 4 knowledge generation."""
+        """Generate knowledge insights and update MEMORY.md."""
         try:
             from web.services.knowledge_service import KnowledgeService
             ks = KnowledgeService()
             ks.generate_strategy_insights()
             ks.update_memory_md()
-        except ImportError:
-            pass  # Phase 4 not yet implemented
+            ks.invalidate_old_entries()
         except Exception as e:
             logger.error(f"Knowledge tasks failed: {e}")

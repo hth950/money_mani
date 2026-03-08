@@ -96,14 +96,15 @@ class KnowledgeService:
         """Auto-generate insights from strategy_stats and closed positions."""
         with get_db() as db:
             if strategy_name:
-                stats = db.execute(
+                rows = db.execute(
                     "SELECT * FROM strategy_stats WHERE strategy_name = ? AND period = '30d'",
                     (strategy_name,),
                 ).fetchall()
             else:
-                stats = db.execute(
+                rows = db.execute(
                     "SELECT * FROM strategy_stats WHERE period = '30d' AND total_trades >= 3"
                 ).fetchall()
+            stats = [dict(r) for r in rows]
 
         for row in stats:
             name = row["strategy_name"]
