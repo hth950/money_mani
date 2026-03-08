@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}백테스트 - Money Mani{% endblock %}
+{% block content %}
+<h1>백테스트</h1>
+
+<article>
+    <header>백테스트 실행</header>
+    <form id="backtest-form">
+        <div class="grid">
+            <label>
+                전략 선택 *
+                <select name="strategy_id" id="strategy-select" required>
+                    <option value="">전략을 선택하세요</option>
+                </select>
+            </label>
+            <label>
+                시장
+                <select name="market" id="market-select" onchange="updateTickerList()">
+                    <option value="KRX">한국 (KRX)</option>
+                    <option value="US">미국 (US)</option>
+                </select>
+            </label>
+        </div>
+        <label>
+            종목 코드 (쉼표 구분) *
+            <input type="text" name="tickers" id="tickers-input" required
+                   placeholder="예: 005930,000660,035420">
+        </label>
+        <details id="ticker-reference" open>
+            <summary>종목 코드 참조 (클릭하여 추가)</summary>
+            <div id="ticker-buttons"></div>
+        </details>
+        <button type="submit" id="run-btn">백테스트 실행</button>
+    </form>
+    <div id="job-status"></div>
+</article>
+
+<article>
+    <header>백테스트 결과</header>
+    <div id="results-table"><p>로딩 중...</p></div>
+</article>
+
+<script>
+const TICKERS = {
+    KRX: [
+        {code: '005930', name: '삼성전자'},
+        {code: '000660', name: 'SK하이닉스'},
+        {code: '035420', name: 'NAVER'},
+        {code: '035720', name: '카카오'},
+        {code: '005380', name: '현대차'},
+        {code: '000270', name: '기아'},
+        {code: '006400', name: '삼성SDI'},
+        {code: '051910', name: 'LG화학'},
+        {code: '003670', name: '포스코퓨처엠'},
+        {code: '005490', name: 'POSCO홀딩스'},
+        {code: '055550', name: '신한지주'},
+        {code: '105560', name: 'KB금융'},
+        {code: '096770', name: 'SK이노베이션'},
+        {code: '034730', name: 'SK'},
+        {code: '028260', name: '삼성물산'},
+        {code: '012330', name: '현대모비스'},
+        {code: '066570', name: 'LG전자'},
+        {code: '003550', name: 'LG'},
+        {code: '032830', name: '삼성생명'},
+        {code: '086790', name: '하나금융지주'},
+        {code: '015760', name: '한국전력'},
+        {code: '017670', name: 'SK텔레콤'},
+        {code: '030200', name: 'KT'},
+        {code: '036570', name: '엔씨소프트'},
+        {code: '251270', name: '넷마블'},
+        {code: '263750', name: '펄어비스'},
+        {code: '352820', name: '하이브'},
+        {code: '259960', name: '크래프톤'},
+        {code: '068270', name: '셀트리온'},
+        {code: '207940', name: '삼성바이오로직스'},
+        {code: '326030', name: 'SK바이오팜'},
+        {code: '000810', name: '삼성화재'},
+        {code: '009150', name: '삼성전기'},
+        {code: '018260', name: '삼성에스디에스'},
+        {code: '010130', name: '고려아연'},
+        {code: '047050', name: '포스코인터내셔널'},
+        {code: '373220', name: 'LG에너지솔루션'},
+        {code: '011200', name: 'HMM'},
+        {code: '010950', name: 'S-Oil'},
+        {code: '033780', name: 'KT&G'},
+    ],
+    US: [
+        {code: 'AAPL', name: 'Apple'},
+        {code: 'MSFT', name: 'Microsoft'},
+        {code: 'GOOGL', name: 'Alphabet (Google)'},
+        {code: 'AMZN', name: 'Amazon'},
+        {code: 'NVDA', name: 'NVIDIA'},
+        {code: 'META', name: 'Meta (Facebook)'},
+        {code: 'TSLA', name: 'Tesla'},
+        {code: 'BRK-B', name: 'Berkshire Hathaway'},
+        {code: 'JPM', name: 'JPMorgan Chase'},
+        {code: 'V', name: 'Visa'},
+        {code: 'JNJ', name: 'Johnson & Johnson'},
+        {code: 'WMT', name: 'Walmart'},
+        {code: 'MA', name: 'Mastercard'},
+        {code: 'PG', name: 'Procter & Gamble'},
+        {code: 'UNH', name: 'UnitedHealth'},
+        {code: 'HD', name: 'Home Depot'},
+        {code: 'DIS', name: 'Disney'},
+        {code: 'BAC', name: 'Bank of America'},
+        {code: 'KO', name: 'Coca-Cola'},
+        {code: 'PFE', name: 'Pfizer'},
+        {code: 'NFLX', name: 'Netflix'},
+        {code: 'AMD', name: 'AMD'},
+        {code: 'INTC', name: 'Intel'},
+        {code: 'CRM', name: 'Salesforce'},
+        {code: 'COST', name: 'Costco'},
+        {code: 'AVGO', name: 'Broadcom'},
+        {code: 'ADBE', name: 'Adobe'},
+        {code: 'QCOM', name: 'Qualcomm'},
+        {code: 'PYPL', name: 'PayPal'},
+        {code: 'COIN', name: 'Coinbase'},
+    ]
+};
+
+// Build ticker name lookup map
+const tickerNames = {};
+Object.values(TICKERS).forEach(list => list.forEach(t => { tickerNames[t.code] = t.name; }));
+
+function updateTickerList() {
+    const market = document.getElementById('market-select').value;
+    const list = TICKERS[market] || [];
+    const div = document.getElementById('ticker-buttons');
+    let html = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;">';
+    list.forEach(t => {
+        html += '<button type="button" class="outline secondary" style="padding:4px 10px;font-size:0.8em;margin:0;" '
+            + 'onclick="addTicker(\'' + t.code + '\')" title="' + t.name + '">'
+            + t.code + ' ' + t.name + '</button>';
+    });
+    html += '</div>';
+    html += '<div style="margin-top:8px;"><button type="button" class="outline" style="padding:4px 10px;font-size:0.8em;" onclick="selectAll()">전체 선택</button> '
+        + '<button type="button" class="outline" style="padding:4px 10px;font-size:0.8em;" onclick="clearTickers()">초기화</button></div>';
+    div.innerHTML = html;
+}
+
+function addTicker(code) {
+    const input = document.getElementById('tickers-input');
+    const current = input.value.split(',').map(t => t.trim()).filter(t => t);
+    if (!current.includes(code)) {
+        current.push(code);
+        input.value = current.join(',');
+    }
+}
+
+function selectAll() {
+    const market = document.getElementById('market-select').value;
+    const list = TICKERS[market] || [];
+    document.getElementById('tickers-input').value = list.map(t => t.code).join(',');
+}
+
+function clearTickers() {
+    document.getElementById('tickers-input').value = '';
+}
+
+// Load strategies for select
+fetch('/api/strategies')
+    .then(r => r.json())
+    .then(data => {
+        const sel = document.getElementById('strategy-select');
+        data.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = s.name + ' (' + s.status + ')';
+            sel.appendChild(opt);
+        });
+    });
+
+function loadResults() {
+    fetch('/api/backtest/results')
+        .then(r => r.json())
+        .then(data => {
+            const div = document.getElementById('results-table');
+            if (!data.length) { div.innerHTML = '<p>백테스트 결과가 없습니다.</p>'; return; }
+            let html = '<table><thead><tr><th>전략</th><th>종목</th><th>시장</th><th>수익률</th><th>샤프</th><th>최대낙폭</th><th>승률</th><th>거래수</th><th>유효</th><th>실행일</th></tr></thead><tbody>';
+            data.forEach(r => {
+                const cls = r.total_return >= 0 ? 'signal-buy' : 'signal-sell';
+                const name = tickerNames[r.ticker] || '';
+                const tickerDisplay = name ? r.ticker + ' ' + name : r.ticker;
+                html += '<tr><td>' + r.strategy_name + '</td><td>' + tickerDisplay + '</td><td>' + r.market + '</td>'
+                    + '<td class="' + cls + '">' + (r.total_return * 100).toFixed(2) + '%</td>'
+                    + '<td>' + r.sharpe_ratio.toFixed(2) + '</td><td>' + (r.max_drawdown * 100).toFixed(2) + '%</td>'
+                    + '<td>' + (r.win_rate * 100).toFixed(1) + '%</td><td>' + r.num_trades + '</td>'
+                    + '<td>' + (r.is_valid ? '유효' : '무효') + '</td>'
+                    + '<td><a href="/backtest/' + r.id + '">' + (r.created_at||'').substring(0,16) + '</a></td></tr>';
+            });
+            div.innerHTML = html + '</tbody></table>';
+        });
+}
+loadResults();
+updateTickerList();
+
+document.getElementById('backtest-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('run-btn');
+    btn.disabled = true;
+    btn.textContent = '실행 중...';
+    const body = {
+        strategy_id: parseInt(document.getElementById('strategy-select').value),
+        tickers: document.getElementById('tickers-input').value.split(',').map(t => t.trim()).filter(t => t),
+        market: document.getElementById('market-select').value,
+    };
+    try {
+        const resp = await fetch('/api/backtest/run', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+        });
+        const result = await resp.json();
+        document.getElementById('job-status').innerHTML = '<p>작업 ID: ' + result.job_id + ' - ' + result.message + '</p>';
+        setTimeout(loadResults, 5000);
+    } catch (err) {
+        document.getElementById('job-status').innerHTML = '<p class="error">오류: ' + err.message + '</p>';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '백테스트 실행';
+    }
+});
+</script>
+{% endblock %}

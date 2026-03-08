@@ -1,0 +1,71 @@
+python_cmd: "py -3.14"
+
+pipeline:
+  research:
+    max_videos_per_query: 15
+    min_view_count: 10000
+    subtitle_language: "ko"
+    notebook_prefix: "StockResearch"
+  backtest:
+    default_period: "2020-01-01"
+    initial_capital: 10000000
+    commission: 0.00015
+    slippage: 0.001
+    validation_thresholds:
+      min_sharpe: 1.0
+      max_drawdown: 0.20
+      min_win_rate: 0.45
+      min_trades: 20
+  targets:
+    kospi_top: 30
+    custom_tickers: ["005930", "000660", "035420", "035720", "051910"]
+  us_targets:
+    custom_tickers: ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA"]
+
+schedule:
+  daily_scan:
+    cron: "0 8 * * 1-5"
+    timezone: "Asia/Seoul"
+  research_refresh:
+    cron: "0 22 * * 0"
+    timezone: "Asia/Seoul"
+
+llm:
+  provider: "openrouter"
+  api_key: "${OPENROUTER_KEY}"
+  default_model: "anthropic/claude-3.5-sonnet"
+  fast_model: "anthropic/claude-3-haiku"
+  deep_model: "anthropic/claude-3.5-sonnet"
+  max_tokens: 4096
+  temperature: 0.3
+
+notifications:
+  discord:
+    enabled: true
+    webhook_url: "${DISCORD_WEBHOOK_URL}"
+  email:
+    enabled: false
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    sender: "${EMAIL_SENDER}"
+    password: "${EMAIL_APP_PASSWORD}"
+    recipients: []
+
+realtime:
+  interval_seconds: 60
+  warmup_bars: 60
+  max_buffer_size: 200
+  cooldown_minutes: 30
+  watchlist:
+    krx: ["005930", "000660", "035420", "035720", "051910"]
+    us: ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA"]
+  kis:
+    api_key: "${KIS_API_KEY}"
+    api_secret: "${KIS_API_SECRET}"
+    account_number: "${KIS_ACCOUNT_NUMBER}"
+
+logging:
+  level: "INFO"
+  file: "output/logs/money_mani.log"
+  max_size_mb: 50
+  backup_count: 5

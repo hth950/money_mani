@@ -1,0 +1,37 @@
+yt-dlp>=2024.0.0
+
+# 한국 주식 데이터
+pykrx>=1.0.0
+finance-datareader>=0.9.0
+
+# 데이터 분석
+pandas>=2.0.0
+pandas-ta>=0.3.14b
+numpy>=1.24.0
+
+# 백테스트
+backtesting>=0.3.3
+
+# 미국 주식 데이터
+yfinance>=0.2.0
+
+# 설정
+pyyaml>=6.0
+
+# 스케줄링
+apscheduler>=3.10.0
+
+# 알림
+requests>=2.31.0
+
+# 증권사 API
+python-kis>=2.0.0
+
+# 웹 UI
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+jinja2>=3.1.0
+python-multipart>=0.0.6
+
+# 환경변수
+python-dotenv>=1.0.0

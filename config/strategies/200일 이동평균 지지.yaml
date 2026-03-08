@@ -1,0 +1,37 @@
+name: 200일 이동평균 지지
+description: 200일 MA 위에서만 매수, 가격이 200일 MA 아래로 이탈시 전량 청산
+source: long_term
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_200
+    direction: above
+  - condition: crossover
+    indicator_a: SMA_10
+    indicator_b: SMA_50
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_200
+    direction: below
+indicators:
+- type: sma
+  period: 200
+  column: close
+  output_name: SMA_200
+- type: sma
+  period: 50
+  column: close
+  output_name: SMA_50
+- type: sma
+  period: 10
+  column: close
+  output_name: SMA_10
+parameters:
+  position_size: 1.0
+  stop_loss: 0.1
+backtest_results: {}

@@ -1,0 +1,30 @@
+name: ATR 변동성 돌파
+description: 전일 종가 + ATR*0.5 이상 돌파시 매수 (래리 윌리엄스 변형)
+source: larry_williams
+category: breakout
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: ATR_BREAKOUT
+    direction: above
+    value: 0
+  exit:
+  - condition: threshold
+    indicator: ROC_1
+    direction: below
+    value: -1
+indicators:
+- type: atr
+  period: 14
+  column: close
+  output_name: ATR_14
+- type: roc
+  period: 1
+  column: close
+  output_name: ROC_1
+parameters:
+  position_size: 0.5
+  stop_loss: 0.03
+  take_profit: 0.05
+backtest_results: {}

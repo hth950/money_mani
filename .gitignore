@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Output
+output/
+
+# Database
+*.db
+
+# Cache
+market_data_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OMC
+.omc/
+
+# OS
+Thumbs.db
+Desktop.ini

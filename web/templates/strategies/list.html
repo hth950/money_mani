@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}전략 관리 - Money Mani{% endblock %}
+{% block content %}
+<hgroup>
+    <h1>전략 관리</h1>
+    <p>전략을 조회, 생성, 수정할 수 있습니다.</p>
+</hgroup>
+
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <div>
+        <select id="status-filter" onchange="filterStrategies()">
+            <option value="">전체 상태</option>
+            <option value="draft">초안 (Draft)</option>
+            <option value="testing">테스트 중</option>
+            <option value="validated">검증됨</option>
+            <option value="retired">종료</option>
+        </select>
+    </div>
+    <a href="/strategies/new" role="button">+ 새 전략</a>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>상태</th>
+            <th>전략명</th>
+            <th>카테고리</th>
+            <th>소스</th>
+            <th>생성일</th>
+            <th>작업</th>
+        </tr>
+    </thead>
+    <tbody id="strategy-list">
+        <tr><td colspan="6">로딩 중...</td></tr>
+    </tbody>
+</table>
+
+<script>
+function renderStrategies(data) {
+    const tbody = document.getElementById('strategy-list');
+    if (!data.length) { tbody.innerHTML = '<tr><td colspan="6">전략이 없습니다.</td></tr>'; return; }
+    const statusMap = {draft: '초안', testing: '테스트', validated: '검증됨', retired: '종료'};
+    let html = '';
+    data.forEach(s => {
+        html += '<tr><td><span class="status-badge status-' + s.status + '">' + (statusMap[s.status]||s.status) + '</span></td>'
+            + '<td><a href="/strategies/' + s.id + '">' + s.name + '</a></td>'
+            + '<td>' + (s.category||'-') + '</td><td>' + (s.source||'-') + '</td>'
+            + '<td>' + (s.created_at||'').substring(0,10) + '</td>'
+            + '<td><a href="/strategies/' + s.id + '">상세</a></td></tr>';
+    });
+    tbody.innerHTML = html;
+}
+
+function filterStrategies() {
+    const status = document.getElementById('status-filter').value;
+    const url = status ? '/api/strategies?status=' + status : '/api/strategies';
+    fetch(url).then(r => r.json()).then(renderStrategies);
+}
+fetch('/api/strategies').then(r => r.json()).then(renderStrategies);
+</script>
+{% endblock %}

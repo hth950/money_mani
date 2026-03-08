@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}전략 탐색 - Money Mani{% endblock %}
+{% block content %}
+<h1>전략 탐색</h1>
+
+<article>
+    <header>탐색 실행</header>
+    <form id="discovery-form">
+        <div class="grid">
+            <label>시장 <select name="market" id="disc-market">
+                <option value="KRX">한국 (KRX)</option>
+                <option value="US">미국 (US)</option>
+            </select></label>
+            <label>Top N <input type="number" id="disc-topn" value="3" min="1" max="10"></label>
+        </div>
+        <label>
+            <input type="checkbox" id="disc-trends"> 트렌드 기반 자동 쿼리 생성
+        </label>
+        <label>검색 쿼리 (줄바꿈 구분, 비워두면 기본 쿼리 사용)
+            <textarea id="disc-queries" rows="3" placeholder="주식 RSI MACD 매매법&#10;골든크로스 전략"></textarea>
+        </label>
+        <button type="submit" id="disc-btn">탐색 시작</button>
+    </form>
+    <div id="disc-status"></div>
+</article>
+
+<article>
+    <header>탐색 리포트</header>
+    <div id="reports-table"><p>로딩 중...</p></div>
+</article>
+
+<script>
+function loadReports() {
+    fetch('/api/discovery/reports')
+        .then(r => r.json())
+        .then(data => {
+            const div = document.getElementById('reports-table');
+            if (!data.length) { div.innerHTML = '<p>탐색 리포트가 없습니다.</p>'; return; }
+            let html = '<table><thead><tr><th>날짜</th><th>시장</th><th>영상</th><th>추출</th><th>순위</th><th>검증</th><th>상세</th></tr></thead><tbody>';
+            data.forEach(r => {
+                html += '<tr><td>' + r.run_date + '</td><td>' + r.market + '</td>'
+                    + '<td>' + r.videos_found + '</td><td>' + r.strategies_extracted + '</td>'
+                    + '<td>' + r.strategies_ranked + '</td><td>' + r.strategies_validated + '</td>'
+                    + '<td><a href="/discovery/' + r.id + '">보기</a></td></tr>';
+            });
+            div.innerHTML = html + '</tbody></table>';
+        });
+}
+loadReports();
+
+document.getElementById('discovery-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('disc-btn');
+    btn.disabled = true; btn.textContent = '탐색 중...';
+    const queriesText = document.getElementById('disc-queries').value.trim();
+    const body = {
+        market: document.getElementById('disc-market').value,
+        top_n: parseInt(document.getElementById('disc-topn').value),
+        use_trends: document.getElementById('disc-trends').checked,
+        queries: queriesText ? queriesText.split('\n').map(q => q.trim()).filter(q => q) : null,
+    };
+    try {
+        const resp = await fetch('/api/discovery/run', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+        });
+        const result = await resp.json();
+        document.getElementById('disc-status').innerHTML = '<p>작업 ID: ' + result.job_id + ' - ' + result.message + '</p>';
+        setTimeout(loadReports, 10000);
+    } catch (err) {
+        document.getElementById('disc-status').innerHTML = '<p class="error">오류: ' + err.message + '</p>';
+    } finally { btn.disabled = false; btn.textContent = '탐색 시작'; }
+});
+</script>
+{% endblock %}

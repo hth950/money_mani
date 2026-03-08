@@ -1,0 +1,32 @@
+name: Stochastic RSI 반전
+description: Stochastic RSI K가 D를 상향 돌파 + 과매도 구간에서 매수
+source: classic_ta
+category: momentum
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: STOCHRSIk_14_14_3_3
+    direction: below
+    value: 20
+  - condition: crossover
+    indicator_a: STOCHRSIk_14_14_3_3
+    indicator_b: STOCHRSId_14_14_3_3
+    direction: above
+  exit:
+  - condition: threshold
+    indicator: STOCHRSIk_14_14_3_3
+    direction: above
+    value: 80
+indicators:
+- type: stochrsi
+  period: 14
+  smooth_k: 3
+  smooth_d: 3
+  column: close
+  output_name: STOCHRSI_14
+parameters:
+  position_size: 0.7
+  stop_loss: 0.05
+  take_profit: 0.12
+backtest_results: {}

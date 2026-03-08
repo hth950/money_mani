@@ -1,0 +1,36 @@
+name: MACD + RSI 복합
+description: MACD 히스토그램 양전환 + RSI 50 이상 동시 충족시 매수. 보수적 복합 전략
+source: composite
+category: composite
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: above
+    value: 0
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 50
+  exit:
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: below
+    value: 0
+indicators:
+- type: macd
+  fast: 12
+  slow: 26
+  signal: 9
+  column: close
+  output_name: MACD_12_26_9
+- type: rsi
+  period: 14
+  column: close
+  output_name: RSI_14
+parameters:
+  position_size: 0.8
+  stop_loss: 0.06
+  take_profit: 0.12
+backtest_results: {}

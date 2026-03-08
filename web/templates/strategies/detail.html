@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ strategy.name }} - Money Mani{% endblock %}
+{% block content %}
+<hgroup>
+    <h1>{{ strategy.name }}</h1>
+    <p>
+        <span class="status-{{ strategy.status }}">{{ strategy.status }}</span>
+        | {{ strategy.category or '미분류' }}
+        | 소스: {{ strategy.source or '-' }}
+    </p>
+</hgroup>
+
+<article>
+    <header>설명</header>
+    <p>{{ strategy.description or '설명 없음' }}</p>
+</article>
+
+<div class="grid">
+    <article>
+        <header>진입/종료 규칙</header>
+        <pre><code>{{ strategy.rules_json }}</code></pre>
+    </article>
+    <article>
+        <header>지표</header>
+        <pre><code>{{ strategy.indicators_json }}</code></pre>
+    </article>
+</div>
+
+<article>
+    <header>파라미터</header>
+    <pre><code>{{ strategy.parameters_json }}</code></pre>
+</article>
+
+<div style="display: flex; gap: 0.5rem;">
+    {% if strategy.status != 'validated' %}
+    <button hx-post="/api/strategies/{{ strategy.id }}/validate"
+            hx-swap="none"
+            hx-on::after-request="location.reload()">검증 완료</button>
+    {% endif %}
+    {% if strategy.status != 'retired' %}
+    <button hx-post="/api/strategies/{{ strategy.id }}/retire"
+            hx-swap="none"
+            hx-on::after-request="location.reload()"
+            class="secondary">종료</button>
+    {% endif %}
+    <button hx-delete="/api/strategies/{{ strategy.id }}"
+            hx-confirm="정말 삭제하시겠습니까?"
+            hx-swap="none"
+            hx-on::after-request="window.location='/strategies'"
+            class="contrast">삭제</button>
+</div>
+
+<p><small>생성: {{ strategy.created_at }} | 수정: {{ strategy.updated_at }}</small></p>
+
+<a href="/strategies">&larr; 전략 목록으로</a>
+{% endblock %}

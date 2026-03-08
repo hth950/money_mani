@@ -1,0 +1,25 @@
+name: Parabolic SAR 추세
+description: Parabolic SAR이 가격 아래로 전환시 매수, 위로 전환시 매도
+source: classic_ta
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: PSAR
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: PSAR
+    direction: below
+indicators:
+- type: psar
+  af: 0.02
+  max_af: 0.2
+  output_name: PSAR
+parameters:
+  position_size: 1.0
+  stop_loss: 0.07
+backtest_results: {}

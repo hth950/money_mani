@@ -1,0 +1,33 @@
+name: 듀얼 모멘텀 (절대+상대)
+description: 12개월 수익률 양수(절대 모멘텀) + 시장 대비 우위(상대 모멘텀) 충족시 매수
+source: gary_antonacci
+category: momentum
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: ROC_252
+    direction: above
+    value: 0
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 50
+  exit:
+  - condition: threshold
+    indicator: ROC_252
+    direction: below
+    value: 0
+indicators:
+- type: roc
+  period: 252
+  column: close
+  output_name: ROC_252
+- type: rsi
+  period: 14
+  column: close
+  output_name: RSI_14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.12
+backtest_results: {}

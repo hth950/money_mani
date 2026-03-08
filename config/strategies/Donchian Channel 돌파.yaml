@@ -1,0 +1,27 @@
+name: Donchian Channel 돌파
+description: 20일 최고가 돌파시 매수 (터틀 트레이딩), 10일 최저가 이탈시 매도
+source: turtle_trading
+category: breakout
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: DCU_20
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: DCL_10
+    direction: below
+indicators:
+- type: donchian
+  period: 20
+  output_name: DC_20
+- type: donchian
+  period: 10
+  output_name: DC_10
+parameters:
+  position_size: 0.5
+  stop_loss: 0.1
+backtest_results: {}

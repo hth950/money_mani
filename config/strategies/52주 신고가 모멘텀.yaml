@@ -1,0 +1,29 @@
+name: 52주 신고가 모멘텀
+description: 52주 신고가 갱신 종목 매수, 20일 이동평균 이탈시 청산
+source: momentum_investing
+category: momentum
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: HIGH_252
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_20
+    direction: below
+indicators:
+- type: highest
+  period: 252
+  column: high
+  output_name: HIGH_252
+- type: sma
+  period: 20
+  column: close
+  output_name: SMA_20
+parameters:
+  position_size: 0.8
+  stop_loss: 0.08
+backtest_results: {}

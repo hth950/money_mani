@@ -1,0 +1,26 @@
+name: Williams %R 반전
+description: Williams %R -80 이하 과매도 진입, -20 이상 과매수 청산
+source: classic_ta
+category: momentum
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: WILLR_14
+    direction: below
+    value: -80
+  exit:
+  - condition: threshold
+    indicator: WILLR_14
+    direction: above
+    value: -20
+indicators:
+- type: willr
+  period: 14
+  column: close
+  output_name: WILLR_14
+parameters:
+  position_size: 0.8
+  stop_loss: 0.05
+  take_profit: 0.1
+backtest_results: {}

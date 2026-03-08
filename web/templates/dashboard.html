@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}대시보드 - Money Mani{% endblock %}
+{% block content %}
+<h1>Money Mani 대시보드</h1>
+
+<div class="grid">
+    <article>
+        <header>전략</header>
+        <p id="stat-strategies">로딩 중...</p>
+        <a href="/strategies">전략 관리 &rarr;</a>
+    </article>
+    <article>
+        <header>최근 신호</header>
+        <p id="stat-signals">로딩 중...</p>
+        <a href="/signals">신호 이력 &rarr;</a>
+    </article>
+    <article>
+        <header>포트폴리오</header>
+        <p id="stat-portfolio">로딩 중...</p>
+        <a href="/portfolio">포트폴리오 &rarr;</a>
+    </article>
+</div>
+
+<div class="grid">
+    <article>
+        <header>백테스트</header>
+        <p id="stat-backtest">로딩 중...</p>
+        <a href="/backtest">백테스트 &rarr;</a>
+    </article>
+    <article>
+        <header>일일 스캔</header>
+        <p id="stat-scan">로딩 중...</p>
+        <a href="/scanner">일일 스캔 &rarr;</a>
+    </article>
+    <article>
+        <header>실시간 모니터</header>
+        <p id="stat-monitor">로딩 중...</p>
+        <a href="/monitor">모니터 &rarr;</a>
+    </article>
+</div>
+
+<script>
+fetch('/api/strategies').then(r=>r.json()).then(d => {
+    const total = d.length;
+    const validated = d.filter(s => s.status === 'validated').length;
+    document.getElementById('stat-strategies').textContent = '총 ' + total + '개 (검증됨: ' + validated + '개)';
+}).catch(() => { document.getElementById('stat-strategies').textContent = '-'; });
+
+fetch('/api/signals?limit=5').then(r=>r.json()).then(d => {
+    if (!d.length) { document.getElementById('stat-signals').textContent = '최근 신호 없음'; return; }
+    let html = '';
+    d.slice(0, 3).forEach(s => {
+        const cls = s.signal_type === 'BUY' ? 'signal-buy' : 'signal-sell';
+        html += '<span class="' + cls + '">' + s.signal_type + '</span> ' + s.ticker + ' ';
+    });
+    document.getElementById('stat-signals').innerHTML = html;
+}).catch(() => { document.getElementById('stat-signals').textContent = '-'; });
+
+fetch('/api/portfolio/live').then(r=>r.json()).then(d => {
+    if (!d.length) { document.getElementById('stat-portfolio').textContent = '보유 종목 없음'; return; }
+    document.getElementById('stat-portfolio').textContent = '보유 ' + d.length + '종목';
+}).catch(() => { document.getElementById('stat-portfolio').textContent = 'KIS 미연결'; });
+
+fetch('/api/backtest/results').then(r=>r.json()).then(d => {
+    document.getElementById('stat-backtest').textContent = '결과 ' + d.length + '건';
+}).catch(() => { document.getElementById('stat-backtest').textContent = '-'; });
+
+fetch('/api/scan/history').then(r=>r.json()).then(d => {
+    if (!d.length) { document.getElementById('stat-scan').textContent = '스캔 이력 없음'; return; }
+    document.getElementById('stat-scan').textContent = '최근: ' + d[0].scan_date + ' (' + d[0].signals_count + '건)';
+}).catch(() => { document.getElementById('stat-scan').textContent = '-'; });
+
+fetch('/api/monitor/status').then(r=>r.json()).then(d => {
+    document.getElementById('stat-monitor').textContent = d.running ? '실행 중' : '중지됨';
+}).catch(() => { document.getElementById('stat-monitor').textContent = '-'; });
+</script>
+{% endblock %}

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where claude)",
+      "Bash(npm list -g @anthropic-ai/claude-code)",
+      "Bash(npm root -g)",
+      "Bash(npm install -g @anthropic-ai/claude-code)",
+      "Bash(claude --version)",
+      "Bash(node:*)",
+      "Read(//c/Users/hth95/Desktop/money_mani/**)",
+      "Bash(\"$CONFIG_FILE\")",
+      "Bash(claude mcp:*)",
+      "Bash(where python:*)",
+      "Bash(py:*)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

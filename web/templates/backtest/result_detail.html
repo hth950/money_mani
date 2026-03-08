@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}백테스트 결과 - Money Mani{% endblock %}
+{% block content %}
+<h1>백테스트 결과</h1>
+
+<article>
+    <div class="grid">
+        <div>
+            <strong>전략:</strong> {{ result.strategy_name }}<br>
+            <strong>종목:</strong> {{ result.ticker }} ({{ result.market }})<br>
+            <strong>기간:</strong> {{ result.period }}
+        </div>
+        <div>
+            <strong>수익률:</strong> <span class="{{ 'signal-buy' if result.total_return >= 0 else 'signal-sell' }}">{{ "%.2f"|format(result.total_return * 100) }}%</span><br>
+            <strong>샤프 비율:</strong> {{ "%.2f"|format(result.sharpe_ratio) }}<br>
+            <strong>최대 낙폭:</strong> {{ "%.2f"|format(result.max_drawdown * 100) }}%
+        </div>
+        <div>
+            <strong>승률:</strong> {{ "%.1f"|format(result.win_rate * 100) }}%<br>
+            <strong>거래 횟수:</strong> {{ result.num_trades }}회<br>
+            <strong>유효성:</strong> {{ '유효' if result.is_valid else '무효' }}
+        </div>
+    </div>
+</article>
+
+<p><small>실행일: {{ result.created_at }}</small></p>
+<a href="/backtest">&larr; 백테스트 목록으로</a>
+{% endblock %}

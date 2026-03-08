@@ -1,0 +1,337 @@
+"""Real-time stock monitoring loop with Discord alerts."""
+
+import logging
+import time as _time
+from dataclasses import dataclass, field
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from broker.kis_client import KISClient
+from broker.portfolio import PortfolioManager, HoldingInfo
+from monitor.market_session import MarketSession
+from monitor.rolling_buffer import RollingBuffer
+from monitor.signal_tracker import SignalTracker
+from strategy.registry import StrategyRegistry
+from strategy.models import Strategy
+from backtester.signals import SignalGenerator
+from alerts.discord_webhook import DiscordNotifier
+from alerts.formatter import AlertFormatter
+from market_data import KRXFetcher, USFetcher
+from utils.config_loader import load_config, get_env
+
+logger = logging.getLogger("money_mani.monitor")
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+@dataclass
+class TickerContext:
+    ticker: str
+    name: str
+    market: str          # "KRX" or "US"
+    mode: str            # "WATCH" (buy signals) or "HOLD" (sell signals)
+    exchange: str = ""   # "NASDAQ", "NYSE", "AMEX" for US stocks
+    holding: HoldingInfo | None = None
+    fail_count: int = 0  # consecutive fetch failures
+
+
+class RealtimeMonitor:
+    """Orchestrates real-time price monitoring and signal alerting."""
+
+    MAX_CONSECUTIVE_FAILURES = 5
+
+    def __init__(self, config: dict = None, market_filter: str = None, on_signal=None):
+        self.config = config or load_config()
+        self.market_filter = market_filter
+        self.on_signal = on_signal
+        rt_cfg = self.config.get("realtime", {})
+
+        self.interval = rt_cfg.get("interval_seconds", 60)
+        self.warmup_bars = rt_cfg.get("warmup_bars", 60)
+        self.max_buffer = rt_cfg.get("max_buffer_size", 200)
+        cooldown = rt_cfg.get("cooldown_minutes", 30)
+
+        self.kis = KISClient()
+        self.portfolio = PortfolioManager(self.kis)
+        self.session = MarketSession()
+        self.discord = DiscordNotifier()
+        self.registry = StrategyRegistry()
+        self.tracker = SignalTracker(cooldown_minutes=cooldown)
+
+        self.buffers: dict[str, RollingBuffer] = {}
+        self.strategies: list[Strategy] = []
+        self.ticker_map: dict[str, TickerContext] = {}
+        self._running = False
+
+    def start(self):
+        """Main entry point: load data, seed buffers, run loop."""
+        self._running = True
+        self._load_strategies()
+        if not self.strategies:
+            logger.warning("No validated strategies. Add strategies with status='validated'.")
+            print("No validated strategies found. Cannot start monitor.")
+            return
+
+        self._build_ticker_map()
+        if not self.ticker_map:
+            logger.warning("No tickers to monitor.")
+            print("No tickers to monitor.")
+            return
+
+        self._seed_buffers()
+        self._send_startup_notification()
+        self._run_loop()
+
+    def _load_strategies(self):
+        self.strategies = self.registry.get_validated()
+        logger.info(f"Loaded {len(self.strategies)} validated strategies")
+
+    def _build_ticker_map(self):
+        """Build monitoring list from watchlist + portfolio holdings."""
+        rt_cfg = self.config.get("realtime", {})
+        watchlist = rt_cfg.get("watchlist", {})
+
+        # Watchlist tickers
+        krx_watch = watchlist.get("krx", [])
+        us_watch = watchlist.get("us", [])
+
+        for ticker in krx_watch:
+            if self.market_filter and self.market_filter != "KRX":
+                continue
+            self.ticker_map[ticker] = TickerContext(
+                ticker=ticker, name=ticker, market="KRX", mode="WATCH")
+
+        # Common NYSE-listed tickers for exchange resolution
+        nyse_tickers = {"BRK.B", "JNJ", "V", "WMT", "JPM", "PG", "UNH", "HD",
+                        "BAC", "DIS", "KO", "PFE", "MRK", "VZ", "T", "ABBV",
+                        "CVX", "XOM", "BA", "GE", "IBM", "CAT", "MMM", "GS"}
+
+        for ticker in us_watch:
+            if self.market_filter and self.market_filter != "US":
+                continue
+            exchange = "NYSE" if ticker in nyse_tickers else "NASDAQ"
+            self.ticker_map[ticker] = TickerContext(
+                ticker=ticker, name=ticker, market="US", mode="WATCH",
+                exchange=exchange)
+
+        # Portfolio holdings (override watchlist mode to HOLD)
+        try:
+            holdings = self.portfolio.fetch_all_holdings()
+            for ticker, holding in holdings.items():
+                if self.market_filter and self.market_filter != holding.market:
+                    continue
+                self.ticker_map[ticker] = TickerContext(
+                    ticker=ticker,
+                    name=holding.name,
+                    market=holding.market,
+                    mode="HOLD",
+                    holding=holding,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to fetch portfolio: {e}. Monitoring watchlist only.")
+
+        # Resolve KRX ticker names
+        try:
+            from market_data.krx_fetcher import KRXFetcher
+            krx = KRXFetcher(delay=0.3)
+            for ticker, ctx in self.ticker_map.items():
+                if ctx.market == "KRX" and ctx.name == ticker:
+                    try:
+                        ctx.name = krx.get_ticker_name(ticker)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        logger.info(f"Monitoring {len(self.ticker_map)} tickers "
+                    f"(HOLD: {sum(1 for c in self.ticker_map.values() if c.mode == 'HOLD')}, "
+                    f"WATCH: {sum(1 for c in self.ticker_map.values() if c.mode == 'WATCH')})")
+
+    def _seed_buffers(self):
+        """Seed rolling buffers with historical daily data."""
+        krx_fetcher = KRXFetcher(delay=0.3)
+        us_fetcher = USFetcher()
+
+        for ticker, ctx in self.ticker_map.items():
+            try:
+                fetcher = krx_fetcher if ctx.market == "KRX" else us_fetcher
+                df = fetcher.get_ohlcv(ticker, "2024-01-01")
+                buf = RollingBuffer(ticker, max_size=self.max_buffer,
+                                    warmup_bars=self.warmup_bars)
+                if not df.empty:
+                    buf.seed(df)
+                self.buffers[ticker] = buf
+                logger.debug(f"Seeded {ticker}: {len(buf)} bars, warm={buf.is_warm()}")
+            except Exception as e:
+                logger.warning(f"Failed to seed buffer for {ticker}: {e}")
+                self.buffers[ticker] = RollingBuffer(
+                    ticker, max_size=self.max_buffer, warmup_bars=self.warmup_bars)
+
+        warm = sum(1 for b in self.buffers.values() if b.is_warm())
+        logger.info(f"Seeded {len(self.buffers)} buffers ({warm} warm)")
+
+    def _send_startup_notification(self):
+        """Send Discord notification on monitor start."""
+        krx_count = sum(1 for c in self.ticker_map.values() if c.market == "KRX")
+        us_count = sum(1 for c in self.ticker_map.values() if c.market == "US")
+        hold_count = sum(1 for c in self.ticker_map.values() if c.mode == "HOLD")
+
+        us_hours = self.session.get_us_hours_kst()
+        msg = (
+            f"**Money Mani 실시간 모니터 시작**\n"
+            f"감시 종목: {len(self.ticker_map)}개 (KRX {krx_count}, US {us_count})\n"
+            f"보유 종목: {hold_count}개\n"
+            f"전략: {len(self.strategies)}개\n"
+            f"주기: {self.interval}초\n"
+            f"KRX: 09:00~15:30 KST | US: {us_hours}"
+        )
+        self.discord.send(content=msg)
+
+    def _run_loop(self):
+        """Main monitoring loop."""
+        logger.info("Entering monitoring loop...")
+        prev_markets = []
+
+        while self._running:
+            try:
+                active = self.session.get_active_markets()
+                if self.market_filter:
+                    active = [m for m in active if m == self.market_filter]
+
+                # Detect market session transitions
+                if active != prev_markets:
+                    if active and not prev_markets:
+                        logger.info(f"Market opened: {active}")
+                        self.portfolio.refresh()
+                    elif not active and prev_markets:
+                        logger.info(f"Market closed: {prev_markets}")
+                    prev_markets = active[:]
+
+                if not active:
+                    info = self.session.next_session_info()
+                    wait = min(info["seconds_until"], 300)
+                    logger.info(f"No active market. Next: {info['market']} at {info['opens_at_kst']}. "
+                                f"Waiting {wait}s...")
+                    _time.sleep(wait)
+                    continue
+
+                self._tick(active)
+                _time.sleep(self.interval)
+
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                logger.error(f"Monitor loop error: {e}", exc_info=True)
+                _time.sleep(30)
+
+    def _tick(self, active_markets: list[str]):
+        """One monitoring cycle: fetch prices, compute signals, alert."""
+        now_str = datetime.now(KST).strftime("%H:%M:%S")
+        logger.debug(f"Tick at {now_str} - markets: {active_markets}")
+
+        to_remove = []
+
+        for ticker, ctx in self.ticker_map.items():
+            if ctx.market not in active_markets:
+                continue
+
+            # Fetch current price
+            bar = self._fetch_price(ticker, ctx)
+            if bar is None:
+                ctx.fail_count += 1
+                if ctx.fail_count >= self.MAX_CONSECUTIVE_FAILURES:
+                    logger.warning(f"Removing {ticker}: {self.MAX_CONSECUTIVE_FAILURES} consecutive failures")
+                    to_remove.append(ticker)
+                continue
+            ctx.fail_count = 0
+
+            # Update buffer
+            buf = self.buffers.get(ticker)
+            if not buf:
+                continue
+            buf.append(bar)
+
+            if not buf.is_warm():
+                continue
+
+            # Compute signals for each strategy
+            df = buf.to_dataframe()
+            for strategy in self.strategies:
+                try:
+                    sig_gen = SignalGenerator(strategy)
+                    df_ind = sig_gen.compute_indicators(df)
+                    signals = sig_gen.generate_signals(df_ind)
+                    last_signal = int(signals.iloc[-1])
+
+                    event = self.tracker.update(ticker, strategy.name, last_signal)
+                    if event is not None:
+                        self._handle_signal(ticker, strategy, df_ind, event, ctx)
+                except Exception as e:
+                    logger.debug(f"Signal error {ticker}/{strategy.name}: {e}")
+
+        # Remove tickers that exceeded max consecutive failures
+        for ticker in to_remove:
+            del self.ticker_map[ticker]
+            self.buffers.pop(ticker, None)
+            self.tracker.reset(ticker)
+
+    def _fetch_price(self, ticker: str, ctx: TickerContext) -> dict | None:
+        """Fetch current price from KIS API."""
+        if ctx.market == "KRX":
+            return self.kis.get_domestic_price(ticker)
+        else:
+            exchange = ctx.exchange or "NASDAQ"
+            return self.kis.get_overseas_price(ticker, market=exchange)
+
+    def _handle_signal(self, ticker: str, strategy: Strategy,
+                       df_ind, event, ctx: TickerContext):
+        """Format and send Discord alert for a signal transition."""
+        signal_type = "BUY" if event.current_signal == 1 else "SELL"
+        last_row = df_ind.iloc[-1]
+        now_kst = datetime.now(KST)
+
+        # Extract indicator values
+        indicators = {}
+        for col in df_ind.columns:
+            if col not in ("Open", "High", "Low", "Close", "Volume"):
+                val = last_row[col]
+                if str(val) != "nan":
+                    indicators[col] = float(val)
+
+        currency = "원" if ctx.market == "KRX" else "$"
+
+        signal_info = {
+            "strategy_name": strategy.name,
+            "ticker": ticker,
+            "ticker_name": ctx.name,
+            "signal_type": signal_type,
+            "price": float(last_row["Close"]),
+            "indicators": indicators,
+            "timestamp": now_kst.strftime("%Y-%m-%d %H:%M KST"),
+            "market": ctx.market,
+            "is_holding": ctx.mode == "HOLD",
+            "holding": ctx.holding,
+            "currency": currency,
+        }
+
+        embed = AlertFormatter.format_realtime_signal(signal_info)
+        self.discord.send(embed=embed)
+
+        # Invoke callback if registered
+        if self.on_signal:
+            try:
+                self.on_signal(signal_info)
+            except Exception as cb_err:
+                logger.warning(f"on_signal callback error: {cb_err}")
+
+        action = "BUY" if signal_type == "BUY" else "SELL"
+        hold_tag = " [HOLD]" if ctx.mode == "HOLD" else ""
+        logger.info(f"ALERT: {action} {ctx.name}({ticker}) @ {last_row['Close']:,.0f}{currency} "
+                    f"[{strategy.name}]{hold_tag}")
+
+    def stop(self):
+        """Gracefully stop the monitor."""
+        self._running = False
+        self.discord.send(content="**Money Mani 실시간 모니터 종료**")
+        self.kis.close()
+        logger.info("Monitor stopped.")

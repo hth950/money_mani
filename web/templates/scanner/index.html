@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}일일 스캔 - Money Mani{% endblock %}
+{% block content %}
+<h1>일일 스캔</h1>
+
+<article>
+    <header>스캔 실행</header>
+    <p>검증된(validated) 전략으로 최신 데이터를 스캔하여 매매 신호를 탐지합니다.</p>
+    <button id="scan-btn" onclick="runScan()">스캔 실행</button>
+    <div id="scan-status"></div>
+</article>
+
+<article>
+    <header>스캔 이력</header>
+    <div id="scan-history"><p>로딩 중...</p></div>
+</article>
+
+<script>
+function runScan() {
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = true; btn.textContent = '스캔 중...';
+    fetch('/api/scan/run', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('scan-status').innerHTML = '<p>작업 ID: ' + data.job_id + ' - ' + data.message + '</p>';
+            setTimeout(loadHistory, 5000);
+        })
+        .catch(err => {
+            document.getElementById('scan-status').innerHTML = '<p class="error">오류: ' + err.message + '</p>';
+        })
+        .finally(() => { btn.disabled = false; btn.textContent = '스캔 실행'; });
+}
+
+function loadHistory() {
+    fetch('/api/scan/history')
+        .then(r => r.json())
+        .then(data => {
+            const div = document.getElementById('scan-history');
+            if (!data.length) { div.innerHTML = '<p>스캔 이력이 없습니다.</p>'; return; }
+            let html = '<table><thead><tr><th>날짜</th><th>신호 수</th><th>시장</th><th>실행 시간</th></tr></thead><tbody>';
+            data.forEach(s => {
+                html += '<tr><td>' + s.scan_date + '</td><td>' + s.signals_count + '</td>'
+                    + '<td>' + (s.markets_open||'-') + '</td>'
+                    + '<td>' + (s.created_at||'').substring(0,16) + '</td></tr>';
+            });
+            div.innerHTML = html + '</tbody></table>';
+        });
+}
+loadHistory();
+</script>
+{% endblock %}

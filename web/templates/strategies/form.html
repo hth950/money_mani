@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}새 전략 - Money Mani{% endblock %}
+{% block content %}
+<h1>새 전략 만들기</h1>
+
+<form hx-post="/api/strategies" hx-target="#result" hx-swap="innerHTML">
+    <div class="grid">
+        <label>
+            전략명 *
+            <input type="text" name="name" required placeholder="예: Golden Cross MA(20,60)">
+        </label>
+        <label>
+            카테고리
+            <select name="category">
+                <option value="">선택</option>
+                <option value="crossover">교차 (Crossover)</option>
+                <option value="momentum">모멘텀</option>
+                <option value="mean_reversion">평균회귀</option>
+                <option value="volatility">변동성</option>
+                <option value="trend">추세</option>
+                <option value="other">기타</option>
+            </select>
+        </label>
+    </div>
+
+    <label>
+        설명
+        <textarea name="description" rows="3" placeholder="전략에 대한 설명을 입력하세요."></textarea>
+    </label>
+
+    <div class="grid">
+        <label>
+            소스
+            <select name="source">
+                <option value="manual">수동 입력</option>
+                <option value="notebooklm">NotebookLM</option>
+                <option value="llm_extracted">LLM 추출</option>
+            </select>
+        </label>
+        <label>
+            상태
+            <select name="status">
+                <option value="draft">초안 (Draft)</option>
+                <option value="testing">테스트 중</option>
+                <option value="validated">검증됨</option>
+            </select>
+        </label>
+    </div>
+
+    <label>
+        진입 규칙 (JSON)
+        <textarea name="rules" rows="6" placeholder='{"entry": [{"condition": "crossover", "direction": "above", "indicator_a": "SMA_20", "indicator_b": "SMA_60"}], "exit": [...]}'></textarea>
+    </label>
+
+    <label>
+        지표 (JSON 배열)
+        <textarea name="indicators" rows="4" placeholder='[{"type": "sma", "output_name": "SMA_20", "period": 20}]'></textarea>
+    </label>
+
+    <label>
+        파라미터 (JSON)
+        <textarea name="parameters" rows="3" placeholder='{"position_size": 1.0, "timeframe": "daily"}'></textarea>
+    </label>
+
+    <button type="submit">전략 저장</button>
+</form>
+
+<div id="result"></div>
+
+<a href="/strategies">&larr; 전략 목록으로</a>
+{% endblock %}

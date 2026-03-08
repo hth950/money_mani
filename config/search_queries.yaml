@@ -1,0 +1,25 @@
+queries:
+  - term: "주식 투자 전략 2026"
+    category: "general"
+  - term: "주식 단타 매매 기법"
+    category: "short_term"
+  - term: "주식 스윙 트레이딩 방법"
+    category: "swing"
+  - term: "주식 기술적 분석 이동평균선"
+    category: "technical"
+  - term: "주식 가치투자 방법 PER PBR"
+    category: "value"
+  - term: "주식 투자 꿀팁 수익률"
+    category: "tips"
+  - term: "코스피 코스닥 매매 전략"
+    category: "market"
+  - term: "주식 골든크로스 데드크로스"
+    category: "crossover"
+  - term: "주식 볼린저밴드 RSI 매매"
+    category: "indicators"
+  - term: "주식 자동매매 시스템트레이딩"
+    category: "systematic"
+
+rotation:
+  queries_per_run: 3
+  mode: "round_robin"

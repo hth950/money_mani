@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}실시간 모니터 - Money Mani{% endblock %}
+{% block content %}
+<h1>실시간 모니터</h1>
+
+<article>
+    <header>모니터 제어</header>
+    <div class="grid">
+        <div>
+            <label>시장 필터
+                <select id="market-filter">
+                    <option value="">전체</option>
+                    <option value="KRX">한국 (KRX)</option>
+                    <option value="US">미국 (US)</option>
+                </select>
+            </label>
+        </div>
+        <div>
+            <p>상태: <strong id="monitor-status">확인 중...</strong></p>
+            <button id="start-btn" onclick="startMonitor()">모니터 시작</button>
+            <button id="stop-btn" onclick="stopMonitor()" disabled>모니터 중지</button>
+        </div>
+    </div>
+</article>
+
+<article>
+    <header>실시간 신호 피드</header>
+    <div id="signal-feed">
+        <p>모니터를 시작하면 실시간 신호가 여기에 표시됩니다.</p>
+    </div>
+</article>
+
+<script>
+let evtSource = null;
+
+function checkStatus() {
+    fetch('/api/monitor/status')
+        .then(r => r.json())
+        .then(data => {
+            const status = document.getElementById('monitor-status');
+            const startBtn = document.getElementById('start-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            if (data.running) {
+                status.textContent = '실행 중';
+                status.style.color = 'var(--pico-color-green-500, green)';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                if (!evtSource) connectSSE();
+            } else {
+                status.textContent = '중지됨';
+                status.style.color = '';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        });
+}
+
+function startMonitor() {
+    const filter = document.getElementById('market-filter').value;
+    const params = filter ? '?market_filter=' + filter : '';
+    fetch('/api/monitor/start' + params, {method: 'POST'})
+        .then(r => r.json())
+        .then(() => { checkStatus(); connectSSE(); });
+}
+
+function stopMonitor() {
+    fetch('/api/monitor/stop', {method: 'POST'})
+        .then(r => r.json())
+        .then(() => {
+            checkStatus();
+            if (evtSource) { evtSource.close(); evtSource = null; }
+        });
+}
+
+function connectSSE() {
+    if (evtSource) evtSource.close();
+    evtSource = new EventSource('/api/monitor/stream');
+
+    evtSource.addEventListener('signal', (e) => {
+        const sig = JSON.parse(e.data);
+        const feed = document.getElementById('signal-feed');
+        const cls = sig.signal_type === 'BUY' ? 'signal-buy' : 'signal-sell';
+        const item = document.createElement('div');
+        item.className = 'signal-item';
+        item.innerHTML = '<strong class="' + cls + '">' + sig.signal_type + '</strong> '
+            + (sig.ticker_name || sig.ticker) + ' (' + sig.ticker + ') @ '
+            + Number(sig.price).toLocaleString() + ' '
+            + '<small>[' + sig.strategy_name + '] ' + (sig.timestamp || sig.market || '') + '</small>';
+
+        if (feed.querySelector('p')) feed.innerHTML = '';
+        feed.insertBefore(item, feed.firstChild);
+    });
+
+    evtSource.addEventListener('connected', () => {
+        console.log('SSE connected');
+    });
+
+    evtSource.onerror = () => {
+        console.log('SSE connection error, retrying...');
+    };
+}
+
+checkStatus();
+</script>
+{% endblock %}

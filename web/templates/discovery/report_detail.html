@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}탐색 리포트 - Money Mani{% endblock %}
+{% block content %}
+<h1>탐색 리포트</h1>
+
+<article>
+    <div class="grid">
+        <div>
+            <strong>날짜:</strong> {{ report.run_date }}<br>
+            <strong>시장:</strong> {{ report.market }}
+        </div>
+        <div>
+            <strong>영상 수:</strong> {{ report.videos_found }}<br>
+            <strong>추출 전략:</strong> {{ report.strategies_extracted }}
+        </div>
+        <div>
+            <strong>순위 매김:</strong> {{ report.strategies_ranked }}<br>
+            <strong>검증 통과:</strong> {{ report.strategies_validated }}
+        </div>
+    </div>
+</article>
+
+{% if report.rankings_json %}
+<article>
+    <header>순위</header>
+    <div id="rankings"></div>
+</article>
+<script>
+try {
+    const rankings = JSON.parse('{{ report.rankings_json | tojson }}');
+    if (rankings.length) {
+        let html = '<table><thead><tr><th>#</th><th>전략</th><th>종합 점수</th><th>평균 수익률</th><th>평균 샤프</th><th>유효 수</th></tr></thead><tbody>';
+        rankings.forEach((r, i) => {
+            html += '<tr><td>' + (i+1) + '</td><td>' + r.strategy_name + '</td>'
+                + '<td>' + (r.composite_score||0).toFixed(3) + '</td>'
+                + '<td>' + ((r.avg_return||0)*100).toFixed(2) + '%</td>'
+                + '<td>' + (r.avg_sharpe||0).toFixed(2) + '</td>'
+                + '<td>' + (r.valid_count||0) + '</td></tr>';
+        });
+        document.getElementById('rankings').innerHTML = html + '</tbody></table>';
+    }
+} catch(e) { document.getElementById('rankings').innerHTML = '<p>순위 데이터를 파싱할 수 없습니다.</p>'; }
+</script>
+{% endif %}
+
+<p><small>생성일: {{ report.created_at }}</small></p>
+<a href="/discovery">&larr; 탐색 목록으로</a>
+{% endblock %}

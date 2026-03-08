@@ -1,0 +1,32 @@
+name: OBV 다이버전스
+description: OBV 상승 추세 + 가격 횡보시 매수 (숨겨진 매집 탐지)
+source: volume_analysis
+category: volume
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: OBV_SLOPE
+    direction: above
+    value: 0
+  - condition: threshold
+    indicator: ROC_5
+    direction: below
+    value: 2
+  exit:
+  - condition: threshold
+    indicator: OBV_SLOPE
+    direction: below
+    value: -0.5
+indicators:
+- type: obv
+  column: close
+  output_name: OBV
+- type: roc
+  period: 5
+  column: close
+  output_name: ROC_5
+parameters:
+  position_size: 0.6
+  stop_loss: 0.05
+backtest_results: {}
