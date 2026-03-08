@@ -261,6 +261,72 @@ class AlertFormatter:
         }
 
     @staticmethod
+    def format_consensus_alert(group) -> dict:
+        """Format a consensus alert for conflicting signals on one ticker."""
+        consensus = group.consensus
+        if consensus == "BUY":
+            color = AlertFormatter.COLOR_BUY
+            emoji = "🟢"
+        elif consensus == "SELL":
+            color = AlertFormatter.COLOR_SELL
+            emoji = "🔴"
+        else:
+            color = AlertFormatter.COLOR_WARN
+            emoji = "🟡"
+
+        ticker_display = f"{group.ticker_name} ({group.ticker})"
+        buy_list = ", ".join(group.buy_strategies) if group.buy_strategies else "-"
+        sell_list = ", ".join(group.sell_strategies) if group.sell_strategies else "-"
+
+        prices = [s.get("price", 0) for s in group.signals if s.get("price")]
+        avg_price = sum(prices) / len(prices) if prices else 0
+
+        fields = [
+            {"name": "종목", "value": ticker_display, "inline": True},
+            {"name": "합의", "value": f"{emoji} {consensus}", "inline": True},
+            {"name": "현재가", "value": f"{avg_price:,.0f}원", "inline": True},
+            {"name": f"🟢 매수 ({group.buy_count})", "value": buy_list, "inline": True},
+            {"name": f"🔴 매도 ({group.sell_count})", "value": sell_list, "inline": True},
+        ]
+
+        return {
+            "title": f"{emoji} [합의: {consensus}] {ticker_display}",
+            "color": color,
+            "fields": fields,
+            "footer": {"text": "Money Mani 시그널 합의"},
+        }
+
+    @staticmethod
+    def format_strategy_leaderboard(stats: list[dict]) -> dict:
+        """Format strategy leaderboard as a Discord embed."""
+        if not stats:
+            return {
+                "title": "🏆 전략 리더보드",
+                "color": AlertFormatter.COLOR_INFO,
+                "fields": [{"name": "결과", "value": "아직 데이터가 없습니다.", "inline": False}],
+                "footer": {"text": "Money Mani 성과 분석"},
+            }
+
+        lines = []
+        for i, s in enumerate(stats[:10], 1):
+            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
+            pnl_sign = "+" if s.get("avg_pnl_pct", 0) >= 0 else ""
+            lines.append(
+                f"{medal} **{s['strategy_name']}**\n"
+                f"거래: {s.get('total_trades', 0)}건 | "
+                f"승률: {s.get('win_rate', 0):.1f}% | "
+                f"평균P&L: {pnl_sign}{s.get('avg_pnl_pct', 0):.2f}% | "
+                f"보유기간: {s.get('avg_holding_days', 0):.0f}일"
+            )
+
+        return {
+            "title": "🏆 전략 리더보드 (실전 성과)",
+            "color": AlertFormatter.COLOR_INFO,
+            "fields": [{"name": "상위 전략", "value": "\n\n".join(lines), "inline": False}],
+            "footer": {"text": "Money Mani 성과 분석"},
+        }
+
+    @staticmethod
     def format_performance_report(summary: dict, report_type: str = "daily") -> dict:
         """Format a performance report as a Discord embed.
 

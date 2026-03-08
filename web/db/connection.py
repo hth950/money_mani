@@ -1,7 +1,10 @@
 """SQLite database connection management."""
+import logging
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
+
+logger = logging.getLogger("money_mani.web.db.connection")
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "money_mani.db"
 
@@ -20,8 +23,9 @@ def init_db():
         if stmt and not stmt.upper().startswith("PRAGMA"):
             try:
                 conn.execute(stmt)
-            except sqlite3.OperationalError:
-                pass  # table already exists
+            except sqlite3.OperationalError as e:
+                if "already exists" not in str(e):
+                    logger.warning(f"Schema DDL warning: {e} | stmt: {stmt[:80]}")
     conn.commit()
     conn.close()
 

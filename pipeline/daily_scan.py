@@ -14,12 +14,14 @@ from utils.config_loader import load_config
 from web.db.connection import get_db
 from web.services.signal_service import SignalService
 from web.services.performance_service import PerformanceService
+from web.services.position_service import PositionService
+from web.services.conflict_resolver import ConflictResolver
 
 KST = timezone(timedelta(hours=9))
 
 logger = logging.getLogger("money_mani.pipeline.daily_scan")
 
-TOP_N_STRATEGIES = 3
+TOP_N_STRATEGIES = 5
 
 
 _sent_signals_today: dict[str, set] = {}  # date_str -> set of "strategy|ticker|signal_type"
@@ -41,11 +43,13 @@ class DailyScan:
         self.email = EmailSender(self.config.get("notifications", {}).get("email", {}))
         self.signal_service = SignalService()
         self.perf_service = PerformanceService()
+        self.position_service = PositionService()
+        self.conflict_resolver = ConflictResolver()
 
     def _get_top_strategies(self) -> list:
-        """Get top N strategies ranked by avg(sharpe + win_rate + return)."""
+        """Get top N strategies ranked by backtest + live performance blend."""
         with get_db() as db:
-            rows = db.execute("""
+            bt_rows = db.execute("""
                 SELECT strategy_name,
                        AVG(total_return) as avg_return,
                        AVG(sharpe_ratio) as avg_sharpe,
@@ -53,11 +57,32 @@ class DailyScan:
                 FROM backtest_results
                 WHERE is_valid = 1
                 GROUP BY strategy_name
-                ORDER BY (AVG(sharpe_ratio) + AVG(win_rate) + AVG(total_return) / 100) DESC
-                LIMIT ?
-            """, (TOP_N_STRATEGIES,)).fetchall()
+            """).fetchall()
 
-        top_names = [row["strategy_name"] for row in rows]
+            live_rows = db.execute("""
+                SELECT strategy_name, win_rate, avg_pnl_pct, total_trades
+                FROM strategy_stats
+                WHERE period = '30d' AND total_trades >= 10
+            """).fetchall()
+
+        live_map = {r["strategy_name"]: r for r in live_rows}
+
+        scored = []
+        for row in bt_rows:
+            name = row["strategy_name"]
+            bt_score = (row["avg_sharpe"] or 0) + (row["avg_win_rate"] or 0) + (row["avg_return"] or 0) / 100
+
+            live = live_map.get(name)
+            if live:
+                live_score = (live["win_rate"] or 0) / 100 + (live["avg_pnl_pct"] or 0) / 10
+                final_score = bt_score * 0.7 + live_score * 0.3
+            else:
+                final_score = bt_score
+
+            scored.append((name, final_score))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        top_names = [s[0] for s in scored[:TOP_N_STRATEGIES]]
         if top_names:
             logger.info(f"Top {len(top_names)} strategies: {top_names}")
 
@@ -188,17 +213,46 @@ class DailyScan:
             logger.info(f"{date_str}: All signals already sent. Skipping alerts.")
             return
 
-        # Save signals to DB and track performance
+        # Save signals to DB, track performance, and manage positions
         for sig in new_signals:
             try:
                 sig_id = self.signal_service.save_signal(sig)
                 self.perf_service.record_signal(sig, signal_id=sig_id)
+
+                # Position tracking
+                if sig["signal_type"] == "BUY":
+                    self.position_service.open_position(
+                        strategy_name=sig["strategy_name"],
+                        ticker=sig["ticker"],
+                        ticker_name=sig.get("ticker_name", sig["ticker"]),
+                        market=sig.get("market", "KRX"),
+                        entry_price=sig["price"],
+                        entry_date=sig.get("date", date_str),
+                        signal_id=sig_id,
+                    )
+                elif sig["signal_type"] == "SELL":
+                    self.position_service.close_position(
+                        strategy_name=sig["strategy_name"],
+                        ticker=sig["ticker"],
+                        exit_price=sig["price"],
+                        exit_date=sig.get("date", date_str),
+                        signal_id=sig_id,
+                    )
             except Exception as e:
                 logger.error(f"Failed to save signal to DB: {e}")
 
-        # Individual signal alerts
+        # Conflict resolution: send consensus embeds for conflicting tickers
+        conflict_groups = self.conflict_resolver.resolve(new_signals)
+        conflicting_tickers = set()
+        for ticker, group in conflict_groups.items():
+            if group.has_conflict:
+                self.discord.send_consensus_alert(group)
+                conflicting_tickers.add(ticker)
+
+        # Individual signal alerts (skip tickers that got consensus embeds)
         for sig in new_signals:
-            self.discord.send_signal_alert(sig)
+            if sig["ticker"] not in conflicting_tickers:
+                self.discord.send_signal_alert(sig)
 
         # Daily summary (only new signals)
         self.discord.send_daily_summary(new_signals, date_str)

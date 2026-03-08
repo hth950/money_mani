@@ -7,8 +7,8 @@ from web.db.connection import get_db
 
 logger = logging.getLogger("money_mani.web.services.job")
 
-# Max 1 concurrent background job (low-memory server)
-_job_semaphore = asyncio.Semaphore(1)
+# Max 3 concurrent background jobs (12GB RAM server)
+_job_semaphore = asyncio.Semaphore(3)
 
 
 class JobService:

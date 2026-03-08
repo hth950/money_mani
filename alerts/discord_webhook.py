@@ -124,6 +124,11 @@ class DiscordNotifier:
         embed = AlertFormatter.format_backtest_report(result)
         return self.send(embed=embed)
 
+    def send_consensus_alert(self, conflict_group) -> bool:
+        """Format and send a consensus alert for conflicting signals."""
+        embed = AlertFormatter.format_consensus_alert(conflict_group)
+        return self.send(embed=embed)
+
     def send_daily_summary(self, signals: list, date: str) -> bool:
         """Format and send a daily summary of signals.
 

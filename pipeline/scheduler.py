@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from pipeline.daily_scan import DailyScan
 from pipeline.evening_report import EveningReport
+from pipeline.nightly import NightlyOrchestrator
 from pipeline.runner import PipelineRunner
 from utils.config_loader import load_config
 
@@ -41,14 +42,14 @@ def _run_intraday_scan():
 
 
 def _run_evening_report():
-    """Job: evening performance report (19:00 KST)."""
+    """Job: nightly orchestrator (19:00 KST) - P&L, positions, analytics, knowledge."""
     try:
-        logger.info("=== Evening Report Job Started ===")
-        report = EveningReport()
-        result = report.run()
-        logger.info(f"Evening report result: {result}")
+        logger.info("=== Nightly Orchestrator Job Started ===")
+        orchestrator = NightlyOrchestrator()
+        result = orchestrator.run()
+        logger.info(f"Nightly orchestrator result: {result}")
     except Exception as e:
-        logger.error(f"Evening report job failed: {e}", exc_info=True)
+        logger.error(f"Nightly orchestrator job failed: {e}", exc_info=True)
     finally:
         gc.collect()
 
@@ -121,7 +122,7 @@ def start_scheduler():
 
     # Research refresh job (weekly)
     research_cfg = sched_cfg.get("research_refresh", {})
-    if research_cfg.get("cron"):
+    if research_cfg.get("cron") and research_cfg.get("enabled", True) is not False:
         parts = research_cfg["cron"].split()
         tz_r = research_cfg.get("timezone", tz)
         trigger = CronTrigger(

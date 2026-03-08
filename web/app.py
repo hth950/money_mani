@@ -63,8 +63,10 @@ from web.routers.scan import router as scan_router
 from web.routers.discovery import router as discovery_router
 from web.routers.portfolio import router as portfolio_router
 from web.routers.performance import router as performance_router
+from web.routers.knowledge import router as knowledge_router
 app.include_router(signals_router)
 app.include_router(scan_router)
 app.include_router(discovery_router)
 app.include_router(portfolio_router)
 app.include_router(performance_router)
+app.include_router(knowledge_router)

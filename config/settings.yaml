@@ -33,9 +33,9 @@ schedule:
 llm:
   provider: "openrouter"
   api_key: "${OPENROUTER_KEY}"
-  default_model: "anthropic/claude-3.5-sonnet"
-  fast_model: "anthropic/claude-3-haiku"
-  deep_model: "anthropic/claude-3.5-sonnet"
+  default_model: "google/gemini-3.1-pro-preview"
+  fast_model: "google/gemini-3-flash-preview"
+  deep_model: "google/gemini-3.1-pro-preview"
   max_tokens: 4096
   temperature: 0.3
 

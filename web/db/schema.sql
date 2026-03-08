@@ -142,3 +142,66 @@ CREATE TABLE IF NOT EXISTS performance_reports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_perfreport_date ON performance_reports (report_date, report_type);
+
+-- Position tracking: entry-to-exit lifecycle per (strategy, ticker)
+CREATE TABLE IF NOT EXISTS positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_name TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    ticker_name TEXT,
+    market TEXT DEFAULT 'KRX',
+    status TEXT CHECK(status IN ('open', 'closed')) DEFAULT 'open',
+    entry_signal_id INTEGER REFERENCES signals(id),
+    entry_date TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    exit_signal_id INTEGER REFERENCES signals(id),
+    exit_date TEXT,
+    exit_price REAL,
+    holding_days INTEGER,
+    max_holding_days INTEGER DEFAULT 30,
+    pnl_amount REAL,
+    pnl_pct REAL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_unique_open
+    ON positions (strategy_name, ticker) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS idx_positions_strategy ON positions (strategy_name);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions (status);
+
+-- Strategy analytics: aggregated performance stats
+CREATE TABLE IF NOT EXISTS strategy_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_name TEXT NOT NULL,
+    period TEXT NOT NULL,
+    total_trades INTEGER DEFAULT 0,
+    winning_trades INTEGER DEFAULT 0,
+    losing_trades INTEGER DEFAULT 0,
+    win_rate REAL DEFAULT 0,
+    total_pnl_pct REAL DEFAULT 0,
+    avg_pnl_pct REAL DEFAULT 0,
+    best_trade_pnl_pct REAL,
+    worst_trade_pnl_pct REAL,
+    avg_holding_days REAL DEFAULT 0,
+    computed_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(strategy_name, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stratstats_name ON strategy_stats (strategy_name);
+
+-- Knowledge base: persistent insights across sessions
+CREATE TABLE IF NOT EXISTS knowledge_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,
+    subject TEXT,
+    content TEXT NOT NULL,
+    tags_json TEXT,
+    source TEXT,
+    valid_from TEXT,
+    valid_until TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_entries (category);
+CREATE INDEX IF NOT EXISTS idx_knowledge_subject ON knowledge_entries (subject);
