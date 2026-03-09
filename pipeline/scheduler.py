@@ -73,7 +73,8 @@ def start_scheduler():
     sched_cfg = config.get("schedule", {})
     tz = "Asia/Seoul"
 
-    scheduler = BlockingScheduler()
+    job_defaults = {"coalesce": True, "max_instances": 1, "misfire_grace_time": 300}
+    scheduler = BlockingScheduler(job_defaults=job_defaults)
 
     # Daily scan job (8:00 KST, weekdays)
     daily_cfg = sched_cfg.get("daily_scan", {})
