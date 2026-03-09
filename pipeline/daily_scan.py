@@ -21,7 +21,7 @@ KST = timezone(timedelta(hours=9))
 
 logger = logging.getLogger("money_mani.pipeline.daily_scan")
 
-TOP_N_STRATEGIES = 5
+TOP_N_STRATEGIES = 10
 
 
 _sent_signals_today: dict[str, set] = {}  # date_str -> set of "strategy|ticker|signal_type"
