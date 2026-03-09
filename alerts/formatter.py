@@ -149,7 +149,7 @@ class AlertFormatter:
 
     @staticmethod
     def format_daily_summary(signals: list, date: str) -> dict:
-        """Format a daily summary of all signals as a Discord embed.
+        """Format a daily summary grouped by ticker with consensus.
 
         Args:
             signals: list of signal dicts.
@@ -162,26 +162,70 @@ class AlertFormatter:
         color = AlertFormatter.COLOR_BUY if count > 0 else AlertFormatter.COLOR_INFO
 
         if count == 0:
-            signal_lines = "오늘 발생한 신호가 없습니다."
+            fields = [
+                {"name": "날짜", "value": date, "inline": True},
+                {"name": "결과", "value": "오늘 발생한 신호가 없습니다.", "inline": False},
+            ]
         else:
-            lines = []
-            for s in signals:
-                action = "매수" if s.get("signal_type", "").upper() == "BUY" else "매도"
-                emoji = "🟢" if s.get("signal_type", "").upper() == "BUY" else "🔴"
-                name = s.get("ticker_name", s.get("ticker", "-"))
-                price = s.get("price", 0)
-                lines.append(f"{emoji} {name} ({s.get('ticker', '')}) - {action} @ {price:,.0f}원")
-            signal_lines = "\n".join(lines)
+            buy_total = sum(1 for s in signals if s.get("signal_type") == "BUY")
+            sell_total = sum(1 for s in signals if s.get("signal_type") == "SELL")
 
-        fields = [
-            {"name": "날짜", "value": date, "inline": True},
-            {"name": "신호 수", "value": f"{count}개", "inline": True},
-            {"name": "시장 상태", "value": "정규장 운영 중", "inline": True},
-            {"name": "발생 신호 목록", "value": signal_lines, "inline": False},
-        ]
+            # Group by ticker
+            tickers = {}
+            for s in signals:
+                t = s.get("ticker", "")
+                if t not in tickers:
+                    tickers[t] = {"name": s.get("ticker_name", t), "buy": [], "sell": [], "price": s.get("price", 0)}
+                if s.get("signal_type") == "BUY":
+                    tickers[t]["buy"].append(s.get("strategy_name", "?"))
+                else:
+                    tickers[t]["sell"].append(s.get("strategy_name", "?"))
+
+            # Build per-ticker consensus lines
+            lines = []
+            for ticker, info in tickers.items():
+                b = len(info["buy"])
+                s = len(info["sell"])
+                total = b + s
+                if b > 0 and s > 0:
+                    emoji = "🟡"
+                    label = "MIXED"
+                elif b > 0:
+                    emoji = "🟢"
+                    label = "BUY"
+                else:
+                    emoji = "🔴"
+                    label = "SELL"
+
+                line = f"{emoji} **{info['name']}** ({ticker}) @ {info['price']:,.0f}원 → **{label}**"
+                if b > 0:
+                    line += f"\n　　🟢 매수({b}): {', '.join(info['buy'][:3])}"
+                    if b > 3:
+                        line += f" 외 {b-3}개"
+                if s > 0:
+                    line += f"\n　　🔴 매도({s}): {', '.join(info['sell'][:3])}"
+                    if s > 3:
+                        line += f" 외 {s-3}개"
+                lines.append(line)
+
+            fields = [
+                {"name": "날짜", "value": date, "inline": True},
+                {"name": "시그널", "value": f"{count}건 (🟢{buy_total} / 🔴{sell_total})", "inline": True},
+                {"name": "종목 수", "value": f"{len(tickers)}개", "inline": True},
+            ]
+
+            # Split into chunks if too long (Discord 1024 char limit per field)
+            summary_text = "\n\n".join(lines)
+            if len(summary_text) <= 1024:
+                fields.append({"name": "종목별 합의", "value": summary_text, "inline": False})
+            else:
+                for i in range(0, len(lines), 4):
+                    chunk = "\n\n".join(lines[i:i+4])
+                    label = "종목별 합의" if i == 0 else "​"
+                    fields.append({"name": label, "value": chunk[:1024], "inline": False})
 
         return {
-            "title": f"📅 일일 투자 신호 요약 ({date})",
+            "title": f"📅 일일 시그널 합의 요약 ({date})",
             "color": color,
             "fields": fields,
             "footer": {"text": "Money Mani 트레이딩 시스템"},
