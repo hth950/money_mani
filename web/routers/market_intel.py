@@ -1,7 +1,7 @@
 """API endpoints for market intelligence."""
 
 import logging
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from web.services.market_intel_service import MarketIntelService
@@ -26,7 +26,7 @@ async def get_scan(scan_id: int):
     """Get scan with its issues."""
     result = service.get_scan(scan_id)
     if not result:
-        return {"error": "Scan not found"}, 404
+        raise HTTPException(status_code=404, detail="Scan not found")
     return result
 
 
@@ -41,7 +41,7 @@ async def get_issue(issue_id: int):
     """Get single issue with full details."""
     result = service.get_issue(issue_id)
     if not result:
-        return {"error": "Issue not found"}, 404
+        raise HTTPException(status_code=404, detail="Issue not found")
     return result
 
 
