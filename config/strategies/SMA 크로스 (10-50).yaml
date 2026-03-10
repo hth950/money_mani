@@ -1,0 +1,29 @@
+name: SMA 크로스 (10/50)
+description: SMA 10일이 SMA 50일을 상향 돌파시 매수, 하향 돌파시 매도
+source: auto_generated
+category: crossover
+status: validated
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: SMA_10
+    indicator_b: SMA_50
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: SMA_10
+    indicator_b: SMA_50
+    direction: below
+indicators:
+- type: sma
+  column: close
+  output_name: SMA_10
+  period: 10
+- type: sma
+  column: close
+  output_name: SMA_50
+  period: 50
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

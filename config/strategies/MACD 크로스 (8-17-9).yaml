@@ -1,0 +1,28 @@
+name: MACD 크로스 (8/17/9)
+description: MACD(8,17,9) 시그널선 상향 돌파시 매수
+source: auto_generated
+category: crossover
+status: rejected
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: MACD_8_17_9
+    indicator_b: MACDs_8_17_9
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: MACD_8_17_9
+    indicator_b: MACDs_8_17_9
+    direction: below
+indicators:
+- type: macd
+  column: close
+  output_name: MACD_8_17_9
+  period: 14
+  fast: 8
+  slow: 17
+  signal: 9
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

@@ -1,0 +1,37 @@
+name: MA 수렴 확산 (10/20/50)
+description: SMA 10/20/50 수렴 후 확산시 추세 시작 매수
+source: auto_generated
+category: volatility
+status: validated
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: SMA_10
+    indicator_b: SMA_20
+    direction: above
+  - condition: threshold_compare
+    indicator_a: SMA_20
+    indicator_b: SMA_50
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: SMA_10
+    indicator_b: SMA_20
+    direction: below
+indicators:
+- type: sma
+  column: close
+  output_name: SMA_10
+  period: 10
+- type: sma
+  column: close
+  output_name: SMA_20
+  period: 20
+- type: sma
+  column: close
+  output_name: SMA_50
+  period: 50
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

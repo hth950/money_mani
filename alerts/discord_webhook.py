@@ -99,17 +99,18 @@ class DiscordNotifier:
         logger.error("Failed to send Discord message after %d attempts.", self.MAX_RETRIES)
         return False
 
-    def send_signal_alert(self, signal: dict) -> bool:
+    def send_signal_alert(self, signal: dict, extra_info: dict = None) -> bool:
         """Format and send a trading signal alert.
 
         Args:
             signal: Signal dict with strategy_name, ticker, ticker_name,
                     signal_type, price, indicators, date.
+            extra_info: Optional dict with consensus/strategies info for ensemble alerts.
 
         Returns:
             True on success.
         """
-        embed = AlertFormatter.format_signal_alert(signal)
+        embed = AlertFormatter.format_signal_alert(signal, extra_info=extra_info)
         return self.send(embed=embed)
 
     def send_backtest_report(self, result: dict) -> bool:
@@ -129,15 +130,37 @@ class DiscordNotifier:
         embed = AlertFormatter.format_consensus_alert(conflict_group)
         return self.send(embed=embed)
 
-    def send_daily_summary(self, signals: list, date: str) -> bool:
+    def send_market_intel(self, issues: list, scan_time: str,
+                          scan_type: str, label: str) -> bool:
+        """Format and send a market intelligence alert.
+
+        Args:
+            issues: List of issue dicts.
+            scan_time: Scan time string.
+            scan_type: Scan type key.
+            label: Human-readable label.
+
+        Returns:
+            True on success.
+        """
+        embed = AlertFormatter.format_market_intel_alert(
+            issues, scan_time, scan_type, label
+        )
+        return self.send(embed=embed)
+
+    def send_daily_summary(self, signals: list, date: str, ensemble_n: int = None,
+                           consensus_summary: dict = None) -> bool:
         """Format and send a daily summary of signals.
 
         Args:
             signals: List of signal dicts.
             date: Date string (YYYY-MM-DD).
+            ensemble_n: Ensemble consensus threshold (N).
+            consensus_summary: Per-ticker consensus counts.
 
         Returns:
             True on success.
         """
-        embed = AlertFormatter.format_daily_summary(signals, date)
+        embed = AlertFormatter.format_daily_summary(signals, date, ensemble_n=ensemble_n,
+                                                     consensus_summary=consensus_summary)
         return self.send(embed=embed)

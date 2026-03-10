@@ -1,0 +1,33 @@
+name: MFI 반등+ROC 확인
+description: MFI<25 과매도 + ROC(5) 양수(모멘텀 전환) 매수
+source: auto_generated
+category: volume
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: MFI_14
+    direction: below
+    value: 25
+  - condition: threshold
+    indicator: ROC_5
+    direction: above
+    value: 0
+  exit:
+  - condition: threshold
+    indicator: MFI_14
+    direction: above
+    value: 75
+indicators:
+- type: mfi
+  column: close
+  output_name: MFI_14
+  period: 14
+- type: roc
+  column: close
+  output_name: ROC_5
+  period: 5
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

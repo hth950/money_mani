@@ -1,0 +1,34 @@
+name: RSI+Stochastic 이중 과매도
+description: RSI<35 + Stochastic<25 이중 과매도 확인 반등 매수
+source: auto_generated
+category: composite
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: RSI_14
+    direction: below
+    value: 35
+  - condition: threshold
+    indicator: STOCH_14
+    direction: below
+    value: 25
+  exit:
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 65
+indicators:
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+- type: stoch
+  column: close
+  output_name: STOCH_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+  take_profit: 0.12
+backtest_results: {}

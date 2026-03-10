@@ -1,0 +1,28 @@
+name: MACD 크로스 (5/35/5)
+description: MACD(5,35,5) 시그널선 상향 돌파시 매수
+source: auto_generated
+category: crossover
+status: rejected
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: MACD_5_35_5
+    indicator_b: MACDs_5_35_5
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: MACD_5_35_5
+    indicator_b: MACDs_5_35_5
+    direction: below
+indicators:
+- type: macd
+  column: close
+  output_name: MACD_5_35_5
+  period: 14
+  fast: 5
+  slow: 35
+  signal: 5
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

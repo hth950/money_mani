@@ -1,0 +1,36 @@
+name: Stochastic+MACD 복합
+description: Stochastic 과매도 + MACD 시그널 크로스 매수
+source: auto_generated
+category: composite
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: STOCH_14
+    direction: below
+    value: 30
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: above
+    value: 0
+  exit:
+  - condition: threshold
+    indicator: STOCH_14
+    direction: above
+    value: 80
+indicators:
+- type: stoch
+  column: close
+  output_name: STOCH_14
+  period: 14
+- type: macd
+  column: close
+  output_name: MACD_12_26_9
+  period: 14
+  fast: 12
+  slow: 26
+  signal: 9
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

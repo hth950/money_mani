@@ -1,0 +1,44 @@
+name: ADX+MACD+EMA(25) 트리플
+description: ADX+MACD+EMA
+source: auto_generated
+category: composite
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: ADX_14
+    direction: above
+    value: 20
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: above
+    value: 0
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: EMA_25
+    direction: above
+  exit:
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: below
+    value: 0
+indicators:
+- type: adx
+  column: close
+  output_name: ADX_14
+  period: 14
+- type: macd
+  column: close
+  output_name: MACD_12_26_9
+  period: 14
+  fast: 12
+  slow: 26
+  signal: 9
+- type: ema
+  column: close
+  output_name: EMA_25
+  period: 25
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

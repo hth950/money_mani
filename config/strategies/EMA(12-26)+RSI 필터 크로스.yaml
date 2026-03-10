@@ -1,0 +1,37 @@
+name: EMA(12-26)+RSI 필터 크로스
+description: EMA 12/26 크로스 + RSI>40 필터 매수
+source: auto_generated
+category: crossover
+status: validated
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: EMA_12
+    indicator_b: EMA_26
+    direction: above
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 40
+  exit:
+  - condition: crossover
+    indicator_a: EMA_12
+    indicator_b: EMA_26
+    direction: below
+indicators:
+- type: ema
+  column: close
+  output_name: EMA_12
+  period: 12
+- type: ema
+  column: close
+  output_name: EMA_26
+  period: 26
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

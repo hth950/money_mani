@@ -1,0 +1,37 @@
+name: SMA 장기필터 (100+10/30)
+description: SMA100 위에서 10/30 크로스 매수
+source: auto_generated
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_100
+    direction: above
+  - condition: crossover
+    indicator_a: SMA_10
+    indicator_b: SMA_30
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: SMA_10
+    indicator_b: SMA_30
+    direction: below
+indicators:
+- type: sma
+  column: close
+  output_name: SMA_100
+  period: 100
+- type: sma
+  column: close
+  output_name: SMA_10
+  period: 10
+- type: sma
+  column: close
+  output_name: SMA_30
+  period: 30
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

@@ -1,0 +1,29 @@
+name: SMA 크로스 (20/120)
+description: SMA 20일이 SMA 120일을 상향 돌파시 매수, 하향 돌파시 매도
+source: auto_generated
+category: crossover
+status: validated
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: SMA_20
+    indicator_b: SMA_120
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: SMA_20
+    indicator_b: SMA_120
+    direction: below
+indicators:
+- type: sma
+  column: close
+  output_name: SMA_20
+  period: 20
+- type: sma
+  column: close
+  output_name: SMA_120
+  period: 120
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

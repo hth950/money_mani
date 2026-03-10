@@ -1,0 +1,42 @@
+name: BB+RSI+거래량 복합
+description: BB 수축(BBB<5) + RSI 40~60 중립 + 거래량 급증 → 폭발 직전 매수
+source: auto_generated
+category: composite
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 40
+  - condition: threshold
+    indicator: VOL_RATIO
+    direction: above
+    value: 1.5
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: BBU_20_2.0
+    direction: above
+  exit:
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 75
+indicators:
+- type: bbands
+  column: close
+  output_name: BB_20
+  period: 20
+  std: 2.0
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+- type: sma
+  column: volume
+  output_name: VOL_SMA_20
+  period: 20
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

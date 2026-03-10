@@ -1,0 +1,33 @@
+name: ROC(60)+SMA 추세
+description: ROC(60)>8% + SMA 50 위 모멘텀 추세
+source: auto_generated
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: ROC_60
+    direction: above
+    value: 8
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_50
+    direction: above
+  exit:
+  - condition: threshold
+    indicator: ROC_60
+    direction: below
+    value: 0
+indicators:
+- type: roc
+  column: close
+  output_name: ROC_60
+  period: 60
+- type: sma
+  column: close
+  output_name: SMA_50
+  period: 50
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

@@ -1,0 +1,29 @@
+name: VWAP 이탈 반등 (-2.0%)
+description: VWAP 대비 -2.0% 이상 하락시 평균회귀 매수
+source: auto_generated
+category: mean_reversion
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: VWAP_DIST
+    direction: below
+    value: -2.0
+  exit:
+  - condition: threshold
+    indicator: VWAP_DIST
+    direction: above
+    value: 0
+indicators:
+- type: vwap
+  column: close
+  output_name: VWAP
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+  take_profit: 0.08
+backtest_results: {}

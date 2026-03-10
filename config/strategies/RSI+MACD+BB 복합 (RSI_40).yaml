@@ -1,0 +1,45 @@
+name: RSI+MACD+BB 복합 (RSI>40)
+description: RSI>40 + MACD히스토그램 양수 + BB 상단 미만 → 상승 여력 매수
+source: auto_generated
+category: composite
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 40
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: above
+    value: 0
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: BBU_20_2.0
+    direction: below
+  exit:
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 70
+indicators:
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+- type: macd
+  column: close
+  output_name: MACD_12_26_9
+  period: 14
+  fast: 12
+  slow: 26
+  signal: 9
+- type: bbands
+  column: close
+  output_name: BB_20
+  period: 20
+  std: 2.0
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

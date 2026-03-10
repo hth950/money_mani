@@ -1,0 +1,29 @@
+name: ADX 추세 (10/ADX>20)
+description: ADX(10)>20이고 DI+ > DI- 시 매수
+source: auto_generated
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: ADX_10
+    direction: above
+    value: 20
+  - condition: threshold_compare
+    indicator_a: DMP_10
+    indicator_b: DMN_10
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: DMP_10
+    indicator_b: DMN_10
+    direction: below
+indicators:
+- type: adx
+  column: close
+  output_name: ADX_10
+  period: 10
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

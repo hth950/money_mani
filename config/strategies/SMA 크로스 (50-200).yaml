@@ -1,0 +1,29 @@
+name: SMA 크로스 (50/200)
+description: SMA 50일이 SMA 200일을 상향 돌파시 매수, 하향 돌파시 매도
+source: auto_generated
+category: crossover
+status: rejected
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: SMA_50
+    indicator_b: SMA_200
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: SMA_50
+    indicator_b: SMA_200
+    direction: below
+indicators:
+- type: sma
+  column: close
+  output_name: SMA_50
+  period: 50
+- type: sma
+  column: close
+  output_name: SMA_200
+  period: 200
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

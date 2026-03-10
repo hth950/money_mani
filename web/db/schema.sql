@@ -205,3 +205,45 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_entries (category);
 CREATE INDEX IF NOT EXISTS idx_knowledge_subject ON knowledge_entries (subject);
+
+-- Market intelligence: LLM web search scan executions
+CREATE TABLE IF NOT EXISTS market_intel_scans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_time TEXT NOT NULL,
+    scan_type TEXT NOT NULL,
+    model_used TEXT,
+    raw_response TEXT,
+    issues_count INTEGER DEFAULT 0,
+    tickers_count INTEGER DEFAULT 0,
+    status TEXT CHECK(status IN ('success', 'partial', 'failed')) DEFAULT 'success',
+    error_message TEXT,
+    discord_sent INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_intel_scan_time ON market_intel_scans (scan_time);
+CREATE INDEX IF NOT EXISTS idx_intel_scan_created ON market_intel_scans (created_at);
+
+-- Market intelligence: detected issues with affected tickers and price tracking
+CREATE TABLE IF NOT EXISTS market_intel_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id INTEGER REFERENCES market_intel_scans(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    summary TEXT,
+    category TEXT,
+    sentiment TEXT CHECK(sentiment IN ('positive', 'negative', 'neutral', 'mixed')),
+    confidence REAL DEFAULT 0.0,
+    source_info TEXT,
+    affected_tickers_json TEXT,
+    price_at_detection_json TEXT,
+    price_after_1d_json TEXT,
+    price_after_3d_json TEXT,
+    price_after_5d_json TEXT,
+    accuracy_score REAL,
+    detection_date TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_intel_issue_scan ON market_intel_issues (scan_id);
+CREATE INDEX IF NOT EXISTS idx_intel_issue_date ON market_intel_issues (detection_date);
+CREATE INDEX IF NOT EXISTS idx_intel_issue_category ON market_intel_issues (category);

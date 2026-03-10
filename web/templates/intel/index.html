@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}시장 인텔리전스 - Money Mani{% endblock %}
+{% block content %}
+<h2>시장 인텔리전스</h2>
+<p>LLM 웹검색 기반 시장 이슈 감지 및 종목 추적</p>
+
+<!-- Manual scan controls -->
+<details>
+    <summary>수동 스캔 실행</summary>
+    <div class="grid" style="margin-top:1rem">
+        <button onclick="runScan('pre_market')">장전 브리핑</button>
+        <button onclick="runScan('midday')">장중 업데이트</button>
+        <button onclick="runScan('post_market')">장후 분석</button>
+        <button onclick="runScan('overnight')">야간 글로벌</button>
+    </div>
+    <div id="scan-status" style="margin-top:0.5rem"></div>
+</details>
+
+<!-- Accuracy stats -->
+<div id="accuracy-section" style="margin-top:1.5rem">
+    <h3>예측 정확도</h3>
+    <div id="accuracy-stats">로딩 중...</div>
+</div>
+
+<!-- Recent issues -->
+<div style="margin-top:1.5rem">
+    <h3>최근 이슈</h3>
+    <div class="grid" style="margin-bottom:1rem">
+        <select id="category-filter" onchange="loadIssues()">
+            <option value="">전체 카테고리</option>
+            <option value="policy">정책/규제</option>
+            <option value="earnings">기업 실적</option>
+            <option value="sector">섹터/테마</option>
+            <option value="global">글로벌</option>
+            <option value="event">이벤트</option>
+            <option value="supply_demand">수급</option>
+        </select>
+        <select id="days-filter" onchange="loadIssues()">
+            <option value="3">최근 3일</option>
+            <option value="7" selected>최근 7일</option>
+            <option value="14">최근 14일</option>
+            <option value="30">최근 30일</option>
+        </select>
+    </div>
+    <div id="issues-list">로딩 중...</div>
+</div>
+
+<!-- Recent scans -->
+<div style="margin-top:1.5rem">
+    <h3>스캔 이력</h3>
+    <div id="scans-list">로딩 중...</div>
+</div>
+
+<script>
+const CATEGORY_LABELS = {
+    policy: '정책/규제', earnings: '기업 실적', sector: '섹터/테마',
+    global: '글로벌', event: '이벤트', supply_demand: '수급'
+};
+const SENTIMENT_COLORS = {
+    positive: '#00B050', negative: '#FF0000',
+    neutral: '#888', mixed: '#F39C12'
+};
+const SENTIMENT_LABELS = {
+    positive: '긍정', negative: '부정', neutral: '중립', mixed: '혼합'
+};
+
+async function runScan(scanType) {
+    const el = document.getElementById('scan-status');
+    el.innerHTML = '<small aria-busy="true">스캔 실행 중...</small>';
+    try {
+        const res = await fetch('/api/intel/scan', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({scan_type: scanType})
+        });
+        const data = await res.json();
+        el.innerHTML = '<small style="color:green">스캔 시작됨: ' + data.message + '</small>';
+        setTimeout(() => { loadIssues(); loadScans(); }, 30000);
+    } catch(e) {
+        el.innerHTML = '<small style="color:red">오류: ' + e.message + '</small>';
+    }
+}
+
+async function loadIssues() {
+    const cat = document.getElementById('category-filter').value;
+    const days = document.getElementById('days-filter').value;
+    let url = '/api/intel/issues?days=' + days;
+    if (cat) url += '&category=' + cat;
+
+    const el = document.getElementById('issues-list');
+    try {
+        const res = await fetch(url);
+        const issues = await res.json();
+        if (!issues.length) {
+            el.innerHTML = '<p>표시할 이슈가 없습니다.</p>';
+            return;
+        }
+        el.innerHTML = issues.map(renderIssueCard).join('');
+    } catch(e) {
+        el.innerHTML = '<p style="color:red">로딩 실패: ' + e.message + '</p>';
+    }
+}
+
+function renderIssueCard(issue) {
+    const cat = CATEGORY_LABELS[issue.category] || issue.category || '-';
+    const sent = SENTIMENT_LABELS[issue.sentiment] || issue.sentiment || '-';
+    const sentColor = SENTIMENT_COLORS[issue.sentiment] || '#888';
+    const conf = issue.confidence ? (issue.confidence * 100).toFixed(0) + '%' : '-';
+    const tickers = issue.affected_tickers || [];
+    const detPrices = issue.price_at_detection || {};
+    const p1d = issue.price_after_1d || {};
+    const p3d = issue.price_after_3d || {};
+    const p5d = issue.price_after_5d || {};
+
+    let tickerRows = '';
+    if (tickers.length) {
+        tickerRows = '<table role="grid"><thead><tr>' +
+            '<th>종목</th><th>방향</th><th>감지가</th>' +
+            '<th>+1일</th><th>+3일</th><th>+5일</th><th>이유</th>' +
+            '</tr></thead><tbody>';
+        for (const t of tickers) {
+            const dir = t.direction === 'up' ? '↑' : '↓';
+            const dirColor = t.direction === 'up' ? '#00B050' : '#FF0000';
+            const dp = detPrices[t.ticker] ? detPrices[t.ticker].toLocaleString() : '-';
+            const a1 = priceCell(detPrices[t.ticker], p1d[t.ticker]);
+            const a3 = priceCell(detPrices[t.ticker], p3d[t.ticker]);
+            const a5 = priceCell(detPrices[t.ticker], p5d[t.ticker]);
+            tickerRows += '<tr>' +
+                '<td>' + t.name + ' (' + t.ticker + ')</td>' +
+                '<td style="color:' + dirColor + ';font-weight:bold">' + dir + '</td>' +
+                '<td>' + dp + '</td>' +
+                '<td>' + a1 + '</td><td>' + a3 + '</td><td>' + a5 + '</td>' +
+                '<td><small>' + (t.reason || '') + '</small></td></tr>';
+        }
+        tickerRows += '</tbody></table>';
+    }
+
+    const accBadge = issue.accuracy_score !== null && issue.accuracy_score !== undefined
+        ? '<span style="margin-left:0.5rem;padding:2px 6px;border-radius:4px;' +
+          'background:' + (issue.accuracy_score >= 0.5 ? '#00B050' : '#FF0000') +
+          ';color:#fff;font-size:0.8rem">' +
+          (issue.accuracy_score * 100).toFixed(0) + '% 정확</span>'
+        : '';
+
+    return '<article style="margin-bottom:1rem">' +
+        '<header><strong>' + issue.title + '</strong>' +
+        ' <span style="background:#3498DB;color:#fff;padding:2px 6px;border-radius:4px;font-size:0.8rem">' + cat + '</span>' +
+        ' <span style="color:' + sentColor + ';font-size:0.8rem;font-weight:bold">' + sent + '</span>' +
+        ' <small>확신도: ' + conf + '</small>' + accBadge +
+        '</header>' +
+        '<p>' + (issue.summary || '') + '</p>' +
+        tickerRows +
+        (issue.source_info ? '<footer><small>출처: ' + issue.source_info + '</small></footer>' : '') +
+        '</article>';
+}
+
+function priceCell(base, current) {
+    if (!current) return '-';
+    const formatted = current.toLocaleString();
+    if (!base) return formatted;
+    const pct = ((current - base) / base * 100).toFixed(2);
+    const color = pct >= 0 ? '#00B050' : '#FF0000';
+    const sign = pct >= 0 ? '+' : '';
+    return formatted + ' <small style="color:' + color + '">(' + sign + pct + '%)</small>';
+}
+
+async function loadScans() {
+    const el = document.getElementById('scans-list');
+    try {
+        const res = await fetch('/api/intel/scans?limit=10');
+        const scans = await res.json();
+        if (!scans.length) {
+            el.innerHTML = '<p>스캔 이력이 없습니다.</p>';
+            return;
+        }
+        let html = '<table role="grid"><thead><tr>' +
+            '<th>시간</th><th>유형</th><th>이슈</th><th>종목</th><th>상태</th>' +
+            '</tr></thead><tbody>';
+        for (const s of scans) {
+            const statusColor = s.status === 'success' ? '#00B050' :
+                               s.status === 'partial' ? '#F39C12' : '#FF0000';
+            html += '<tr><td>' + s.created_at + '</td>' +
+                '<td>' + s.scan_type + '</td>' +
+                '<td>' + s.issues_count + '</td>' +
+                '<td>' + s.tickers_count + '</td>' +
+                '<td style="color:' + statusColor + '">' + s.status + '</td></tr>';
+        }
+        html += '</tbody></table>';
+        el.innerHTML = html;
+    } catch(e) {
+        el.innerHTML = '<p style="color:red">로딩 실패</p>';
+    }
+}
+
+async function loadAccuracy() {
+    const el = document.getElementById('accuracy-stats');
+    try {
+        const res = await fetch('/api/intel/accuracy');
+        const data = await res.json();
+        const overall = data.overall || {};
+        if (!overall.total) {
+            el.innerHTML = '<p>아직 정확도 데이터가 없습니다 (5영업일 후 집계).</p>';
+            return;
+        }
+        const pct = overall.avg_accuracy ? (overall.avg_accuracy * 100).toFixed(1) : '0';
+        let html = '<p><strong>전체 평균 정확도: ' + pct + '%</strong> (' + overall.total + '건 평가)</p>';
+        if (data.by_category && data.by_category.length) {
+            html += '<table role="grid"><thead><tr><th>카테고리</th><th>건수</th><th>평균 정확도</th></tr></thead><tbody>';
+            for (const c of data.by_category) {
+                const catLabel = CATEGORY_LABELS[c.category] || c.category;
+                const acc = c.avg_accuracy ? (c.avg_accuracy * 100).toFixed(1) : '0';
+                html += '<tr><td>' + catLabel + '</td><td>' + c.total + '</td><td>' + acc + '%</td></tr>';
+            }
+            html += '</tbody></table>';
+        }
+        el.innerHTML = html;
+    } catch(e) {
+        el.innerHTML = '<p>정확도 데이터 로딩 실패</p>';
+    }
+}
+
+// Initial load
+loadIssues();
+loadScans();
+loadAccuracy();
+</script>
+{% endblock %}

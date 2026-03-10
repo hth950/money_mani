@@ -64,6 +64,12 @@ realtime:
     api_secret: "${KIS_API_SECRET}"
     account_number: "${KIS_ACCOUNT_NUMBER}"
 
+market_intel:
+  enabled: true
+  model: "google/gemini-3-flash-preview"
+  max_tokens: 4096
+  temperature: 0.2
+
 logging:
   level: "INFO"
   file: "output/logs/money_mani.log"

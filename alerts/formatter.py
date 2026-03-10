@@ -10,14 +10,15 @@ class AlertFormatter:
     COLOR_WARN = 0xF39C12  # orange
 
     @staticmethod
-    def format_signal_alert(signal: dict) -> dict:
+    def format_signal_alert(signal: dict, extra_info: dict = None) -> dict:
         """Format a trading signal for a Discord embed.
 
         Args:
             signal: {
                 strategy_name, ticker, ticker_name, signal_type (BUY/SELL),
-                price, indicators: {}, date
+                price, indicators: {}, date, consensus_count, consensus_strategies
             }
+            extra_info: Optional dict with consensus/strategies display info.
 
         Returns:
             Discord embed dict.
@@ -27,28 +28,47 @@ class AlertFormatter:
         action_label = "매수" if signal_type == "BUY" else "매도"
         action_emoji = "🟢" if signal_type == "BUY" else "🔴"
 
+        consensus_n = signal.get("consensus_count")
+        if consensus_n:
+            title = f"{action_emoji} [{action_label}] {signal.get('ticker_name', signal.get('ticker', ''))} — {consensus_n}개 전략 합의"
+        else:
+            title = f"{action_emoji} [{action_label}] {signal.get('ticker_name', signal.get('ticker', ''))} 신호 발생"
+
         fields = [
-            {"name": "전략", "value": signal.get("strategy_name", "-"), "inline": True},
-            {"name": "종목코드", "value": signal.get("ticker", "-"), "inline": True},
-            {"name": "종목명", "value": signal.get("ticker_name", "-"), "inline": True},
+            {"name": "종목", "value": f"{signal.get('ticker_name', '-')} ({signal.get('ticker', '-')})", "inline": True},
             {"name": "신호", "value": f"{action_emoji} {action_label}", "inline": True},
             {"name": "현재가", "value": f"{signal.get('price', 0):,.0f} 원", "inline": True},
             {"name": "날짜", "value": signal.get("date", "-"), "inline": True},
         ]
 
+        # Add consensus info
+        if extra_info:
+            if extra_info.get("consensus"):
+                fields.append({"name": "합의", "value": extra_info["consensus"], "inline": True})
+            if extra_info.get("strategies"):
+                fields.append({"name": "동의 전략", "value": extra_info["strategies"], "inline": False})
+        elif consensus_n:
+            strats = signal.get("consensus_strategies", [])
+            fields.append({"name": "합의 수", "value": f"{consensus_n}개 전략", "inline": True})
+            if strats:
+                strat_text = ", ".join(strats[:5])
+                if len(strats) > 5:
+                    strat_text += f" 외 {len(strats)-5}개"
+                fields.append({"name": "동의 전략", "value": strat_text, "inline": False})
+
         indicators = signal.get("indicators", {})
         if indicators:
             ind_lines = "\n".join(
                 f"**{k}**: {v:,.0f}" if isinstance(v, (int, float)) else f"**{k}**: {v}"
-                for k, v in indicators.items()
+                for k, v in list(indicators.items())[:6]
             )
             fields.append({"name": "지표", "value": ind_lines, "inline": False})
 
         return {
-            "title": f"{action_emoji} [{action_label}] {signal.get('ticker_name', signal.get('ticker', ''))} 신호 발생",
+            "title": title,
             "color": color,
             "fields": fields,
-            "footer": {"text": "Money Mani 트레이딩 시스템"},
+            "footer": {"text": "Money Mani 앙상블 트레이딩"},
         }
 
     @staticmethod
@@ -148,12 +168,15 @@ class AlertFormatter:
         }
 
     @staticmethod
-    def format_daily_summary(signals: list, date: str) -> dict:
+    def format_daily_summary(signals: list, date: str, ensemble_n: int = None,
+                              consensus_summary: dict = None) -> dict:
         """Format a daily summary grouped by ticker with consensus.
 
         Args:
-            signals: list of signal dicts.
+            signals: list of signal dicts (ensemble-filtered).
             date: date string (YYYY-MM-DD).
+            ensemble_n: Ensemble consensus threshold used.
+            consensus_summary: Per-ticker signal counts from all strategies.
 
         Returns:
             Discord embed dict.
@@ -210,9 +233,11 @@ class AlertFormatter:
 
             fields = [
                 {"name": "날짜", "value": date, "inline": True},
-                {"name": "시그널", "value": f"{count}건 (🟢{buy_total} / 🔴{sell_total})", "inline": True},
+                {"name": "합의 시그널", "value": f"{count}건 (🟢{buy_total} / 🔴{sell_total})", "inline": True},
                 {"name": "종목 수", "value": f"{len(tickers)}개", "inline": True},
             ]
+            if ensemble_n:
+                fields.append({"name": "합의 기준", "value": f"N >= {ensemble_n}", "inline": True})
 
             # Split into chunks if too long (Discord 1024 char limit per field)
             summary_text = "\n\n".join(lines)
@@ -225,7 +250,7 @@ class AlertFormatter:
                     fields.append({"name": label, "value": chunk[:1024], "inline": False})
 
         return {
-            "title": f"📅 일일 시그널 합의 요약 ({date})",
+            "title": f"📅 앙상블 시그널 요약 ({date})" + (f" [N>={ensemble_n}]" if ensemble_n else ""),
             "color": color,
             "fields": fields,
             "footer": {"text": "Money Mani 트레이딩 시스템"},
@@ -368,6 +393,75 @@ class AlertFormatter:
             "color": AlertFormatter.COLOR_INFO,
             "fields": [{"name": "상위 전략", "value": "\n\n".join(lines), "inline": False}],
             "footer": {"text": "Money Mani 성과 분석"},
+        }
+
+    @staticmethod
+    def format_market_intel_alert(issues: list, scan_time: str,
+                                   scan_type: str, label: str) -> dict:
+        """Format market intelligence scan results as a Discord embed.
+
+        Args:
+            issues: List of issue dicts from MarketIntelScanner.
+            scan_time: Scan time string (HH:MM).
+            scan_type: Scan type key.
+            label: Human-readable scan type label.
+
+        Returns:
+            Discord embed dict.
+        """
+        if not issues:
+            return {
+                "title": f"🔍 시장 인텔리전스 ({scan_time} {label})",
+                "color": AlertFormatter.COLOR_INFO,
+                "fields": [{"name": "결과", "value": "감지된 이슈가 없습니다.", "inline": False}],
+                "footer": {"text": "Money Mani 시장 인텔리전스"},
+            }
+
+        fields = [
+            {"name": "스캔 시간", "value": scan_time, "inline": True},
+            {"name": "유형", "value": label, "inline": True},
+            {"name": "이슈 수", "value": f"{len(issues)}건", "inline": True},
+        ]
+
+        category_emoji = {
+            "policy": "📋", "earnings": "💰", "sector": "📊",
+            "global": "🌍", "event": "📰", "supply_demand": "📈",
+        }
+        sentiment_emoji = {
+            "positive": "🟢", "negative": "🔴", "neutral": "⚪", "mixed": "🟡",
+        }
+
+        for issue in issues[:6]:
+            cat_em = category_emoji.get(issue.get("category", ""), "📰")
+            sent_em = sentiment_emoji.get(issue.get("sentiment", ""), "⚪")
+            cat_label = issue.get("category", "")
+
+            tickers = issue.get("affected_tickers", [])
+            ticker_lines = []
+            for t in tickers[:5]:
+                direction = "↑" if t.get("direction") == "up" else "↓"
+                ticker_lines.append(
+                    f"  {direction} {t.get('ticker', '')} {t.get('name', '')}"
+                )
+            ticker_text = "\n".join(ticker_lines) if ticker_lines else "  (종목 없음)"
+
+            conf = issue.get("confidence", 0)
+            field_value = (
+                f"{sent_em} {issue.get('summary', '')[:120]}\n"
+                f"확신도: {conf:.0%}\n{ticker_text}"
+            )
+
+            fields.append({
+                "name": f"{cat_em} [{cat_label}] {issue.get('title', '')}",
+                "value": field_value[:1024],
+                "inline": False,
+            })
+
+        return {
+            "title": f"🔍 시장 인텔리전스 ({scan_time} {label})",
+            "color": AlertFormatter.COLOR_INFO,
+            "fields": fields,
+            "footer": {"text": "Money Mani 시장 인텔리전스"},
         }
 
     @staticmethod

@@ -10,8 +10,21 @@ class SignalService:
     """Persist and query trading signals."""
 
     def save_signal(self, signal_info: dict) -> int:
-        """Save a signal dict to the signals table. Returns signal ID."""
+        """Save a signal dict to the signals table. Returns signal ID.
+
+        Skips if the same strategy+ticker+signal_type already exists today (DB-level dedup).
+        """
         with get_db() as db:
+            existing = db.execute(
+                """SELECT id FROM signals
+                   WHERE strategy_name = ? AND ticker = ? AND signal_type = ?
+                     AND date(detected_at) = date('now')""",
+                (signal_info.get("strategy_name", ""), signal_info["ticker"], signal_info["signal_type"]),
+            ).fetchone()
+            if existing:
+                logger.debug(f"Signal already exists today: {signal_info.get('strategy_name')}/{signal_info['ticker']}")
+                return existing["id"]
+
             cursor = db.execute(
                 """INSERT INTO signals (strategy_name, ticker, ticker_name, market,
                    signal_type, price, indicators_json, source)

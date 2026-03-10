@@ -1,0 +1,34 @@
+name: CCI+BB 하단 반등
+description: CCI<-100 + BB 하단 이하 → 극단적 과매도 반등
+source: auto_generated
+category: mean_reversion
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: CCI_20
+    direction: below
+    value: -100
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: BBL_20_2.0
+    direction: below
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: BBM_20_2.0
+    direction: above
+indicators:
+- type: cci
+  column: close
+  output_name: CCI_20
+  period: 20
+- type: bbands
+  column: close
+  output_name: BB_20
+  period: 20
+  std: 2.0
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

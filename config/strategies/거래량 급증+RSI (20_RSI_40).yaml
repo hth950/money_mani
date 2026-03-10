@@ -1,0 +1,33 @@
+name: 거래량 급증+RSI (20/RSI>40)
+description: 거래량 SMA(20) 2배 이상 급증 + RSI>40 매수
+source: auto_generated
+category: volume
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: VOL_RATIO
+    direction: above
+    value: 2.0
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 40
+  exit:
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 70
+indicators:
+- type: sma
+  column: volume
+  output_name: VOL_SMA_20
+  period: 20
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

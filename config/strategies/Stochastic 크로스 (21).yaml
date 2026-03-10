@@ -1,0 +1,25 @@
+name: Stochastic 크로스 (21)
+description: Stochastic K(21)가 D를 과매도 구간에서 상향 돌파시 매수
+source: auto_generated
+category: crossover
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: STOCH_21
+    direction: below
+    value: 25
+  exit:
+  - condition: threshold
+    indicator: STOCH_21
+    direction: above
+    value: 80
+indicators:
+- type: stoch
+  column: close
+  output_name: STOCH_21
+  period: 21
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

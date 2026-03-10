@@ -1,0 +1,41 @@
+name: EMA(10/40)+RSI+ATR
+description: EMA 10/40 크로스 + RSI>45 + ATR 돌파 확인 매수
+source: auto_generated
+category: composite
+status: validated
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: EMA_10
+    indicator_b: EMA_40
+    direction: above
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 45
+  exit:
+  - condition: crossover
+    indicator_a: EMA_10
+    indicator_b: EMA_40
+    direction: below
+indicators:
+- type: ema
+  column: close
+  output_name: EMA_10
+  period: 10
+- type: ema
+  column: close
+  output_name: EMA_40
+  period: 40
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+- type: atr
+  column: close
+  output_name: ATR_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
 
 from .models import Strategy
+
+
+def _safe_filename(name: str) -> str:
+    """Sanitize strategy name for use as filename."""
+    return re.sub(r'[<>:"/\\|?*]', '_', name)
 
 _STRATEGIES_DIR = Path(__file__).parent.parent / "config" / "strategies"
 
@@ -29,6 +35,15 @@ class StrategyRegistry:
                 data = yaml.safe_load(f)
             return Strategy.from_yaml(data)
 
+        # Try sanitized filename
+        safe = _safe_filename(name)
+        if safe != name:
+            path = self._dir / f"{safe}.yaml"
+            if path.exists():
+                with open(path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                return Strategy.from_yaml(data)
+
         # Fallback: search by internal name field
         for p in self._dir.glob("*.yaml"):
             with open(p, "r", encoding="utf-8") as f:
@@ -42,9 +57,28 @@ class StrategyRegistry:
     def load_strategy(self, name: str) -> Strategy:
         return self.load(name)
 
+    def _find_file(self, name: str) -> Path | None:
+        """Find the YAML file for a strategy by name."""
+        path = self._dir / f"{name}.yaml"
+        if path.exists():
+            return path
+        safe = _safe_filename(name)
+        if safe != name:
+            path = self._dir / f"{safe}.yaml"
+            if path.exists():
+                return path
+        # Search by internal name
+        for p in self._dir.glob("*.yaml"):
+            with open(p, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            if data and data.get("name") == name:
+                return p
+        return None
+
     def save_strategy(self, strategy: Strategy) -> None:
-        """Save a Strategy to config/strategies/{name}.yaml."""
-        path = self._dir / f"{strategy.name}.yaml"
+        """Save a Strategy, overwriting existing file if found."""
+        existing = self._find_file(strategy.name)
+        path = existing or (self._dir / f"{_safe_filename(strategy.name)}.yaml")
         with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(strategy.to_dict(), f, allow_unicode=True, sort_keys=False)
 

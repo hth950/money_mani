@@ -1,0 +1,32 @@
+name: OBV 상승+MA (50)
+description: OBV 기울기 양수 + 가격이 SMA(50) 위일 때 매수
+source: auto_generated
+category: volume
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: OBV_SLOPE
+    direction: above
+    value: 0
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_50
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_50
+    direction: below
+indicators:
+- type: obv
+  column: close
+  output_name: OBV
+- type: sma
+  column: close
+  output_name: SMA_50
+  period: 50
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

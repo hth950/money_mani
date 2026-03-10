@@ -1,0 +1,29 @@
+name: ADX 추세 (14/ADX>30)
+description: ADX(14)>30이고 DI+ > DI- 시 매수
+source: auto_generated
+category: trend
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: ADX_14
+    direction: above
+    value: 30
+  - condition: threshold_compare
+    indicator_a: DMP_14
+    indicator_b: DMN_14
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: DMP_14
+    indicator_b: DMN_14
+    direction: below
+indicators:
+- type: adx
+  column: close
+  output_name: ADX_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

@@ -1,0 +1,45 @@
+name: KC+MACD+RSI 트리플
+description: Keltner 상한 돌파 + MACD 양수 + RSI<70 여력 확인 매수
+source: auto_generated
+category: composite
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: KCU_20
+    direction: above
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: above
+    value: 0
+  - condition: threshold
+    indicator: RSI_14
+    direction: below
+    value: 70
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: KCM_20
+    direction: below
+indicators:
+- type: kc
+  column: close
+  output_name: KC_20
+  period: 20
+  scalar: 2.0
+- type: macd
+  column: close
+  output_name: MACD_12_26_9
+  period: 14
+  fast: 12
+  slow: 26
+  signal: 9
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

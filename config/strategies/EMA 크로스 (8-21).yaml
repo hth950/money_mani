@@ -1,0 +1,29 @@
+name: EMA 크로스 (8/21)
+description: EMA 8일이 EMA 21일을 상향 돌파시 매수
+source: auto_generated
+category: crossover
+status: validated
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: EMA_8
+    indicator_b: EMA_21
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: EMA_8
+    indicator_b: EMA_21
+    direction: below
+indicators:
+- type: ema
+  column: close
+  output_name: EMA_8
+  period: 8
+- type: ema
+  column: close
+  output_name: EMA_21
+  period: 21
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

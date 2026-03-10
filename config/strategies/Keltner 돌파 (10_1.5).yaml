@@ -1,0 +1,26 @@
+name: Keltner 돌파 (10/1.5)
+description: Keltner Channel(10, 1.5) 상단 돌파시 매수
+source: auto_generated
+category: breakout
+status: rejected
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: KCU_10
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: KCM_10
+    direction: below
+indicators:
+- type: kc
+  column: close
+  output_name: KC_10
+  period: 10
+  scalar: 1.5
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

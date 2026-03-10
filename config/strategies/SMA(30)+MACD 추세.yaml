@@ -1,0 +1,36 @@
+name: SMA(30)+MACD 추세
+description: SMA(30)+MACD
+source: auto_generated
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_30
+    direction: above
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: above
+    value: 0
+  exit:
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: below
+    value: 0
+indicators:
+- type: sma
+  column: close
+  output_name: SMA_30
+  period: 30
+- type: macd
+  column: close
+  output_name: MACD_12_26_9
+  period: 14
+  fast: 12
+  slow: 26
+  signal: 9
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

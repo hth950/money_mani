@@ -1,0 +1,41 @@
+name: EMA+CCI+거래량 복합
+description: EMA 20 지지 + CCI>0 모멘텀 + 거래량 1.5배 매수
+source: auto_generated
+category: composite
+status: rejected
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: EMA_20
+    direction: above
+  - condition: threshold
+    indicator: CCI_20
+    direction: above
+    value: 0
+  - condition: threshold
+    indicator: VOL_RATIO
+    direction: above
+    value: 1.5
+  exit:
+  - condition: threshold
+    indicator: CCI_20
+    direction: below
+    value: -100
+indicators:
+- type: ema
+  column: close
+  output_name: EMA_20
+  period: 20
+- type: cci
+  column: close
+  output_name: CCI_20
+  period: 20
+- type: sma
+  column: volume
+  output_name: VOL_SMA_20
+  period: 20
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

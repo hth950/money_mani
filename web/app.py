@@ -70,3 +70,5 @@ app.include_router(discovery_router)
 app.include_router(portfolio_router)
 app.include_router(performance_router)
 app.include_router(knowledge_router)
+from web.routers.market_intel import router as intel_router
+app.include_router(intel_router)

@@ -1,0 +1,30 @@
+name: BB 수축 대기 (15/BBB<0.04)
+description: BB(15) 밴드폭 0.04 이하 수축 후 상단 돌파
+source: auto_generated
+category: volatility
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: BBB_15_2.0
+    direction: below
+    value: 4.0
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: BBU_15_2.0
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: BBM_15_2.0
+    direction: below
+indicators:
+- type: bbands
+  column: close
+  output_name: BB_15
+  period: 15
+  std: 2.0
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

@@ -1,0 +1,33 @@
+name: EMA 20+Donchian(15) 복합
+description: EMA20+DC
+source: auto_generated
+category: composite
+status: rejected
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: EMA_20
+    direction: above
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: DCU_15
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: DCL_15
+    direction: below
+indicators:
+- type: ema
+  column: close
+  output_name: EMA_20
+  period: 20
+- type: donchian
+  column: close
+  output_name: DC_15
+  period: 15
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

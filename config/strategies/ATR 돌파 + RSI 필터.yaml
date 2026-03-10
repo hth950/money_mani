@@ -1,0 +1,33 @@
+name: ATR 돌파 + RSI 필터
+description: ATR 변동성 돌파 + RSI 50 이상 모멘텀 확인 매수
+source: auto_generated
+category: breakout
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: ATR_BREAKOUT
+    direction: above
+    value: 0
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 50
+  exit:
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 75
+indicators:
+- type: atr
+  column: close
+  output_name: ATR_14
+  period: 14
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

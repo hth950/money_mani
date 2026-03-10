@@ -1,0 +1,25 @@
+name: MFI 반등 (10/15)
+description: MFI(10) 15 이하 진입, 85 이상 청산
+source: auto_generated
+category: momentum
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: MFI_10
+    direction: below
+    value: 15
+  exit:
+  - condition: threshold
+    indicator: MFI_10
+    direction: above
+    value: 85
+indicators:
+- type: mfi
+  column: close
+  output_name: MFI_10
+  period: 10
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

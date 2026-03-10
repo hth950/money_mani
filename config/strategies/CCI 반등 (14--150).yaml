@@ -1,0 +1,25 @@
+name: CCI 반등 (14/-150)
+description: CCI(14) -150 이하 진입, 150 이상 청산
+source: auto_generated
+category: momentum
+status: rejected
+rules:
+  entry:
+  - condition: threshold
+    indicator: CCI_14
+    direction: below
+    value: -150
+  exit:
+  - condition: threshold
+    indicator: CCI_14
+    direction: above
+    value: 150
+indicators:
+- type: cci
+  column: close
+  output_name: CCI_14
+  period: 14
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

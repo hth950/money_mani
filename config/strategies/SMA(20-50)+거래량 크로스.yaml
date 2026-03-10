@@ -1,0 +1,37 @@
+name: SMA(20-50)+거래량 크로스
+description: SMA 20/50 크로스 + 거래량 1.5배 확인 매수
+source: auto_generated
+category: crossover
+status: rejected
+rules:
+  entry:
+  - condition: crossover
+    indicator_a: SMA_20
+    indicator_b: SMA_50
+    direction: above
+  - condition: threshold
+    indicator: VOL_RATIO
+    direction: above
+    value: 1.5
+  exit:
+  - condition: crossover
+    indicator_a: SMA_20
+    indicator_b: SMA_50
+    direction: below
+indicators:
+- type: sma
+  column: close
+  output_name: SMA_20
+  period: 20
+- type: sma
+  column: close
+  output_name: SMA_50
+  period: 50
+- type: sma
+  column: volume
+  output_name: VOL_SMA_20
+  period: 20
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

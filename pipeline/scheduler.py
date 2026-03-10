@@ -10,6 +10,8 @@ from pipeline.daily_scan import DailyScan
 from pipeline.evening_report import EveningReport
 from pipeline.nightly import NightlyOrchestrator
 from pipeline.runner import PipelineRunner
+from pipeline.market_intel import MarketIntelScanner
+from pipeline.intel_price_tracker import IntelPriceTracker
 from utils.config_loader import load_config
 
 logger = logging.getLogger("money_mani.pipeline.scheduler")
@@ -50,6 +52,32 @@ def _run_evening_report():
         logger.info(f"Nightly orchestrator result: {result}")
     except Exception as e:
         logger.error(f"Nightly orchestrator job failed: {e}", exc_info=True)
+    finally:
+        gc.collect()
+
+
+def _run_intel_scan(scan_type: str = "pre_market"):
+    """Job: market intelligence scan."""
+    try:
+        logger.info(f"=== Intel Scan Job Started ({scan_type}) ===")
+        scanner = MarketIntelScanner()
+        result = scanner.scan(scan_type)
+        logger.info(f"Intel scan result: {result}")
+    except Exception as e:
+        logger.error(f"Intel scan job failed: {e}", exc_info=True)
+    finally:
+        gc.collect()
+
+
+def _run_intel_price_tracker():
+    """Job: update intel issue price tracking."""
+    try:
+        logger.info("=== Intel Price Tracker Job Started ===")
+        tracker = IntelPriceTracker()
+        result = tracker.run()
+        logger.info(f"Price tracker result: {result}")
+    except Exception as e:
+        logger.error(f"Intel price tracker job failed: {e}", exc_info=True)
     finally:
         gc.collect()
 
@@ -132,6 +160,29 @@ def start_scheduler():
         )
         scheduler.add_job(_run_research_refresh, trigger, id="research_refresh", name="Research Refresh")
         logger.info(f"Scheduled research refresh: {research_cfg['cron']} ({tz_r})")
+
+    # Market intelligence scans (4 times daily)
+    intel_cfg = config.get("market_intel", {})
+    if intel_cfg.get("enabled", True) is not False:
+        for scan_type, hour in [("pre_market", "9"), ("midday", "13"),
+                                 ("post_market", "17"), ("overnight", "23")]:
+            scheduler.add_job(
+                _run_intel_scan,
+                CronTrigger(minute="0", hour=hour, day_of_week="mon-fri", timezone=tz),
+                id=f"intel_{scan_type}",
+                name=f"Intel Scan ({scan_type})",
+                kwargs={"scan_type": scan_type},
+            )
+        logger.info("Scheduled intel scans: 09/13/17/23 KST (weekdays)")
+
+        # Price tracker (16:00 KST weekdays, after market close)
+        scheduler.add_job(
+            _run_intel_price_tracker,
+            CronTrigger(minute="0", hour="16", day_of_week="mon-fri", timezone=tz),
+            id="intel_price_tracker",
+            name="Intel Price Tracker",
+        )
+        logger.info("Scheduled intel price tracker: 16:00 KST (weekdays)")
 
     logger.info("Starting scheduler... (Ctrl+C to stop)")
     try:

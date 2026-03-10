@@ -1,0 +1,44 @@
+name: MACD+RSI+SMA 복합 (RSI 45, MA 20)
+description: MACD 양수 + RSI>45 + SMA(20) 지지 매수
+source: auto_generated
+category: composite
+status: validated
+rules:
+  entry:
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: above
+    value: 0
+  - condition: threshold
+    indicator: RSI_14
+    direction: above
+    value: 45
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: SMA_20
+    direction: above
+  exit:
+  - condition: threshold
+    indicator: MACDh_12_26_9
+    direction: below
+    value: 0
+indicators:
+- type: macd
+  column: close
+  output_name: MACD_12_26_9
+  period: 14
+  fast: 12
+  slow: 26
+  signal: 9
+- type: rsi
+  column: close
+  output_name: RSI_14
+  period: 14
+- type: sma
+  column: close
+  output_name: SMA_20
+  period: 20
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

@@ -1,0 +1,32 @@
+name: Ichimoku 구름 (7/22/44)
+description: Ichimoku(7,22,44) 구름 상방 돌파시 매수
+source: auto_generated
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: ISA_7
+    direction: above
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: ISB_22
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: IKS_22
+    direction: below
+indicators:
+- type: ichimoku
+  column: close
+  output_name: ICHIMOKU
+  period: 14
+  tenkan: 7
+  kijun: 22
+  senkou: 44
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

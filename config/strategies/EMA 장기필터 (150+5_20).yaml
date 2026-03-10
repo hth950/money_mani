@@ -1,0 +1,37 @@
+name: EMA 장기필터 (150+5/20)
+description: EMA150 위에서 5/20 크로스 매수
+source: auto_generated
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: EMA_150
+    direction: above
+  - condition: crossover
+    indicator_a: EMA_5
+    indicator_b: EMA_20
+    direction: above
+  exit:
+  - condition: crossover
+    indicator_a: EMA_5
+    indicator_b: EMA_20
+    direction: below
+indicators:
+- type: ema
+  column: close
+  output_name: EMA_150
+  period: 150
+- type: ema
+  column: close
+  output_name: EMA_5
+  period: 5
+- type: ema
+  column: close
+  output_name: EMA_20
+  period: 20
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

@@ -1,0 +1,25 @@
+name: Donchian 돌파 (30)
+description: Donchian Channel 30일 상한 돌파시 매수, 하한 이탈시 매도
+source: auto_generated
+category: breakout
+status: rejected
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: DCU_30
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: DCL_30
+    direction: below
+indicators:
+- type: donchian
+  column: close
+  output_name: DC_30
+  period: 30
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

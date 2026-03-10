@@ -1,0 +1,27 @@
+name: PSAR 추세 (af=0.01)
+description: Parabolic SAR(af=0.01, max=0.1) 가격 하방에 있을 때 매수
+source: auto_generated
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: PSAR
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: Close
+    indicator_b: PSAR
+    direction: below
+indicators:
+- type: psar
+  column: close
+  output_name: PSAR
+  period: 14
+  af: 0.01
+  max_af: 0.1
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}

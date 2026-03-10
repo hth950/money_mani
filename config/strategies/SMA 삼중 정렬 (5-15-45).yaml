@@ -1,0 +1,37 @@
+name: SMA 삼중 정렬 (5-15-45)
+description: SMA 5 > 15 > 45 정렬 확인 추세 매수
+source: auto_generated
+category: trend
+status: validated
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: SMA_5
+    indicator_b: SMA_15
+    direction: above
+  - condition: threshold_compare
+    indicator_a: SMA_15
+    indicator_b: SMA_45
+    direction: above
+  exit:
+  - condition: threshold_compare
+    indicator_a: SMA_5
+    indicator_b: SMA_15
+    direction: below
+indicators:
+- type: sma
+  column: close
+  output_name: SMA_5
+  period: 5
+- type: sma
+  column: close
+  output_name: SMA_15
+  period: 15
+- type: sma
+  column: close
+  output_name: SMA_45
+  period: 45
+parameters:
+  position_size: 1.0
+  stop_loss: 0.05
+backtest_results: {}
