@@ -70,6 +70,10 @@ market_intel:
   max_tokens: 4096
   temperature: 0.2
 
+naver:
+  client_id: "${NAVER_CLIENT_ID}"
+  client_secret: "${NAVER_CLIENT_SECRET}"
+
 logging:
   level: "INFO"
   file: "output/logs/money_mani.log"
