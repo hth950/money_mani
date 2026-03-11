@@ -241,9 +241,29 @@ CREATE TABLE IF NOT EXISTS market_intel_issues (
     price_after_5d_json TEXT,
     accuracy_score REAL,
     detection_date TEXT,
+    content_hash TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_intel_issue_scan ON market_intel_issues (scan_id);
 CREATE INDEX IF NOT EXISTS idx_intel_issue_date ON market_intel_issues (detection_date);
 CREATE INDEX IF NOT EXISTS idx_intel_issue_category ON market_intel_issues (category);
+CREATE INDEX IF NOT EXISTS idx_intel_issue_hash ON market_intel_issues (content_hash);
+
+-- Intel-signal correlation tracking
+CREATE TABLE IF NOT EXISTS intel_signal_correlation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    intel_issue_id INTEGER REFERENCES market_intel_issues(id),
+    signal_id INTEGER,
+    ensemble_signal TEXT,
+    intel_direction TEXT,
+    intel_confidence REAL,
+    actual_1d_change REAL,
+    matched INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_correlation_date ON intel_signal_correlation (date);
+CREATE INDEX IF NOT EXISTS idx_correlation_ticker ON intel_signal_correlation (ticker);

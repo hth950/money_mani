@@ -91,10 +91,76 @@ class MarketIntelService:
                    FROM market_intel_issues
                    WHERE accuracy_score IS NOT NULL"""
             ).fetchone()
+            ticker_rows = conn.execute(
+                """SELECT i.affected_tickers_json, i.accuracy_score
+                   FROM market_intel_issues i
+                   WHERE i.accuracy_score IS NOT NULL"""
+            ).fetchall()
+            recent = conn.execute(
+                """SELECT id, title, category, sentiment, confidence,
+                          accuracy_score, detection_date
+                   FROM market_intel_issues
+                   WHERE accuracy_score IS NOT NULL
+                   ORDER BY detection_date DESC LIMIT 10"""
+            ).fetchall()
+
+        # Aggregate accuracy by ticker
+        ticker_acc: dict = {}
+        for row in ticker_rows:
+            raw = row["affected_tickers_json"]
+            if not raw:
+                continue
+            try:
+                tickers = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            for t in tickers:
+                code = t.get("ticker", "")
+                if not code:
+                    continue
+                entry = ticker_acc.setdefault(code, {
+                    "ticker": code,
+                    "name": t.get("name", ""),
+                    "count": 0,
+                    "total_score": 0.0,
+                })
+                entry["count"] += 1
+                entry["total_score"] += row["accuracy_score"] or 0.0
+        by_ticker = [
+            {
+                "ticker": v["ticker"],
+                "name": v["name"],
+                "count": v["count"],
+                "avg_accuracy": v["total_score"] / v["count"] if v["count"] else 0.0,
+            }
+            for v in ticker_acc.values()
+        ]
+
         return {
             "by_category": [dict(r) for r in rows],
             "overall": dict(overall) if overall else {"total": 0, "avg_accuracy": 0},
+            "by_ticker": by_ticker,
+            "recent_issues": [dict(r) for r in recent],
         }
+
+    def get_issues_by_ticker(self, days: int = 7) -> dict[str, list[dict]]:
+        """Get recent issues indexed by ticker code for cache use."""
+        issues = self.get_issues(days=days)
+        by_ticker: dict[str, list[dict]] = {}
+        for issue in issues:
+            tickers = issue.get("affected_tickers") or []
+            for t in tickers:
+                code = t.get("ticker", "")
+                if code:
+                    by_ticker.setdefault(code, []).append({
+                        "title": issue.get("title", ""),
+                        "category": issue.get("category", ""),
+                        "sentiment": issue.get("sentiment", ""),
+                        "confidence": issue.get("confidence", 0),
+                        "direction": t.get("direction", ""),
+                        "detection_date": issue.get("detection_date", ""),
+                    })
+        return by_ticker
 
     def run_scan_now(self, scan_type: str = "pre_market") -> dict:
         """Trigger a manual scan."""

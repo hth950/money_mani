@@ -1,6 +1,7 @@
 """Real-time stock monitoring loop with Discord alerts."""
 
 import logging
+import threading
 import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -62,6 +63,31 @@ class RealtimeMonitor:
         self.strategies: list[Strategy] = []
         self.ticker_map: dict[str, TickerContext] = {}
         self._running = False
+        self._intel_cache: dict[str, list[dict]] = {}
+        self._intel_cache_lock = threading.Lock()
+        self._intel_last_refresh = 0.0
+        self._intel_refresh_interval = 300  # 5 minutes
+
+    def _refresh_intel_cache(self):
+        """Refresh intel issues cache (every 5 minutes)."""
+        now = _time.time()
+        if now - self._intel_last_refresh < self._intel_refresh_interval:
+            return
+        try:
+            from web.services.market_intel_service import MarketIntelService
+            service = MarketIntelService()
+            cache = service.get_issues_by_ticker(days=7)
+            with self._intel_cache_lock:
+                self._intel_cache = cache
+            self._intel_last_refresh = now
+            logger.debug(f"Intel cache refreshed: {len(cache)} tickers")
+        except Exception as e:
+            logger.warning(f"Intel cache refresh failed: {e}")
+
+    def _get_intel_context(self, ticker: str) -> list[dict]:
+        """Get cached intel issues for a ticker."""
+        with self._intel_cache_lock:
+            return self._intel_cache.get(ticker, [])
 
     def start(self):
         """Main entry point: load data, seed buffers, run loop."""
@@ -228,6 +254,7 @@ class RealtimeMonitor:
         """One monitoring cycle: fetch prices, compute signals, alert."""
         now_str = datetime.now(KST).strftime("%H:%M:%S")
         logger.debug(f"Tick at {now_str} - markets: {active_markets}")
+        self._refresh_intel_cache()
 
         to_remove = []
 
@@ -313,6 +340,21 @@ class RealtimeMonitor:
             "holding": ctx.holding,
             "currency": currency,
         }
+
+        # Intel overlay: log coverage
+        intel_ctx = self._get_intel_context(ticker)
+        if intel_ctx:
+            latest = intel_ctx[0]
+            logger.info(
+                f"INTEL OVERLAY {ticker}: {len(intel_ctx)} recent issues, "
+                f"latest='{latest.get('title', '')[:40]}' "
+                f"sentiment={latest.get('sentiment', 'N/A')} "
+                f"direction={latest.get('direction', 'N/A')}"
+            )
+            signal_info["intel_context"] = intel_ctx[:3]  # Attach top 3 for reference
+        else:
+            logger.info(f"INTEL GAP: No intel coverage for {ctx.name}({ticker})")
+            signal_info["intel_context"] = None
 
         embed = AlertFormatter.format_realtime_signal(signal_info)
         self.discord.send(embed=embed)

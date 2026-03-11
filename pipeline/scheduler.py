@@ -12,6 +12,7 @@ from pipeline.nightly import NightlyOrchestrator
 from pipeline.runner import PipelineRunner
 from pipeline.market_intel import MarketIntelScanner
 from pipeline.intel_price_tracker import IntelPriceTracker
+from pipeline.correlation_logger import CorrelationLogger
 from utils.config_loader import load_config
 
 logger = logging.getLogger("money_mani.pipeline.scheduler")
@@ -78,6 +79,19 @@ def _run_intel_price_tracker():
         logger.info(f"Price tracker result: {result}")
     except Exception as e:
         logger.error(f"Intel price tracker job failed: {e}", exc_info=True)
+    finally:
+        gc.collect()
+
+
+def _run_correlation_logger():
+    """Job: log intel-signal correlations."""
+    try:
+        logger.info("=== Correlation Logger Job Started ===")
+        cl = CorrelationLogger()
+        result = cl.run()
+        logger.info(f"Correlation logger result: {result}")
+    except Exception as e:
+        logger.error(f"Correlation logger job failed: {e}", exc_info=True)
     finally:
         gc.collect()
 
@@ -183,6 +197,15 @@ def start_scheduler():
             name="Intel Price Tracker",
         )
         logger.info("Scheduled intel price tracker: 16:00 KST (weekdays)")
+
+        # Correlation logger (18:00 KST weekdays)
+        scheduler.add_job(
+            _run_correlation_logger,
+            CronTrigger(minute="0", hour="18", day_of_week="mon-fri", timezone=tz),
+            id="correlation_logger",
+            name="Intel-Signal Correlation Logger",
+        )
+        logger.info("Scheduled correlation logger: 18:00 KST (weekdays)")
 
     logger.info("Starting scheduler... (Ctrl+C to stop)")
     try:

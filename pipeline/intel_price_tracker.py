@@ -97,6 +97,19 @@ class IntelPriceTracker:
                 if updates:
                     self._update_issue(issue_id, updates)
                     updated += 1
+                    for day in (1, 3, 5):
+                        key = f"price_after_{day}d_json"
+                        if key in updates:
+                            prices_logged = json.loads(updates[key])
+                            logger.info(f"Issue #{issue_id}: updated price_after_{day}d for {len(prices_logged)} tickers")
+                    if "accuracy_score" in updates:
+                        logger.info(f"Issue #{issue_id} accuracy computed: {updates['accuracy_score']:.1%}")
+                        try:
+                            from alerts.discord_webhook import DiscordNotifier
+                            notifier = DiscordNotifier()
+                            notifier.send(content=f"📊 인텔 정확도 측정 완료: Issue #{issue_id} - 적중률 {updates['accuracy_score']:.1%}")
+                        except Exception as e:
+                            logger.warning(f"Discord notification failed: {e}")
 
             except Exception as e:
                 logger.error(f"Price tracking error for issue {row['id']}: {e}")
@@ -132,8 +145,10 @@ class IntelPriceTracker:
         for ticker in tickers:
             try:
                 df = self.krx.get_ohlcv(ticker, start, end)
-                if not df.empty:
-                    prices[ticker] = int(df["Close"].iloc[-1])
+                if df.empty:
+                    logger.warning(f"Price fetch for {ticker} at {end}: empty data (possible delisting/suspension)")
+                    continue
+                prices[ticker] = int(df["Close"].iloc[-1])
             except Exception as e:
                 logger.warning(f"Price fetch for {ticker} at {end}: {e}")
         return prices
@@ -147,10 +162,11 @@ class IntelPriceTracker:
             predicted = t.get("direction", "")
             if code in detection_prices and code in after_prices:
                 actual_change = after_prices[code] - detection_prices[code]
-                if predicted == "up" and actual_change > 0:
+                match = (predicted == "up" and actual_change > 0) or \
+                        (predicted == "down" and actual_change < 0)
+                if match:
                     correct += 1
-                elif predicted == "down" and actual_change < 0:
-                    correct += 1
+                logger.info(f"  {code}: predicted={predicted}, actual_change={actual_change:+,}, {'✓' if match else '✗'}")
                 total += 1
         return correct / total if total > 0 else 0.0
 

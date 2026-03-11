@@ -1,5 +1,6 @@
 """Market intelligence scanner: LLM + web search for market issue detection."""
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -269,32 +270,71 @@ class MarketIntelScanner:
     def _save_scan_with_issues(self, scan_time, scan_type, raw_response,
                                 issues, detection_date) -> dict:
         """Save scan + issues to DB."""
-        total_tickers = sum(len(i.get("affected_tickers", [])) for i in issues)
         status = "success" if issues else "partial"
 
+        inserted_count = 0
+        inserted_tickers = 0
+
         with get_db() as conn:
+            # Insert scan with placeholder counts; update after dedup pass
             cur = conn.execute(
                 """INSERT INTO market_intel_scans
                    (scan_time, scan_type, model_used, raw_response,
                     issues_count, tickers_count, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, 0, 0, ?)""",
                 (scan_time, scan_type, "google/gemini-3-flash-preview",
-                 raw_response, len(issues), total_tickers, status),
+                 raw_response, status),
             )
             scan_id = cur.lastrowid
 
             for issue in issues:
+                title = issue.get("title", "")
+                category = issue.get("category", "")
+                content_hash = self._compute_content_hash(title, category, detection_date)
+
+                existing = conn.execute(
+                    "SELECT id, confidence FROM market_intel_issues WHERE content_hash = ?",
+                    (content_hash,),
+                ).fetchone()
+
+                if existing:
+                    existing_id = existing["id"]
+                    new_confidence = issue.get("confidence", 0.0)
+                    if new_confidence > existing["confidence"]:
+                        conn.execute(
+                            """UPDATE market_intel_issues
+                               SET confidence = ?,
+                                   summary = ?,
+                                   affected_tickers_json = ?,
+                                   price_at_detection_json = ?
+                               WHERE id = ?""",
+                            (
+                                new_confidence,
+                                issue.get("summary", ""),
+                                json.dumps(issue.get("affected_tickers", []),
+                                           ensure_ascii=False),
+                                json.dumps(issue.get("price_at_detection", {}),
+                                           ensure_ascii=False),
+                                existing_id,
+                            ),
+                        )
+                        logger.info(f"Dedup: updated issue #{existing_id} with higher confidence "
+                                    f"({existing['confidence']:.2f} -> {new_confidence:.2f}) [{title[:50]}]")
+                    else:
+                        logger.info(f"Dedup: skipped duplicate issue (hash={content_hash}) [{title[:50]}]")
+                    continue
+
                 conn.execute(
                     """INSERT INTO market_intel_issues
                        (scan_id, title, summary, category, sentiment, confidence,
                         source_info, affected_tickers_json, price_at_detection_json,
-                        detection_date)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        detection_date, content_hash)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         scan_id,
-                        issue.get("title", ""),
+                        title,
                         issue.get("summary", ""),
-                        issue.get("category", ""),
+                        category,
                         issue.get("sentiment", ""),
                         issue.get("confidence", 0.0),
                         issue.get("source_info", ""),
@@ -303,13 +343,22 @@ class MarketIntelScanner:
                         json.dumps(issue.get("price_at_detection", {}),
                                    ensure_ascii=False),
                         detection_date,
+                        content_hash,
                     ),
                 )
+                inserted_count += 1
+                inserted_tickers += len(issue.get("affected_tickers", []))
+
+            # Update scan with actual new-issue counts
+            conn.execute(
+                "UPDATE market_intel_scans SET issues_count = ?, tickers_count = ? WHERE id = ?",
+                (inserted_count, inserted_tickers, scan_id),
+            )
 
         return {
             "scan_id": scan_id,
-            "issues_count": len(issues),
-            "tickers_count": total_tickers,
+            "issues_count": inserted_count,
+            "tickers_count": inserted_tickers,
             "status": status,
         }
 
@@ -323,6 +372,11 @@ class MarketIntelScanner:
         )
         notifier = DiscordNotifier()
         notifier.send(embed=embed)
+
+    def _compute_content_hash(self, title: str, category: str, detection_date: str) -> str:
+        """Compute hash for dedup: same title+category+date = duplicate."""
+        normalized = f"{title.strip().lower()}|{category or ''}|{detection_date}"
+        return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
     def _mark_discord_sent(self, scan_id):
         """Mark scan as discord-sent."""

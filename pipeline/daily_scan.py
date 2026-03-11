@@ -16,6 +16,7 @@ from web.services.signal_service import SignalService
 from web.services.performance_service import PerformanceService
 from web.services.position_service import PositionService
 from web.services.conflict_resolver import ConflictResolver
+from pipeline.decision_score import log_conviction
 
 KST = timezone(timedelta(hours=9))
 
@@ -140,6 +141,10 @@ class DailyScan:
 
         # Apply ensemble consensus filter
         ensemble_signals, consensus_summary = self._apply_ensemble_filter(signals)
+
+        # Classify conviction for each consensus signal
+        for sig in ensemble_signals:
+            log_conviction(sig)
 
         # Save ALL individual signals to DB (for tracking), but only alert on consensus
         if signals:
