@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from llm.client import OpenRouterClient
-from llm.prompts import MARKET_INTEL_PROMPT
+from llm.prompts import MARKET_INTEL_PROMPT, MARKET_INTEL_US_PROMPT
 from market_data.fdr_fetcher import FDRFetcher
 from market_data.krx_fetcher import KRXFetcher
 from pipeline.web_search import WebSearcher
@@ -18,6 +18,7 @@ logger = logging.getLogger("money_mani.pipeline.market_intel")
 SCAN_TYPE_CONFIG = {
     "pre_market": {
         "label": "장전 브리핑",
+        "market": "KRX",
         "queries": [
             "한국 주식시장 오늘 이슈",
             "코스피 코스닥 뉴스",
@@ -27,6 +28,7 @@ SCAN_TYPE_CONFIG = {
     },
     "midday": {
         "label": "장중 업데이트",
+        "market": "KRX",
         "queries": [
             "오늘 주식시장 이슈",
             "코스피 장중 뉴스",
@@ -36,6 +38,7 @@ SCAN_TYPE_CONFIG = {
     },
     "post_market": {
         "label": "장후 분석",
+        "market": "KRX",
         "queries": [
             "오늘 주식시장 마감 분석",
             "코스피 코스닥 마감",
@@ -43,13 +46,34 @@ SCAN_TYPE_CONFIG = {
             "외국인 기관 매매 동향",
         ],
     },
-    "overnight": {
-        "label": "야간 글로벌",
+    "us_pre_market": {
+        "label": "US Pre-Market",
+        "market": "US",
         "queries": [
-            "미국 주식시장 뉴스",
-            "나스닥 S&P500 동향",
-            "글로벌 경제 이슈",
-            "환율 원자재 가격",
+            "US stock market news today",
+            "Wall Street pre-market movers",
+            "NASDAQ S&P500 futures",
+            "US earnings reports today",
+        ],
+    },
+    "us_midday": {
+        "label": "US Midday",
+        "market": "US",
+        "queries": [
+            "US stock market midday movers",
+            "NASDAQ rally today",
+            "S&P500 intraday news",
+            "US stock breaking news",
+        ],
+    },
+    "us_post_market": {
+        "label": "US After-Hours",
+        "market": "US",
+        "queries": [
+            "US stock market closing summary",
+            "Wall Street after hours movers",
+            "US earnings after hours",
+            "NASDAQ S&P500 closing analysis",
         ],
     },
 }
@@ -79,7 +103,7 @@ class MarketIntelScanner:
         """Run a market intelligence scan.
 
         Args:
-            scan_type: One of pre_market, midday, post_market, overnight.
+            scan_type: One of pre_market, midday, post_market.
 
         Returns:
             Dict with scan_id, issues_count, tickers_count, status.
@@ -88,7 +112,8 @@ class MarketIntelScanner:
         scan_time = now.strftime("%H:%M")
         config = SCAN_TYPE_CONFIG.get(scan_type, SCAN_TYPE_CONFIG["pre_market"])
         label = config["label"]
-        logger.info(f"=== Market Intel Scan: {scan_type} ({label}) ===")
+        market = config.get("market", "KRX")
+        logger.info(f"=== Market Intel Scan: {scan_type} ({label}) [market={market}] ===")
 
         # Step 1: Web search
         search_results = self.searcher.multi_search(config["queries"], max_per_query=5)
@@ -100,8 +125,9 @@ class MarketIntelScanner:
         # Step 2: Format search results for LLM
         search_text = self._format_search_results(search_results)
 
-        # Step 3: LLM analysis
-        prompt = MARKET_INTEL_PROMPT.format(
+        # Step 3: LLM analysis (market-specific prompt)
+        prompt_template = MARKET_INTEL_US_PROMPT if market == "US" else MARKET_INTEL_PROMPT
+        prompt = prompt_template.format(
             current_time=now.strftime("%Y-%m-%d %H:%M"),
             scan_type_label=label,
             search_results=search_text,
@@ -109,7 +135,7 @@ class MarketIntelScanner:
         try:
             raw_response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
-                model="google/gemini-3-flash-preview",
+                model="google/gemini-3.1-flash-lite-preview",
                 temperature=0.2,
                 max_tokens=4096,
             )
@@ -124,11 +150,13 @@ class MarketIntelScanner:
             return self._save_scan(scan_time, scan_type, raw_response=raw_response,
                                    status="failed", error="JSON parse error")
 
-        # Step 5: Validate tickers
-        issues = self._validate_tickers(issues)
+        # Step 5: Validate tickers (KRX only - US tickers don't need KRX validation)
+        if market == "KRX":
+            issues = self._validate_tickers(issues)
 
-        # Step 6: Fetch detection prices
-        issues = self._fetch_detection_prices(issues)
+        # Step 6: Fetch detection prices (KRX only for now)
+        if market == "KRX":
+            issues = self._fetch_detection_prices(issues)
 
         # Step 7: Save to DB
         result = self._save_scan_with_issues(
@@ -260,7 +288,7 @@ class MarketIntelScanner:
                    (scan_time, scan_type, model_used, raw_response,
                     issues_count, tickers_count, status, error_message)
                    VALUES (?, ?, ?, ?, 0, 0, ?, ?)""",
-                (scan_time, scan_type, "google/gemini-3-flash-preview",
+                (scan_time, scan_type, "google/gemini-3.1-flash-lite-preview",
                  raw_response, status, error),
             )
             scan_id = cur.lastrowid
@@ -282,7 +310,7 @@ class MarketIntelScanner:
                    (scan_time, scan_type, model_used, raw_response,
                     issues_count, tickers_count, status)
                    VALUES (?, ?, ?, ?, 0, 0, ?)""",
-                (scan_time, scan_type, "google/gemini-3-flash-preview",
+                (scan_time, scan_type, "google/gemini-3.1-flash-lite-preview",
                  raw_response, status),
             )
             scan_id = cur.lastrowid

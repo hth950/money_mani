@@ -162,6 +162,43 @@ class MarketIntelService:
                     })
         return by_ticker
 
+    def get_high_confidence_tickers(self, days: int = 7,
+                                       min_confidence: float = 0.7) -> dict[str, list[dict]]:
+        """Get high-confidence tickers from recent intel for auto-watchlist.
+
+        Returns dict keyed by market ("KRX"/"US") with list of ticker info dicts.
+        Each dict: {"ticker", "name", "direction", "confidence", "title"}.
+        """
+        issues = self.get_issues(days=days)
+        result: dict[str, list[dict]] = {"KRX": [], "US": []}
+        seen: set[str] = set()
+
+        for issue in issues:
+            if (issue.get("confidence") or 0) < min_confidence:
+                continue
+            tickers = issue.get("affected_tickers") or []
+            for t in tickers:
+                code = t.get("ticker", "").strip()
+                if not code or code in seen:
+                    continue
+                seen.add(code)
+
+                # Determine market by ticker format
+                if code.isdigit() and len(code) == 6:
+                    market = "KRX"
+                else:
+                    market = "US"
+
+                result[market].append({
+                    "ticker": code,
+                    "name": t.get("name", code),
+                    "direction": t.get("direction", ""),
+                    "confidence": issue.get("confidence", 0),
+                    "title": issue.get("title", ""),
+                })
+
+        return result
+
     def run_scan_now(self, scan_type: str = "pre_market") -> dict:
         """Trigger a manual scan."""
         from pipeline.market_intel import MarketIntelScanner

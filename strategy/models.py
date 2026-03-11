@@ -17,6 +17,7 @@ class Strategy:
     indicators: list
     parameters: dict
     backtest_results: dict | None = None
+    market: str = "ALL"  # "KRX", "US", or "ALL"
 
     @classmethod
     def from_yaml(cls, data: dict) -> "Strategy":
@@ -30,6 +31,7 @@ class Strategy:
             indicators=data.get("indicators", []),
             parameters=data.get("parameters", {}),
             backtest_results=data.get("backtest_results", None),
+            market=data.get("market", "ALL"),
         )
 
     def to_dict(self) -> dict:
@@ -43,4 +45,5 @@ class Strategy:
             "indicators": self.indicators,
             "parameters": self.parameters,
             "backtest_results": self.backtest_results,
+            "market": self.market,
         }

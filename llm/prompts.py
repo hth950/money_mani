@@ -176,3 +176,46 @@ MARKET_INTEL_PROMPT = """당신은 한국 주식시장 전문 애널리스트입
 - 모르는 종목코드는 종목명만 적고 코드는 빈 문자열로 두세요
 - 실제 뉴스에 기반한 이슈만 포함하세요 (추측 금지)
 """
+
+MARKET_INTEL_US_PROMPT = """You are a US stock market analyst. Analyze the latest news/search results below and extract key issues that may impact US stock markets.
+
+Current time: {current_time} KST
+Scan type: {scan_type_label}
+
+=== Latest News/Search Results ===
+{search_results}
+=== End ===
+
+Analyze the news and extract:
+1. Federal Reserve / monetary policy (interest rates, QE/QT)
+2. Corporate earnings / guidance (earnings beats/misses, revenue surprises)
+3. Sector momentum (AI, semiconductors, EVs, biotech, energy)
+4. Macro indicators (jobs, CPI, GDP, consumer sentiment)
+5. Geopolitical events (trade policy, sanctions, supply chain)
+
+Respond with ONLY a valid JSON array (no markdown, no extra text):
+[
+  {{
+    "title": "<Issue title>",
+    "summary": "<Issue description (2-3 sentences)>",
+    "category": "<policy|earnings|sector|global|event|supply_demand>",
+    "sentiment": "<positive|negative|neutral|mixed>",
+    "confidence": <0.0-1.0>,
+    "affected_tickers": [
+      {{
+        "ticker": "<US ticker symbol (e.g. AAPL, MSFT, NVDA)>",
+        "name": "<Company name>",
+        "direction": "<up|down>",
+        "reason": "<Why this stock is affected>"
+      }}
+    ],
+    "source_info": "<News source summary>"
+  }}
+]
+
+Rules:
+- Extract 3-8 issues minimum
+- Each issue should have 1-5 affected tickers
+- Use standard US ticker symbols (e.g. AAPL=Apple, MSFT=Microsoft, GOOGL=Alphabet, AMZN=Amazon, NVDA=NVIDIA, TSLA=Tesla, META=Meta, JPM=JPMorgan, V=Visa, JNJ=Johnson&Johnson)
+- Only include issues based on actual news (no speculation)
+"""

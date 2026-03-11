@@ -31,18 +31,6 @@ def _run_daily_scan():
         gc.collect()
 
 
-def _run_intraday_scan():
-    """Job: intraday 30-min scan during market hours."""
-    try:
-        logger.info("=== Intraday Scan (30min) Started ===")
-        scan = DailyScan()
-        result = scan.run()
-        logger.info(f"Intraday scan result: {result}")
-    except Exception as e:
-        logger.error(f"Intraday scan failed: {e}", exc_info=True)
-    finally:
-        gc.collect()
-
 
 def _run_evening_report():
     """Job: nightly orchestrator (19:00 KST) - P&L, positions, analytics, knowledge."""
@@ -96,6 +84,35 @@ def _run_correlation_logger():
         gc.collect()
 
 
+def _start_monitor(market_filter: str = None):
+    """Job: auto-start realtime monitor via web API (force restart)."""
+    import requests
+    try:
+        # Stop first if running
+        requests.post("http://localhost:8000/api/monitor/stop", timeout=5)
+        import time
+        time.sleep(1)
+        # Start
+        params = {}
+        if market_filter:
+            params["market_filter"] = market_filter
+        resp = requests.post("http://localhost:8000/api/monitor/start",
+                             params=params, timeout=10)
+        logger.info(f"Monitor auto-start: {resp.json()}")
+    except Exception as e:
+        logger.error(f"Monitor auto-start failed: {e}", exc_info=True)
+
+
+def _stop_monitor():
+    """Job: auto-stop realtime monitor via web API."""
+    import requests
+    try:
+        resp = requests.post("http://localhost:8000/api/monitor/stop", timeout=5)
+        logger.info(f"Monitor auto-stop: {resp.json()}")
+    except Exception as e:
+        logger.error(f"Monitor auto-stop failed: {e}", exc_info=True)
+
+
 def _run_research_refresh():
     """Job: weekly research refresh."""
     try:
@@ -130,29 +147,38 @@ def start_scheduler():
         scheduler.add_job(_run_daily_scan, trigger, id="daily_scan", name="Daily Scan")
         logger.info(f"Scheduled daily scan: {daily_cfg['cron']} ({tz})")
 
-    # KRX intraday scan (every 30min, 9:30~15:00 KST, weekdays)
+    # Realtime monitor auto-start/stop
+    # KRX: 08:50 start -> 15:35 stop (weekdays)
     scheduler.add_job(
-        _run_intraday_scan,
-        CronTrigger(minute="0,30", hour="9-14", day_of_week="mon-fri", timezone=tz),
-        id="krx_intraday",
-        name="KRX Intraday Scan (30min)",
+        _start_monitor,
+        CronTrigger(minute="50", hour="8", day_of_week="mon-fri", timezone=tz),
+        id="monitor_krx_start",
+        name="Monitor KRX Auto-Start",
+        kwargs={"market_filter": None},  # Start for all markets
     )
-    logger.info("Scheduled KRX intraday scan: every 30min 09:00-14:30 KST (weekdays)")
+    scheduler.add_job(
+        _stop_monitor,
+        CronTrigger(minute="35", hour="15", day_of_week="mon-fri", timezone=tz),
+        id="monitor_krx_stop",
+        name="Monitor KRX Auto-Stop",
+    )
+    logger.info("Scheduled monitor auto-start: 08:50 KST / auto-stop: 15:35 KST (weekdays)")
 
-    # US intraday scan (every 30min, 23:30~05:30 KST, weekdays - US market hours)
+    # US: 22:50 start -> 06:05 stop (Mon-Fri start, Tue-Sat stop)
     scheduler.add_job(
-        _run_intraday_scan,
-        CronTrigger(minute="0,30", hour="23", day_of_week="mon-fri", timezone=tz),
-        id="us_intraday_night",
-        name="US Intraday Scan (night)",
+        _start_monitor,
+        CronTrigger(minute="50", hour="22", day_of_week="mon-fri", timezone=tz),
+        id="monitor_us_start",
+        name="Monitor US Auto-Start",
+        kwargs={"market_filter": None},
     )
     scheduler.add_job(
-        _run_intraday_scan,
-        CronTrigger(minute="0,30", hour="0-5", day_of_week="tue-sat", timezone=tz),
-        id="us_intraday_early",
-        name="US Intraday Scan (early morning)",
+        _stop_monitor,
+        CronTrigger(minute="5", hour="6", day_of_week="tue-sat", timezone=tz),
+        id="monitor_us_stop",
+        name="Monitor US Auto-Stop",
     )
-    logger.info("Scheduled US intraday scan: every 30min 23:00-05:30 KST (weekdays)")
+    logger.info("Scheduled monitor auto-start: 22:50 KST / auto-stop: 06:05 KST (US hours)")
 
     # Evening performance report (19:00 KST, weekdays)
     scheduler.add_job(
@@ -178,16 +204,42 @@ def start_scheduler():
     # Market intelligence scans (4 times daily)
     intel_cfg = config.get("market_intel", {})
     if intel_cfg.get("enabled", True) is not False:
-        for scan_type, hour in [("pre_market", "9"), ("midday", "13"),
-                                 ("post_market", "17"), ("overnight", "23")]:
+        # KRX intel: hourly 09:00-15:00 KST
+        krx_scan_hours = {
+            9: "pre_market", 10: "midday", 11: "midday",
+            12: "midday", 13: "midday", 14: "post_market", 15: "post_market",
+        }
+        for hour, scan_type in krx_scan_hours.items():
             scheduler.add_job(
                 _run_intel_scan,
-                CronTrigger(minute="0", hour=hour, day_of_week="mon-fri", timezone=tz),
-                id=f"intel_{scan_type}",
-                name=f"Intel Scan ({scan_type})",
+                CronTrigger(minute="0", hour=str(hour), day_of_week="mon-fri", timezone=tz),
+                id=f"intel_krx_{hour:02d}",
+                name=f"KRX Intel ({hour:02d}:00)",
                 kwargs={"scan_type": scan_type},
             )
-        logger.info("Scheduled intel scans: 09/13/17/23 KST (weekdays)")
+        logger.info("Scheduled KRX intel scans: hourly 09:00-15:00 KST (weekdays)")
+
+        # US intel: hourly during US market hours (KST)
+        # US regular session: 23:30~06:00 KST -> hourly 23,0,1,2,3,4,5,6
+        us_scan_hours = {
+            23: ("mon-fri", "us_pre_market"),
+            0: ("tue-sat", "us_midday"),
+            1: ("tue-sat", "us_midday"),
+            2: ("tue-sat", "us_midday"),
+            3: ("tue-sat", "us_midday"),
+            4: ("tue-sat", "us_midday"),
+            5: ("tue-sat", "us_post_market"),
+            6: ("tue-sat", "us_post_market"),
+        }
+        for hour, (dow, scan_type) in us_scan_hours.items():
+            scheduler.add_job(
+                _run_intel_scan,
+                CronTrigger(minute="0", hour=str(hour), day_of_week=dow, timezone=tz),
+                id=f"intel_us_{hour:02d}",
+                name=f"US Intel ({hour:02d}:00)",
+                kwargs={"scan_type": scan_type},
+            )
+        logger.info("Scheduled US intel scans: hourly 23:00-06:00 KST (US market hours)")
 
         # Price tracker (16:00 KST weekdays, after market close)
         scheduler.add_job(
@@ -207,8 +259,42 @@ def start_scheduler():
         )
         logger.info("Scheduled correlation logger: 18:00 KST (weekdays)")
 
+    # On startup: if currently within market hours, auto-start monitor
+    _auto_start_monitor_if_market_open()
+
     logger.info("Starting scheduler... (Ctrl+C to stop)")
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         logger.info("Scheduler stopped.")
+
+
+def _auto_start_monitor_if_market_open():
+    """If scheduler starts during market hours, immediately start the monitor."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    hour = now.hour
+    weekday = now.weekday()  # 0=Mon, 6=Sun
+
+    should_start = False
+
+    # KRX hours: 08:50-15:35 KST, Mon-Fri
+    if weekday < 5 and ((hour == 8 and now.minute >= 50) or (9 <= hour <= 14) or (hour == 15 and now.minute <= 35)):
+        should_start = True
+        logger.info(f"Startup during KRX hours ({now.strftime('%H:%M')} KST)")
+
+    # US hours: 22:50-06:05 KST
+    # Mon-Fri 22:50+ or Tue-Sat 00:00-06:05
+    if weekday < 5 and hour >= 22 and now.minute >= 50:
+        should_start = True
+        logger.info(f"Startup during US hours ({now.strftime('%H:%M')} KST)")
+    elif weekday > 0 and weekday <= 5 and (hour < 6 or (hour == 6 and now.minute <= 5)):
+        should_start = True
+        logger.info(f"Startup during US hours ({now.strftime('%H:%M')} KST)")
+
+    if should_start:
+        import threading
+        threading.Timer(5.0, _start_monitor).start()
+        logger.info("Monitor auto-start scheduled in 5 seconds")

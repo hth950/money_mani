@@ -41,6 +41,14 @@ class MonitorService:
             except Exception as e:
                 logger.warning(f"Failed to enqueue signal: {e}")
 
+    def force_start(self, market_filter: str = None) -> dict:
+        """Force start: stop if running, then start fresh."""
+        if self._running:
+            self.stop()
+            import time
+            time.sleep(1)
+        return self.start(market_filter=market_filter)
+
     def start(self, market_filter: str = None) -> dict:
         """Start the monitor in a background thread."""
         if self._running:

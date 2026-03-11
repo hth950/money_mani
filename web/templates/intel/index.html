@@ -8,10 +8,12 @@
 <details>
     <summary>수동 스캔 실행</summary>
     <div class="grid" style="margin-top:1rem">
-        <button onclick="runScan('pre_market')">장전 브리핑</button>
-        <button onclick="runScan('midday')">장중 업데이트</button>
-        <button onclick="runScan('post_market')">장후 분석</button>
-        <button onclick="runScan('overnight')">야간 글로벌</button>
+        <button onclick="runScan('pre_market')">KRX 장전 브리핑</button>
+        <button onclick="runScan('midday')">KRX 장중 업데이트</button>
+        <button onclick="runScan('post_market')">KRX 장후 분석</button>
+        <button onclick="runScan('us_pre_market')">US Pre-Market</button>
+        <button onclick="runScan('us_midday')">US Midday</button>
+        <button onclick="runScan('us_post_market')">US After-Hours</button>
     </div>
     <div id="scan-status" style="margin-top:0.5rem"></div>
 </details>
@@ -142,11 +144,24 @@ function renderIssueCard(issue) {
           (issue.accuracy_score * 100).toFixed(0) + '% 정확</span>'
         : '';
 
+    // Format time display
+    let timeStr = '';
+    if (issue.created_at) {
+        const d = new Date(issue.created_at + 'Z');  // UTC -> local
+        const kst = new Date(d.getTime() + 9*60*60*1000);
+        const mm = String(kst.getMonth()+1).padStart(2,'0');
+        const dd = String(kst.getDate()).padStart(2,'0');
+        const hh = String(kst.getHours()).padStart(2,'0');
+        const mi = String(kst.getMinutes()).padStart(2,'0');
+        timeStr = mm + '/' + dd + ' ' + hh + ':' + mi;
+    }
+
     return '<article style="margin-bottom:1rem">' +
         '<header><strong>' + issue.title + '</strong>' +
         ' <span style="background:#3498DB;color:#fff;padding:2px 6px;border-radius:4px;font-size:0.8rem">' + cat + '</span>' +
         ' <span style="color:' + sentColor + ';font-size:0.8rem;font-weight:bold">' + sent + '</span>' +
         ' <small>확신도: ' + conf + '</small>' + accBadge +
+        (timeStr ? ' <small style="color:#888">📅 ' + timeStr + '</small>' : '') +
         '</header>' +
         '<p>' + (issue.summary || '') + '</p>' +
         tickerRows +
@@ -176,11 +191,23 @@ async function loadScans() {
         let html = '<table role="grid"><thead><tr>' +
             '<th>시간</th><th>유형</th><th>이슈</th><th>종목</th><th>상태</th>' +
             '</tr></thead><tbody>';
+        const SCAN_LABELS = {pre_market:'KRX 장전', midday:'KRX 장중', post_market:'KRX 장후', overnight:'야간 글로벌', us_pre_market:'US Pre-Market', us_midday:'US Midday', us_post_market:'US After-Hours'};
         for (const s of scans) {
             const statusColor = s.status === 'success' ? '#00B050' :
                                s.status === 'partial' ? '#F39C12' : '#FF0000';
-            html += '<tr><td>' + s.created_at + '</td>' +
-                '<td>' + s.scan_type + '</td>' +
+            let scanTime = s.created_at || '';
+            if (scanTime) {
+                const d = new Date(scanTime + 'Z');
+                const kst = new Date(d.getTime() + 9*60*60*1000);
+                const mm = String(kst.getMonth()+1).padStart(2,'0');
+                const dd = String(kst.getDate()).padStart(2,'0');
+                const hh = String(kst.getHours()).padStart(2,'0');
+                const mi = String(kst.getMinutes()).padStart(2,'0');
+                scanTime = mm + '/' + dd + ' ' + hh + ':' + mi;
+            }
+            const scanLabel = SCAN_LABELS[s.scan_type] || s.scan_type;
+            html += '<tr><td>' + scanTime + '</td>' +
+                '<td>' + scanLabel + '</td>' +
                 '<td>' + s.issues_count + '</td>' +
                 '<td>' + s.tickers_count + '</td>' +
                 '<td style="color:' + statusColor + '">' + s.status + '</td></tr>';

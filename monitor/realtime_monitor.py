@@ -156,6 +156,38 @@ class RealtimeMonitor:
         except Exception as e:
             logger.warning(f"Failed to fetch portfolio: {e}. Monitoring watchlist only.")
 
+        # Auto-add high-confidence intel tickers
+        try:
+            from web.services.market_intel_service import MarketIntelService
+            service = MarketIntelService()
+            intel_tickers = service.get_high_confidence_tickers(days=7, min_confidence=0.7)
+
+            added = 0
+            for ticker_info in intel_tickers.get("KRX", []):
+                ticker = ticker_info["ticker"]
+                if ticker not in self.ticker_map and (not self.market_filter or self.market_filter == "KRX"):
+                    self.ticker_map[ticker] = TickerContext(
+                        ticker=ticker, name=ticker_info["name"],
+                        market="KRX", mode="WATCH")
+                    added += 1
+
+            nyse_tickers_set = {"BRK.B", "JNJ", "V", "WMT", "JPM", "PG", "UNH", "HD",
+                                "BAC", "DIS", "KO", "PFE", "MRK", "VZ", "T", "ABBV",
+                                "CVX", "XOM", "BA", "GE", "IBM", "CAT", "MMM", "GS"}
+            for ticker_info in intel_tickers.get("US", []):
+                ticker = ticker_info["ticker"]
+                if ticker not in self.ticker_map and (not self.market_filter or self.market_filter == "US"):
+                    exchange = "NYSE" if ticker in nyse_tickers_set else "NASDAQ"
+                    self.ticker_map[ticker] = TickerContext(
+                        ticker=ticker, name=ticker_info["name"],
+                        market="US", mode="WATCH", exchange=exchange)
+                    added += 1
+
+            if added:
+                logger.info(f"Auto-added {added} intel-detected tickers to watchlist")
+        except Exception as e:
+            logger.warning(f"Failed to load intel tickers: {e}")
+
         # Resolve KRX ticker names
         try:
             from market_data.krx_fetcher import KRXFetcher

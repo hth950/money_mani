@@ -126,17 +126,42 @@ class DailyScan:
 
         signals = []
 
-        # KRX scan
+        # Auto-add high-confidence intel tickers
+        intel_krx_extras = []
+        intel_us_extras = []
+        try:
+            from web.services.market_intel_service import MarketIntelService
+            intel_tickers = MarketIntelService().get_high_confidence_tickers(days=7, min_confidence=0.7)
+            intel_krx_extras = [t["ticker"] for t in intel_tickers.get("KRX", [])]
+            intel_us_extras = [t["ticker"] for t in intel_tickers.get("US", [])]
+            if intel_krx_extras or intel_us_extras:
+                logger.info(f"Intel auto-add: KRX +{len(intel_krx_extras)}, US +{len(intel_us_extras)}")
+        except Exception as e:
+            logger.warning(f"Failed to load intel tickers for daily scan: {e}")
+
+        # KRX scan (KRX/ALL strategies only)
         if is_krx_day:
             krx_tickers = self.config["pipeline"]["targets"].get("custom_tickers", [])
-            krx_signals = self._scan_market(strategies, krx_tickers, "KRX")
+            # Merge intel tickers (deduplicated)
+            for t in intel_krx_extras:
+                if t not in krx_tickers:
+                    krx_tickers.append(t)
+            krx_strategies = [s for s in strategies if s.market in ("KRX", "ALL")]
+            logger.info(f"KRX scan: {len(krx_strategies)} strategies, {len(krx_tickers)} tickers")
+            krx_signals = self._scan_market(krx_strategies, krx_tickers, "KRX")
             signals.extend(krx_signals)
 
-        # US scan
+        # US scan (US/ALL strategies only)
         if is_nyse_day:
             us_tickers = self.config["pipeline"].get("us_targets", {}).get("custom_tickers", [])
+            # Merge intel tickers (deduplicated)
+            for t in intel_us_extras:
+                if t not in us_tickers:
+                    us_tickers.append(t)
             if us_tickers:
-                us_signals = self._scan_market(strategies, us_tickers, "US")
+                us_strategies = [s for s in strategies if s.market in ("US", "ALL")]
+                logger.info(f"US scan: {len(us_strategies)} strategies, {len(us_tickers)} tickers")
+                us_signals = self._scan_market(us_strategies, us_tickers, "US")
                 signals.extend(us_signals)
 
         # Apply ensemble consensus filter
@@ -146,9 +171,15 @@ class DailyScan:
         for sig in ensemble_signals:
             log_conviction(sig)
 
-        # Save ALL individual signals to DB (for tracking), but only alert on consensus
+        # Save ALL individual signals to DB and track performance
         if signals:
             self._save_signals_to_db(signals, str(today))
+            # Record performance for ALL signals (not just consensus)
+            for sig in signals:
+                try:
+                    self.perf_service.record_signal(sig)
+                except Exception as e:
+                    logger.debug(f"Performance record for {sig.get('ticker')}: {e}")
 
         # Send alerts only for consensus signals
         if ensemble_signals:
@@ -299,11 +330,10 @@ class DailyScan:
             logger.info(f"{date_str}: All signals already sent. Skipping alerts.")
             return
 
-        # Track performance and manage positions for consensus signals
+        # Manage positions for consensus signals (performance already tracked above)
         for sig in new_signals:
             try:
                 sig_id = self.signal_service.save_signal(sig)
-                self.perf_service.record_signal(sig, signal_id=sig_id)
 
                 if sig["signal_type"] == "BUY":
                     self.position_service.open_position(
