@@ -91,6 +91,73 @@ class AlertFormatter:
         }
 
     @staticmethod
+    def format_exit_signal_alert(signal: dict) -> dict:
+        """Format an exit scoring signal for Discord embed.
+
+        Args:
+            signal: Exit signal dict with exit_decision, exit_score, exit_reason,
+                    exit_scores, exit_details, ticker, pnl_pct, etc.
+
+        Returns:
+            Discord embed dict.
+        """
+        decision = signal.get("exit_decision", "")
+        if decision == "SELL_EXECUTE":
+            color = AlertFormatter.COLOR_SELL
+            emoji = "🔴"
+            label = "즉시 매도 권장"
+        else:
+            color = AlertFormatter.COLOR_WARN
+            emoji = "🟡"
+            label = "매도 주의"
+
+        pnl = signal.get("pnl_pct", 0)
+        pnl_sign = "+" if pnl >= 0 else ""
+
+        fields = [
+            {"name": "종목", "value": f"{signal.get('ticker_name', '-')} ({signal.get('ticker', '-')})", "inline": True},
+            {"name": "결정", "value": f"{emoji} {label}", "inline": True},
+            {"name": "현재가", "value": f"{signal.get('price', 0):,.0f}원", "inline": True},
+            {"name": "진입가", "value": f"{signal.get('entry_price', 0):,.0f}원", "inline": True},
+            {"name": "수익률", "value": f"{pnl_sign}{pnl:.2%}", "inline": True},
+            {"name": "종합 점수", "value": f"{signal.get('exit_score', 0):.2f}", "inline": True},
+        ]
+
+        # Score breakdown
+        scores = signal.get("exit_scores", {})
+        if scores:
+            score_text = (
+                f"추세: {scores.get('trend', 0):.2f} | "
+                f"모멘텀: {scores.get('momentum', 0):.2f} | "
+                f"트레일링: {scores.get('trailing_stop', 0):.2f}"
+            )
+            fields.append({"name": "점수 상세", "value": score_text, "inline": False})
+
+        # Reason
+        fields.append({"name": "사유", "value": signal.get("exit_reason", "-"), "inline": False})
+
+        # Technical details
+        details = signal.get("exit_details", {})
+        detail_lines = []
+        if "ema5" in details:
+            detail_lines.append(f"EMA5: {details['ema5']:,.0f} | EMA20: {details['ema20']:,.0f}")
+        if "rsi14" in details:
+            detail_lines.append(f"RSI(14): {details['rsi14']:.1f}")
+        if "trailing_stop_price" in details:
+            detail_lines.append(f"트레일링 스톱: {details['trailing_stop_price']:,.0f}원")
+        if "high_since_entry" in details:
+            detail_lines.append(f"진입 후 고점: {details['high_since_entry']:,.0f}원")
+        if detail_lines:
+            fields.append({"name": "기술적 지표", "value": "\n".join(detail_lines), "inline": False})
+
+        return {
+            "title": f"{emoji} [매도 {label}] {signal.get('ticker_name', '')}",
+            "color": color,
+            "fields": fields,
+            "footer": {"text": "Money Mani 추세 기반 매도 판단"},
+        }
+
+    @staticmethod
     def format_daily_scoring_report(summary: dict) -> dict:
         """Format daily scoring summary for Discord."""
         execute = summary.get("execute_count", 0)

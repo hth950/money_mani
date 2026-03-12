@@ -46,6 +46,10 @@ def main():
     parser.add_argument("--start", default="2021-01-01", help="Data start date")
     parser.add_argument("--market", default="KRX", choices=["KRX", "US"])
     parser.add_argument("--mark-overfit", action="store_true", help="Update strategy status to overfit_suspect")
+    parser.add_argument("--dry-run", action="store_true", default=True,
+                        help="Only log what would be marked (default)")
+    parser.add_argument("--no-dry-run", dest="dry_run", action="store_false",
+                        help="Actually mark overfit strategies")
     args = parser.parse_args()
 
     # Create table
@@ -116,10 +120,21 @@ def main():
         logger.info(f"  - {name}")
 
     if args.mark_overfit and overfit_strategies:
-        logger.info("Marking overfit strategies in DB...")
-        # Note: strategy status column doesn't have 'overfit_suspect' yet,
-        # so we just log for now. Could update to 'retired' if desired.
-        logger.info(f"Would mark {len(overfit_strategies)} strategies as overfit_suspect")
+        if args.dry_run:
+            logger.info(f"[DRY-RUN] Would mark {len(overfit_strategies)} strategies as overfit: {sorted(overfit_strategies)}")
+        else:
+            for name in sorted(overfit_strategies):
+                try:
+                    with get_db() as db:
+                        # Update strategy status to retired
+                        db.execute(
+                            "UPDATE strategies SET status = 'retired', updated_at = datetime('now') WHERE name = ?",
+                            (name,),
+                        )
+                    logger.info(f"Marked strategy '{name}' as retired (overfit)")
+                except Exception as e:
+                    logger.warning(f"Failed to mark {name}: {e}")
+            logger.info(f"Marked {len(overfit_strategies)} strategies as retired (overfit)")
 
 
 if __name__ == "__main__":

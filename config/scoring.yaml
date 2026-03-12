@@ -28,3 +28,66 @@ transaction_costs:
   US:
     round_trip_pct: 0.0
     min_expected_return: 0.0
+
+# Ensemble diversity scoring
+ensemble:
+  use_diversity_scorer: true
+  min_category_diversity: 3
+  min_weighted_score: 3.0
+  fallback_count: 7
+
+# Sector-relative fundamental benchmarks
+sector_benchmarks:
+  enabled: true
+  defaults:
+    per: 20.0
+    roe: 0.15
+  sectors:
+    Technology:
+      per: 35.0
+      roe: 0.25
+    Financial Services:
+      per: 12.0
+      roe: 0.12
+    Healthcare:
+      per: 40.0
+      roe: 0.20
+    Consumer Cyclical:
+      per: 20.0
+      roe: 0.18
+    Industrials:
+      per: 18.0
+      roe: 0.15
+    Communication Services:
+      per: 25.0
+      roe: 0.20
+    Consumer Defensive:
+      per: 22.0
+      roe: 0.18
+    Energy:
+      per: 12.0
+      roe: 0.15
+    Basic Materials:
+      per: 15.0
+      roe: 0.12
+    Real Estate:
+      per: 30.0
+      roe: 0.08
+    Utilities:
+      per: 18.0
+      roe: 0.10
+
+# Exit/sell timing strategy
+exit_strategy:
+  enabled: true
+  weights:
+    trend: 0.35
+    momentum: 0.30
+    trailing_stop: 0.35
+  thresholds:
+    sell_execute: 0.25
+    sell_watch: 0.40
+  stop_loss_pct: -0.05
+  take_profit_pct: 0.15
+  atr_multiplier: 2.0
+  min_holding_days: 2
