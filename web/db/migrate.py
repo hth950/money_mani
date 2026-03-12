@@ -6,6 +6,21 @@ from web.db.connection import get_db
 
 logger = logging.getLogger("money_mani.web.db.migrate")
 
+
+def run_schema_migrations():
+    """Run additive schema migrations (safe to call repeatedly)."""
+    migrations = [
+        ("scoring_results_ticker_name",
+         "ALTER TABLE scoring_results ADD COLUMN ticker_name TEXT"),
+    ]
+    with get_db() as db:
+        for name, sql in migrations:
+            try:
+                db.execute(sql)
+                logger.info(f"Migration applied: {name}")
+            except Exception:
+                pass  # Column already exists
+
 def migrate_yaml_strategies():
     """Import strategies from config/strategies/*.yaml into SQLite if not already present."""
     registry = StrategyRegistry()

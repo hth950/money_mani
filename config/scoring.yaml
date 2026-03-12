@@ -19,3 +19,12 @@ weights:
 thresholds:
   execute: 0.60
   watch: 0.40
+
+# Transaction cost awareness
+transaction_costs:
+  KRX:
+    round_trip_pct: 0.21    # 매수 0.015% + 매도 0.015% + 거래세 0.18%
+    min_expected_return: 0.5  # 최소 기대수익률 0.5% (수수료의 ~2.4배 안전마진)
+  US:
+    round_trip_pct: 0.0
+    min_expected_return: 0.0
