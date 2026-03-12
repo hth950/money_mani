@@ -171,10 +171,10 @@ class DailyScan:
         ensemble_signals = self._apply_multi_layer_scoring(ensemble_signals, len(strategies))
 
         # Apply portfolio risk gate (Phase 2)
-        ensemble_signals = self._apply_risk_gate(ensemble_signals)
+        ensemble_signals, blocked_signals = self._apply_risk_gate(ensemble_signals)
 
-        # Save scoring results to DB (Phase 5)
-        self._save_scoring_results(ensemble_signals, str(today))
+        # Save scoring results to DB (Phase 5) - include blocked for tracking
+        self._save_scoring_results(ensemble_signals + blocked_signals, str(today))
 
         # Classify conviction for each consensus signal
         for sig in ensemble_signals:
@@ -310,11 +310,13 @@ class DailyScan:
             logger.error(f"Multi-layer scoring error, falling back: {e}")
             return ensemble_signals
 
-    def _apply_risk_gate(self, ensemble_signals: list[dict]) -> list[dict]:
+    def _apply_risk_gate(self, ensemble_signals: list[dict]) -> tuple[list[dict], list[dict]]:
         """Apply portfolio risk management gate (Phase 2).
 
         BUY signals that violate risk constraints are marked BLOCKED.
         Falls back to passing all signals if risk module unavailable.
+
+        Returns: (passed_signals, blocked_signals)
         """
         try:
             from scoring.risk_manager import PortfolioRiskManager
@@ -322,9 +324,10 @@ class DailyScan:
 
             if not manager.enabled:
                 logger.info("Portfolio risk management disabled")
-                return ensemble_signals
+                return ensemble_signals, []
 
             passed = []
+            blocked = []
             for sig in ensemble_signals:
                 if sig["signal_type"] == "BUY":
                     allowed, reason = manager.check_can_buy(
@@ -334,20 +337,20 @@ class DailyScan:
                         sig["score_decision"] = "BLOCKED"
                         sig["block_reason"] = reason
                         logger.info(f"BLOCKED {sig['ticker']}: {reason}")
+                        blocked.append(sig)
                         continue
                 passed.append(sig)
 
-            blocked = len(ensemble_signals) - len(passed)
             if blocked:
-                logger.info(f"Risk gate: {blocked} signals blocked, {len(passed)} passed")
-            return passed
+                logger.info(f"Risk gate: {len(blocked)} signals blocked, {len(passed)} passed")
+            return passed, blocked
 
         except ImportError:
             logger.warning("risk_manager module not available, skipping risk gate")
-            return ensemble_signals
+            return ensemble_signals, []
         except Exception as e:
             logger.error(f"Risk gate error, passing all: {e}")
-            return ensemble_signals
+            return ensemble_signals, []
 
     def _apply_ensemble_filter(self, signals: list[dict]) -> tuple[list[dict], dict]:
         """Group signals by ticker, keep only those meeting consensus threshold.

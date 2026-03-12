@@ -98,10 +98,13 @@ class PortfolioRiskManager:
 
         return {
             "positions_count": len(positions),
+            "position_count": len(positions),
             "max_positions": max_pos,
+            "position_limit": max_pos,
             "daily_pnl": round(daily_pnl, 4),
             "max_daily_loss": self.config.get("max_daily_loss", -0.03),
             "sector_breakdown": sectors,
+            "sector_positions": sectors,
             "max_sector_weight": self.config.get("max_sector_weight", 0.30),
             "risk_enabled": self.enabled,
         }

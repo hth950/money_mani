@@ -193,10 +193,10 @@ fetch('/api/scoring/summary').then(r => r.json()).then(data => {
         return isNaN(v) ? 0 : +(v * 100).toFixed(1);
     });
     const techArr = items.map(d => {
-        const v = parseFloat(d.avg_technical ?? 0); return isNaN(v) ? 0 : +(v * 100).toFixed(1);
+        const v = parseFloat(d.avg_tech ?? d.avg_technical ?? 0); return isNaN(v) ? 0 : +(v * 100).toFixed(1);
     });
     const fundArr = items.map(d => {
-        const v = parseFloat(d.avg_fundamental ?? 0); return isNaN(v) ? 0 : +(v * 100).toFixed(1);
+        const v = parseFloat(d.avg_fund ?? d.avg_fundamental ?? 0); return isNaN(v) ? 0 : +(v * 100).toFixed(1);
     });
     const flowArr = items.map(d => {
         const v = parseFloat(d.avg_flow ?? 0); return isNaN(v) ? 0 : +(v * 100).toFixed(1);
