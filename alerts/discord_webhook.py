@@ -67,12 +67,15 @@ class DiscordNotifier:
 
                 if response.status_code in (200, 204):
                     logger.info("Discord message sent successfully.")
+                    time.sleep(0.5)  # throttle to avoid rate limits
                     return True
 
                 if response.status_code == 429:
                     retry_after = self.RETRY_DELAY
                     try:
-                        retry_after = response.json().get("retry_after", self.RETRY_DELAY * 1000) / 1000
+                        # Discord returns retry_after in seconds (float)
+                        ra = response.json().get("retry_after", self.RETRY_DELAY)
+                        retry_after = max(float(ra), 1.0)
                     except Exception:
                         pass
                     logger.warning(
