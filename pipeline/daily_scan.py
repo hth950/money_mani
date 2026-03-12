@@ -616,6 +616,7 @@ class DailyScan:
                             "fundamental": sig.get("score_breakdown", {}).get("fundamental"),
                             "flow": sig.get("score_breakdown", {}).get("flow"),
                             "intel": sig.get("score_breakdown", {}).get("intel"),
+                            "macro": sig.get("score_breakdown", {}).get("macro"),
                             "composite": sig.get("composite_score"),
                         },
                         decision=sig.get("score_decision", "UNKNOWN"),
@@ -648,11 +649,31 @@ class DailyScan:
             return []
 
         exit_signals = []
+        fallback_count = 0
+        MAX_FALLBACK = 10  # rate limit prevention
+
         for pos in positions:
             ticker = pos["ticker"]
             df = ohlcv_cache.get(ticker)
             if df is None or df.empty:
-                continue
+                if fallback_count >= MAX_FALLBACK:
+                    logger.warning(f"Exit fallback limit reached ({MAX_FALLBACK}), skipping {ticker}")
+                    continue
+                try:
+                    start = (datetime.now(KST) - timedelta(days=120)).strftime("%Y-%m-%d")
+                    if market == "KRX":
+                        from market_data.krx_fetcher import KRXFetcher
+                        df = KRXFetcher(delay=0.5).get_ohlcv(ticker, start)
+                    else:
+                        from market_data.us_fetcher import USFetcher
+                        df = USFetcher().get_ohlcv(ticker, start)
+                    fallback_count += 1
+                    logger.info(f"Exit fallback fetch for {ticker}: {len(df) if df is not None else 0} rows")
+                except Exception as e:
+                    logger.warning(f"Exit fallback fetch failed for {ticker}: {e}")
+                    continue
+                if df is None or df.empty:
+                    continue
 
             try:
                 result = exit_scorer.evaluate(

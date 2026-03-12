@@ -62,3 +62,15 @@ class USFetcher:
             "market_cap": info.get("marketCap", 0),
             "currency": info.get("currency", "USD"),
         }
+
+    def get_vix(self) -> float | None:
+        """Fetch latest VIX close via yfinance."""
+        try:
+            vix = yf.Ticker("^VIX")
+            hist = vix.history(period="5d")
+            if hist.empty:
+                return None
+            return float(hist["Close"].iloc[-1])
+        except Exception as e:
+            logger.warning(f"VIX fetch failed: {e}")
+            return None

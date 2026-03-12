@@ -11,6 +11,35 @@ logger = logging.getLogger("money_mani.scoring.intel_scorer")
 class IntelScorer:
     """Score ticker sentiment from market intelligence data."""
 
+    def __init__(self):
+        self._source_accuracy_cache = None
+
+    def _get_source_accuracy(self, days: int = 30) -> dict:
+        """Get avg accuracy grouped by category from recent issues."""
+        if self._source_accuracy_cache is not None:
+            return self._source_accuracy_cache
+        try:
+            cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+            with get_db() as db:
+                rows = db.execute("""
+                    SELECT category, AVG(accuracy_score) as avg_accuracy, COUNT(*) as cnt
+                    FROM market_intel_issues
+                    WHERE accuracy_score IS NOT NULL
+                      AND detection_date >= ?
+                    GROUP BY category
+                """, (cutoff,)).fetchall()
+            result = {}
+            for r in rows:
+                if r["avg_accuracy"] is not None and r["cnt"] >= 3:
+                    result[r["category"]] = round(r["avg_accuracy"], 4)
+            self._source_accuracy_cache = result
+            logger.info(f"Loaded source accuracy: {result}")
+            return result
+        except Exception as e:
+            logger.warning(f"Source accuracy query failed: {e}")
+            self._source_accuracy_cache = {}
+            return {}
+
     def score(self, ticker: str, market: str = "KRX") -> dict:
         """Calculate intel sentiment score for a ticker.
 
@@ -27,6 +56,7 @@ class IntelScorer:
             raw = 0.0
             total_weight = 0.0
             today = datetime.now(KST).date()
+            source_accuracy = self._get_source_accuracy()
 
             for issue in issues:
                 # Temporal decay
@@ -40,7 +70,9 @@ class IntelScorer:
                     continue
 
                 confidence = issue.get("confidence", 0.5)
-                weight = confidence * decay
+                category = issue.get("category", "unknown")
+                accuracy_weight = source_accuracy.get(category, 0.5)
+                weight = confidence * decay * accuracy_weight
                 direction = issue.get("direction", "neutral")
 
                 if direction == "up":
@@ -62,6 +94,7 @@ class IntelScorer:
                     "issue_count": len(issues),
                     "used_issues": sum(1 for _ in issues),  # after filter
                     "total_weight": round(total_weight, 4),
+                    "source_accuracy": source_accuracy,
                 }
             }
         except Exception as e:

@@ -1,6 +1,7 @@
 """Data collectors for scoring pipeline."""
 
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
 KST = timezone(timedelta(hours=9))
@@ -10,6 +11,31 @@ logger = logging.getLogger("money_mani.scoring.data_collectors")
 # Sector cache: refreshed once per day
 _sector_cache: dict = {}
 _sector_cache_date: str = ""
+
+KRX_SECTOR_MAP = {
+    "전기전자": "Technology",
+    "금융업": "Financial Services",
+    "보험": "Financial Services",
+    "증권": "Financial Services",
+    "은행": "Financial Services",
+    "의약품": "Healthcare",
+    "서비스업": "Consumer Cyclical",
+    "유통업": "Consumer Cyclical",
+    "섬유의복": "Consumer Cyclical",
+    "운수장비": "Industrials",
+    "기계": "Industrials",
+    "운수창고업": "Industrials",
+    "통신업": "Communication Services",
+    "음식료품": "Consumer Defensive",
+    "화학": "Basic Materials",
+    "철강금속": "Basic Materials",
+    "비금속광물": "Basic Materials",
+    "종이목재": "Basic Materials",
+    "건설업": "Real Estate",
+    "전기가스업": "Utilities",
+    "의료정밀": "Healthcare",
+    "제약": "Healthcare",
+}
 
 
 def _get_sector_map() -> dict:
@@ -68,9 +94,9 @@ class FundamentalCollector:
             self._benchmarks_config = self._load_benchmarks_config()
         config = self._benchmarks_config
         if not config.get("enabled", False):
-            return {"per": 30.0, "roe": 0.30}
+            return {"per": 30.0, "roe": 0.30, "pbr": 1.5}
         sectors = config.get("sectors", {})
-        defaults = config.get("defaults", {"per": 20.0, "roe": 0.15})
+        defaults = config.get("defaults", {"per": 20.0, "roe": 0.15, "pbr": 1.5})
         return sectors.get(sector, defaults)
 
     def score(self, ticker: str, market: str) -> dict:
@@ -117,11 +143,16 @@ class FundamentalCollector:
         ticker_pbr = float(row.get("PBR", 0) or 0)
         ticker_div = float(row.get("DIV", 0) or 0)
 
-        # Sector averages from KRX listings fundamentals (simplified: use fixed benchmarks)
-        # Full sector-avg computation requires joining fundamentals for all sector peers
-        # which is too expensive for v1; use fixed sector benchmarks instead.
-        sector_avg_per = 15.0
-        sector_avg_pbr = 1.5
+        # Sector-aware benchmarks from config/scoring.yaml
+        sector_map = _get_sector_map()
+        raw_sector = sector_map.get(ticker, "Unknown")
+        eng_sector = KRX_SECTOR_MAP.get(raw_sector, None)
+        if eng_sector is None and raw_sector != "Unknown":
+            logger.warning(f"Unmapped KRX sector: '{raw_sector}' for {ticker}")
+            eng_sector = "Unknown"
+        benchmarks = self._get_sector_benchmarks(eng_sector or "Unknown")
+        sector_avg_per = benchmarks["per"]
+        sector_avg_pbr = benchmarks.get("pbr", 1.5)
 
         per_score = max(0.0, 1.0 - (ticker_per / sector_avg_per)) if ticker_per > 0 else 0.5
         pbr_score = max(0.0, 1.0 - (ticker_pbr / sector_avg_pbr)) if ticker_pbr > 0 else 0.5
@@ -138,6 +169,10 @@ class FundamentalCollector:
                 "per": ticker_per,
                 "pbr": ticker_pbr,
                 "div": ticker_div,
+                "sector": raw_sector,
+                "sector_eng": eng_sector,
+                "sector_benchmark_per": sector_avg_per,
+                "sector_benchmark_pbr": sector_avg_pbr,
             },
         }
 
@@ -191,11 +226,44 @@ class FundamentalCollector:
         }
 
 
+# Market cap tier normalization for flow amounts (KRW)
+_AMOUNT_SCALE = {"large": 1e11, "mid": 1e10, "small": 1e9}
+
+
 class FlowCollector:
     """Investor flow data collection and scoring (0~1) - KRX only."""
 
     def __init__(self):
         self._cache: dict[str, dict] = {}
+
+    def _get_amount_scale(self, ticker: str) -> float:
+        """Get normalization scale based on market cap tier."""
+        try:
+            from market_data.fdr_fetcher import FDRFetcher
+            df = FDRFetcher().get_krx_listings("KRX")
+            row = df[df.index.astype(str) == ticker]
+            if not row.empty:
+                marcap = row.iloc[0].get("Marcap", 0) or 0
+                if marcap > 10e12:  # 10조+
+                    return _AMOUNT_SCALE["large"]
+                elif marcap > 1e12:  # 1조+
+                    return _AMOUNT_SCALE["mid"]
+        except Exception:
+            return _AMOUNT_SCALE["mid"]
+        return _AMOUNT_SCALE["small"]
+
+    def _load_flow_config(self) -> dict:
+        """Load flow_scoring config section."""
+        try:
+            import yaml
+            from pathlib import Path
+            config_path = Path(__file__).parent.parent / "config" / "scoring.yaml"
+            if config_path.exists():
+                with open(config_path) as f:
+                    return (yaml.safe_load(f) or {}).get("flow_scoring", {})
+        except Exception:
+            pass
+        return {}
 
     def score(self, ticker: str, market: str) -> dict:
         """Return flow score and details.
@@ -250,20 +318,86 @@ class FlowCollector:
                         break
                 return count
 
+            # Load config (cached on first call)
+            if not hasattr(self, '_flow_config'):
+                self._flow_config = self._load_flow_config()
+            flow_cfg = self._flow_config
+
+            # Check feature flag
+            if not flow_cfg.get("enabled", False):
+                # Fallback: existing streak-only logic
+                foreign_streak = consecutive_buy_days(recent[foreign_col]) if foreign_col is not None else 0
+                inst_streak = consecutive_buy_days(recent[inst_col]) if inst_col is not None else 0
+                foreign_streak_score = min(1.0, foreign_streak / 10)
+                inst_streak_score = min(1.0, inst_streak / 10)
+                flow_score = foreign_streak_score * 0.5 + inst_streak_score * 0.5
+                result = {
+                    "score": round(flow_score, 4),
+                    "details": {
+                        "foreign_streak_score": round(foreign_streak_score, 4),
+                        "inst_streak_score": round(inst_streak_score, 4),
+                        "foreign_consecutive_buy_days": foreign_streak,
+                        "inst_consecutive_buy_days": inst_streak,
+                        "mode": "streak_only",
+                    },
+                }
+                self._cache[cache_key] = result
+                return result
+
+            # === Enhanced 4-component scoring ===
+            components = flow_cfg.get("components", {"streak": 0.20, "amount": 0.35, "ratio": 0.25, "synergy": 0.20})
+
+            # 1. Streak component (existing logic)
             foreign_streak = consecutive_buy_days(recent[foreign_col]) if foreign_col is not None else 0
             inst_streak = consecutive_buy_days(recent[inst_col]) if inst_col is not None else 0
+            streak_score = (min(1.0, foreign_streak / 10) + min(1.0, inst_streak / 10)) / 2
 
-            foreign_streak_score = min(1.0, foreign_streak / 10)
-            inst_streak_score = min(1.0, inst_streak / 10)
-            flow_score = foreign_streak_score * 0.5 + inst_streak_score * 0.5
+            # 2. Amount component (NEW)
+            amount_scale = self._get_amount_scale(ticker)
+            foreign_amount = float(recent[foreign_col].sum()) if foreign_col is not None else 0
+            inst_amount = float(recent[inst_col].sum()) if inst_col is not None else 0
+            foreign_amount_score = 1 / (1 + math.exp(-foreign_amount / amount_scale))
+            inst_amount_score = 1 / (1 + math.exp(-inst_amount / amount_scale))
+            amount_score = (foreign_amount_score + inst_amount_score) / 2
+
+            # 3. Ratio component (NEW) — positive days / total days
+            total_days = len(recent)
+            foreign_positive = int((recent[foreign_col] > 0).sum()) if foreign_col is not None else 0
+            inst_positive = int((recent[inst_col] > 0).sum()) if inst_col is not None else 0
+            ratio_score = ((foreign_positive / total_days) + (inst_positive / total_days)) / 2 if total_days > 0 else 0.5
+
+            # 4. Synergy component (NEW) — both buying same day
+            if foreign_col is not None and inst_col is not None:
+                dual_buy = int(((recent[foreign_col] > 0) & (recent[inst_col] > 0)).sum())
+                synergy_score = dual_buy / total_days if total_days > 0 else 0.0
+            else:
+                dual_buy = 0
+                synergy_score = 0.0
+
+            # Weighted composite
+            flow_score = (
+                streak_score * components.get("streak", 0.20)
+                + amount_score * components.get("amount", 0.35)
+                + ratio_score * components.get("ratio", 0.25)
+                + synergy_score * components.get("synergy", 0.20)
+            )
 
             result = {
                 "score": round(flow_score, 4),
                 "details": {
-                    "foreign_streak_score": round(foreign_streak_score, 4),
-                    "inst_streak_score": round(inst_streak_score, 4),
-                    "foreign_consecutive_buy_days": foreign_streak,
-                    "inst_consecutive_buy_days": inst_streak,
+                    "streak_score": round(streak_score, 4),
+                    "amount_score": round(amount_score, 4),
+                    "ratio_score": round(ratio_score, 4),
+                    "synergy_score": round(synergy_score, 4),
+                    "foreign_streak": foreign_streak,
+                    "inst_streak": inst_streak,
+                    "foreign_net_amount": foreign_amount,
+                    "inst_net_amount": inst_amount,
+                    "foreign_positive_days": foreign_positive,
+                    "inst_positive_days": inst_positive,
+                    "synergy_days": dual_buy,
+                    "total_days": total_days,
+                    "mode": "enhanced",
                 },
             }
             self._cache[cache_key] = result
@@ -276,7 +410,57 @@ class FlowCollector:
 
 
 class MacroCollector:
-    """Macro environment score (cached daily). v1: always returns neutral 0.5."""
+    """Macro environment score based on VIX."""
+
+    def __init__(self):
+        self._cache: dict = {}
+        self._config = self._load_config()
+
+    def _load_config(self) -> dict:
+        """Load macro section from config/scoring.yaml."""
+        try:
+            import yaml
+            from pathlib import Path
+            config_path = Path(__file__).parent.parent / "config" / "scoring.yaml"
+            if config_path.exists():
+                with open(config_path) as f:
+                    return (yaml.safe_load(f) or {}).get("macro", {})
+        except Exception:
+            pass
+        return {}
 
     def score(self) -> dict:
-        return {"score": 0.5, "details": {"note": "macro scoring not yet implemented"}}
+        """Return macro environment score based on VIX.
+
+        Returns:
+            {"score": 0.0~1.0, "details": {"vix": float, "regime": str}}
+        """
+        if not self._config.get("enabled", False):
+            return {"score": 0.5, "details": {"note": "macro disabled"}}
+
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        if today in self._cache:
+            return self._cache[today]
+
+        try:
+            from market_data.us_fetcher import USFetcher
+            vix = USFetcher().get_vix()
+        except Exception:
+            vix = None
+
+        if vix is None:
+            return {"score": 0.5, "details": {"note": "VIX unavailable"}}
+
+        thresholds = self._config.get("vix_thresholds", {"low": 20, "high": 30})
+        scores_cfg = self._config.get("scores", {"low": 0.7, "medium": 0.5, "high": 0.2})
+
+        if vix < thresholds["low"]:
+            macro_score, regime = scores_cfg["low"], "calm"
+        elif vix > thresholds["high"]:
+            macro_score, regime = scores_cfg["high"], "fear"
+        else:
+            macro_score, regime = scores_cfg["medium"], "normal"
+
+        result = {"score": macro_score, "details": {"vix": round(vix, 2), "regime": regime}}
+        self._cache[today] = result
+        return result

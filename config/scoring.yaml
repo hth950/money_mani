@@ -5,15 +5,17 @@ fallback_on_error: true
 # Market-specific weight profiles
 weights:
   KRX:
-    technical: 0.35
+    technical: 0.30
     fundamental: 0.25
-    flow: 0.25
+    flow: 0.20
     intel: 0.15
+    macro: 0.10
   US:
-    technical: 0.50
+    technical: 0.45
     fundamental: 0.20
     flow: 0.0
-    intel: 0.30
+    intel: 0.25
+    macro: 0.10
 
 # Decision thresholds
 thresholds:
@@ -42,40 +44,52 @@ sector_benchmarks:
   defaults:
     per: 20.0
     roe: 0.15
+    pbr: 1.5
   sectors:
     Technology:
       per: 35.0
       roe: 0.25
+      pbr: 3.0
     Financial Services:
       per: 12.0
       roe: 0.12
+      pbr: 0.8
     Healthcare:
       per: 40.0
       roe: 0.20
+      pbr: 4.0
     Consumer Cyclical:
       per: 20.0
       roe: 0.18
+      pbr: 2.0
     Industrials:
       per: 18.0
       roe: 0.15
+      pbr: 1.8
     Communication Services:
       per: 25.0
       roe: 0.20
+      pbr: 2.5
     Consumer Defensive:
       per: 22.0
       roe: 0.18
+      pbr: 2.2
     Energy:
       per: 12.0
       roe: 0.15
+      pbr: 1.2
     Basic Materials:
       per: 15.0
       roe: 0.12
+      pbr: 1.0
     Real Estate:
       per: 30.0
       roe: 0.08
+      pbr: 1.5
     Utilities:
       per: 18.0
       roe: 0.10
+      pbr: 1.3
 
 # Exit/sell timing strategy
 exit_strategy:
@@ -91,3 +105,22 @@ exit_strategy:
   take_profit_pct: 0.15
   atr_multiplier: 2.0
   min_holding_days: 2
+
+macro:
+  enabled: true
+  vix_thresholds:
+    low: 20.0
+    high: 30.0
+  scores:
+    low: 0.7
+    medium: 0.5
+    high: 0.2
+
+flow_scoring:
+  enabled: true
+  lookback_days: 14
+  components:
+    streak: 0.20
+    amount: 0.35
+    ratio: 0.25
+    synergy: 0.20

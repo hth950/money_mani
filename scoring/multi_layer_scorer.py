@@ -93,12 +93,24 @@ class MultiLayerScorer:
         intel_score = intel_result["score"]
         intel_details = intel_result["details"]
 
+        # 5. Macro score
+        macro_result = collectors["macro"].score()
+        macro_score = macro_result["score"]
+        macro_details = macro_result["details"]
+
+        # Weight-sum validation
+        weight_sum = sum(weights.values())
+        if abs(weight_sum - 1.0) > 0.01:
+            logger.warning(f"Weights don't sum to 1.0: {weight_sum}, normalizing")
+            weights = {k: v / weight_sum for k, v in weights.items()}
+
         # Weighted sum
         composite = (
             technical_score * weights.get("technical", 0.35) +
             fundamental_score * weights.get("fundamental", 0.25) +
             flow_score * weights.get("flow", 0.25) +
-            intel_score * weights.get("intel", 0.15)
+            intel_score * weights.get("intel", 0.15) +
+            macro_score * weights.get("macro", 0.0)
         )
         composite = round(min(1.0, max(0.0, composite)), 4)
 
@@ -120,12 +132,14 @@ class MultiLayerScorer:
                 "fundamental": round(fundamental_score, 4),
                 "flow": round(flow_score, 4),
                 "intel": round(intel_score, 4),
+                "macro": macro_score,
             },
             "details": {
                 "technical": tech_details,
                 "fundamental": fund_details,
                 "flow": flow_details,
                 "intel": intel_details,
+                "macro": macro_details,
             },
             "weights": weights,
         }
