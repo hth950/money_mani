@@ -110,11 +110,15 @@ class PortfolioRiskManager:
         }
 
     def _get_open_positions(self) -> list[dict]:
+        """Get open positions grouped by unique ticker (not per-strategy)."""
         try:
             with get_db() as db:
                 rows = db.execute("""
-                    SELECT ticker, ticker_name, market, entry_price, entry_date
+                    SELECT ticker, ticker_name, market,
+                           AVG(entry_price) as entry_price,
+                           MIN(entry_date) as entry_date
                     FROM positions WHERE status = 'open'
+                    GROUP BY ticker
                 """).fetchall()
             return [dict(r) for r in rows]
         except Exception:
