@@ -54,6 +54,7 @@
             <thead>
                 <tr>
                     <th>티커</th>
+                    <th>종목명</th>
                     <th>시장</th>
                     <th>종합</th>
                     <th>기술적</th>
@@ -64,7 +65,7 @@
                 </tr>
             </thead>
             <tbody id="score-tbody">
-                <tr><td colspan="8" style="text-align:center;">로딩 중...</td></tr>
+                <tr><td colspan="9" style="text-align:center;">로딩 중...</td></tr>
             </tbody>
         </table>
     </div>
@@ -155,7 +156,7 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
     const sorted = [...items].sort((a, b) => (parseFloat(b.composite_score) || 0) - (parseFloat(a.composite_score) || 0));
     const tbody = document.getElementById('score-tbody');
     if (sorted.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">데이터 없음</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">데이터 없음</td></tr>';
         return;
     }
     tbody.innerHTML = sorted.map(item => {
@@ -166,6 +167,7 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
         const it = parseFloat(item.intel_score ?? item.intel);
         return '<tr>' +
             '<td><strong>' + (item.ticker || '-') + '</strong></td>' +
+            '<td>' + (item.ticker_name || item.ticker || '-') + '</td>' +
             '<td>' + (item.market || '-') + '</td>' +
             '<td class="' + scoreClass(cs) + '">' + fmtScore(cs) + '</td>' +
             '<td class="' + scoreClass(tc) + '">' + fmtScore(tc) + '</td>' +
@@ -176,7 +178,7 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
             '</tr>';
     }).join('');
 }).catch(() => {
-    document.getElementById('score-tbody').innerHTML = '<tr><td colspan="8" style="text-align:center; color:#999;">API 연결 실패</td></tr>';
+    document.getElementById('score-tbody').innerHTML = '<tr><td colspan="9" style="text-align:center; color:#999;">API 연결 실패</td></tr>';
     ['cnt-execute','cnt-watch','cnt-skip','cnt-blocked','avg-score'].forEach(id => {
         document.getElementById(id).textContent = '-';
     });

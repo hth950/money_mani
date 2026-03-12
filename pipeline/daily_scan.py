@@ -2,6 +2,8 @@
 
 import gc
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta, timezone
 
 from market_data import KRXFetcher, USFetcher
@@ -173,7 +175,7 @@ class DailyScan:
         # Apply portfolio risk gate (Phase 2)
         ensemble_signals, blocked_signals = self._apply_risk_gate(ensemble_signals)
 
-        # Save scoring results to DB (Phase 5) - include blocked for tracking
+        # Save scoring results to DB — include blocked signals for tracking
         self._save_scoring_results(ensemble_signals + blocked_signals, str(today))
 
         # Classify conviction for each consensus signal
@@ -200,57 +202,106 @@ class DailyScan:
         return {"date": str(today), "signals": ensemble_signals, "all_signals": signals, "skipped": False}
 
     def _scan_market(self, strategies, tickers, market):
-        """Scan a set of tickers with all strategies."""
+        """Scan tickers with all strategies. Optimized: fetch once per ticker, compute in parallel."""
+        scan_start = time.time()
         fetcher = KRXFetcher(delay=0.5) if market == "KRX" else USFetcher()
         signals = []
 
-        for strat in strategies:
-            sig_gen = SignalGenerator(strat)
+        # --- Phase 1: Pre-fetch OHLCV data (once per ticker) ---
+        ohlcv_cache: dict = {}
+        ticker_names: dict = {}
+
+        if market == "KRX":
+            # Sequential — pykrx is NOT thread-safe
             for ticker in tickers:
                 try:
                     df = fetcher.get_ohlcv(ticker, "2024-01-01")
                     if df.empty or len(df) < 60:
+                        logger.debug(f"Skip {ticker}: insufficient data ({len(df) if not df.empty else 0} rows)")
                         continue
-
-                    df_ind = sig_gen.compute_indicators(df)
-                    sigs = sig_gen.generate_signals(df_ind)
-
-                    if len(sigs) == 0:
-                        continue
-
-                    last_signal = sigs.iloc[-1]
-                    if last_signal != 0:
-                        signal_type = "BUY" if last_signal == 1 else "SELL"
-                        last_row = df_ind.iloc[-1]
-
-                        # Get ticker name
-                        try:
-                            if market == "KRX":
-                                ticker_name = KRXFetcher().get_ticker_name(ticker)
-                            else:
-                                ticker_name = ticker
-                        except Exception:
-                            ticker_name = ticker
-
-                        signal_info = {
-                            "strategy_name": strat.name,
-                            "ticker": ticker,
-                            "ticker_name": ticker_name,
-                            "signal_type": signal_type,
-                            "price": float(last_row["Close"]),
-                            "indicators": {col: float(last_row[col])
-                                           for col in df_ind.columns
-                                           if col not in ["Open", "High", "Low", "Close", "Volume"]
-                                           and not str(last_row[col]) == "nan"},
-                            "date": str(df.index[-1].date()),
-                            "market": market,
-                        }
-                        signals.append(signal_info)
-                        logger.info(f"Signal: {signal_type} {ticker} ({strat.name})")
+                    ohlcv_cache[ticker] = df
+                    try:
+                        ticker_names[ticker] = fetcher.get_ticker_name(ticker)
+                    except Exception:
+                        ticker_names[ticker] = ticker
                 except Exception as e:
-                    logger.error(f"Scan error {strat.name}/{ticker}: {e}")
-            gc.collect()
+                    logger.error(f"Fetch error {ticker}: {e}")
+        else:
+            # Parallel for US (yfinance is thread-safe)
+            def _fetch_us(t):
+                return t, fetcher.get_ohlcv(t, "2024-01-01")
 
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = {pool.submit(_fetch_us, t): t for t in tickers}
+                for future in as_completed(futures):
+                    try:
+                        ticker, df = future.result()
+                        if not df.empty and len(df) >= 60:
+                            ohlcv_cache[ticker] = df
+                            ticker_names[ticker] = ticker
+                    except Exception as e:
+                        logger.warning(f"US fetch failed for {futures[future]}: {e}")
+
+        fetch_time = time.time() - scan_start
+        logger.info(f"[{market}] OHLCV fetch: {len(ohlcv_cache)}/{len(tickers)} tickers in {fetch_time:.1f}s")
+
+        if not ohlcv_cache:
+            return signals
+
+        # --- Phase 2: Compute indicators in parallel ---
+        def _compute_one(strat, ticker, df, t_name):
+            try:
+                sig_gen = SignalGenerator(strat)
+                df_ind = sig_gen.compute_indicators(df)
+                sigs = sig_gen.generate_signals(df_ind)
+                if len(sigs) == 0:
+                    return None
+                last_signal = sigs.iloc[-1]
+                if last_signal == 0:
+                    return None
+                signal_type = "BUY" if last_signal == 1 else "SELL"
+                last_row = df_ind.iloc[-1]
+                return {
+                    "strategy_name": strat.name,
+                    "ticker": ticker,
+                    "ticker_name": t_name,
+                    "signal_type": signal_type,
+                    "price": float(last_row["Close"]),
+                    "indicators": {col: float(last_row[col])
+                                   for col in df_ind.columns
+                                   if col not in ["Open", "High", "Low", "Close", "Volume"]
+                                   and not str(last_row[col]) == "nan"},
+                    "date": str(df.index[-1].date()),
+                    "market": market,
+                }
+            except Exception as e:
+                logger.error(f"Compute error {strat.name}/{ticker}: {e}")
+                return None
+
+        compute_start = time.time()
+        max_workers = 2 if len(ohlcv_cache) > 30 else min(4, max(1, len(ohlcv_cache)))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = []
+            for strat in strategies:
+                for ticker, df in ohlcv_cache.items():
+                    futures.append(pool.submit(
+                        _compute_one, strat, ticker, df, ticker_names.get(ticker, ticker)
+                    ))
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    signals.append(result)
+                    logger.info(f"Signal: {result['signal_type']} {result['ticker']} ({result['strategy_name']})")
+
+        compute_time = time.time() - compute_start
+        total_time = time.time() - scan_start
+        logger.info(
+            f"[{market}] Compute: {len(signals)} signals from {len(strategies)}x{len(ohlcv_cache)} "
+            f"pairs in {compute_time:.1f}s (total: {total_time:.1f}s)"
+        )
+
+        gc.collect()
         return signals
 
     def _apply_multi_layer_scoring(self, ensemble_signals: list[dict], total_strategies: int) -> list[dict]:
@@ -314,9 +365,8 @@ class DailyScan:
         """Apply portfolio risk management gate (Phase 2).
 
         BUY signals that violate risk constraints are marked BLOCKED.
+        Returns (passed_signals, blocked_signals) so blocked can still be saved to DB.
         Falls back to passing all signals if risk module unavailable.
-
-        Returns: (passed_signals, blocked_signals)
         """
         try:
             from scoring.risk_manager import PortfolioRiskManager
@@ -327,7 +377,7 @@ class DailyScan:
                 return ensemble_signals, []
 
             passed = []
-            blocked = []
+            blocked_list = []
             for sig in ensemble_signals:
                 if sig["signal_type"] == "BUY":
                     allowed, reason = manager.check_can_buy(
@@ -337,13 +387,13 @@ class DailyScan:
                         sig["score_decision"] = "BLOCKED"
                         sig["block_reason"] = reason
                         logger.info(f"BLOCKED {sig['ticker']}: {reason}")
-                        blocked.append(sig)
+                        blocked_list.append(sig)
                         continue
                 passed.append(sig)
 
-            if blocked:
-                logger.info(f"Risk gate: {len(blocked)} signals blocked, {len(passed)} passed")
-            return passed, blocked
+            if blocked_list:
+                logger.info(f"Risk gate: {len(blocked_list)} signals blocked, {len(passed)} passed")
+            return passed, blocked_list
 
         except ImportError:
             logger.warning("risk_manager module not available, skipping risk gate")
@@ -413,6 +463,7 @@ class DailyScan:
                 if sig.get("composite_score") is not None:
                     service.save_scoring_result(
                         ticker=sig["ticker"],
+                        ticker_name=sig.get("ticker_name", sig["ticker"]),
                         market=sig.get("market", "KRX"),
                         scan_date=date_str,
                         scores={

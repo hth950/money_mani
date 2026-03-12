@@ -45,6 +45,9 @@ def _get_sector_map() -> dict:
 class FundamentalCollector:
     """Fundamental data collection and scoring (0~1)."""
 
+    def __init__(self):
+        self._cache: dict[str, dict] = {}
+
     def score(self, ticker: str, market: str) -> dict:
         """Return fundamental score and details.
 
@@ -53,11 +56,19 @@ class FundamentalCollector:
         """
         neutral = {"score": 0.5, "details": {"per_score": 0.5, "pbr_score": 0.5, "div_score": 0.5}}
 
+        cache_key = f"{market}:{ticker}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         try:
             if market == "KRX":
-                return self._score_krx(ticker, neutral)
+                result = self._score_krx(ticker, neutral)
             else:
-                return self._score_us(ticker, neutral)
+                result = self._score_us(ticker, neutral)
+            self._cache[cache_key] = result
+            if len(self._cache) > 50:
+                logger.warning(f"FundamentalCollector cache size: {len(self._cache)}")
+            return result
         except Exception as e:
             logger.warning(f"FundamentalCollector.score failed for {ticker}: {e}")
             return neutral
@@ -140,6 +151,9 @@ class FundamentalCollector:
 class FlowCollector:
     """Investor flow data collection and scoring (0~1) - KRX only."""
 
+    def __init__(self):
+        self._cache: dict[str, dict] = {}
+
     def score(self, ticker: str, market: str) -> dict:
         """Return flow score and details.
 
@@ -152,6 +166,10 @@ class FlowCollector:
 
         if market != "KRX":
             return neutral
+
+        cache_key = f"{market}:{ticker}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
         try:
             from market_data.krx_fetcher import KRXFetcher
@@ -196,7 +214,7 @@ class FlowCollector:
             inst_streak_score = min(1.0, inst_streak / 10)
             flow_score = foreign_streak_score * 0.5 + inst_streak_score * 0.5
 
-            return {
+            result = {
                 "score": round(flow_score, 4),
                 "details": {
                     "foreign_streak_score": round(foreign_streak_score, 4),
@@ -205,6 +223,10 @@ class FlowCollector:
                     "inst_consecutive_buy_days": inst_streak,
                 },
             }
+            self._cache[cache_key] = result
+            if len(self._cache) > 50:
+                logger.warning(f"FlowCollector cache size: {len(self._cache)}")
+            return result
         except Exception as e:
             logger.warning(f"FlowCollector scoring failed for {ticker}: {e}")
             return neutral

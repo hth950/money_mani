@@ -105,6 +105,8 @@ class MultiLayerScorer:
         # Decision
         if composite >= thresholds["execute"]:
             decision = "EXECUTE"
+            # Transaction cost filter: downgrade EXECUTE→WATCH if margin too thin
+            decision = self._apply_transaction_cost_filter(composite, market, decision, thresholds)
         elif composite >= thresholds["watch"]:
             decision = "WATCH"
         else:
@@ -135,3 +137,25 @@ class MultiLayerScorer:
         )
 
         return result
+
+    def _apply_transaction_cost_filter(self, composite_score: float, market: str,
+                                        decision: str, thresholds: dict) -> str:
+        """Downgrade EXECUTE → WATCH if score margin doesn't cover transaction costs."""
+        if decision != "EXECUTE":
+            return decision
+
+        costs = self.config.get("transaction_costs", {}).get(market, {})
+        min_return = costs.get("min_expected_return", 0) / 100  # 0.5% → 0.005
+        if min_return <= 0:
+            return decision
+
+        execute_threshold = thresholds.get("execute", 0.60)
+        score_margin = composite_score - execute_threshold
+
+        if score_margin < min_return:
+            logger.info(
+                f"Transaction cost filter: margin {score_margin:.4f} < min_return {min_return:.4f}, "
+                f"downgrade EXECUTE→WATCH"
+            )
+            return "WATCH"
+        return "EXECUTE"

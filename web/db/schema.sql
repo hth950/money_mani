@@ -273,6 +273,7 @@ CREATE TABLE IF NOT EXISTS scoring_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id INTEGER,
     ticker TEXT NOT NULL,
+    ticker_name TEXT,
     market TEXT NOT NULL,
     scan_date TEXT NOT NULL,
     technical_score REAL,
