@@ -221,7 +221,12 @@ class DailyScan:
                         continue
                     ohlcv_cache[ticker] = df
                     try:
-                        ticker_names[ticker] = fetcher.get_ticker_name(ticker)
+                        name = fetcher.get_ticker_name(ticker)
+                        # Guard: pykrx may return empty string or non-string for some tickers
+                        if isinstance(name, str) and name and "DataFrame" not in name:
+                            ticker_names[ticker] = name
+                        else:
+                            ticker_names[ticker] = ticker
                     except Exception:
                         ticker_names[ticker] = ticker
                 except Exception as e:
