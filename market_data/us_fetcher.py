@@ -44,11 +44,13 @@ class USFetcher:
                 "PER": info.get("trailingPE", None),
                 "PBR": info.get("priceToBook", None),
                 "DIV": (info.get("dividendYield") or 0) * 100,
+                "ROE": info.get("returnOnEquity", None),
+                "profit_margin": info.get("profitMargins", None),
                 "sector": info.get("sector", "Unknown"),
             }
         except Exception as e:
             logger.warning(f"Failed to get fundamentals for {ticker}: {e}")
-            return {"PER": None, "PBR": None, "DIV": 0, "sector": "Unknown"}
+            return {"PER": None, "PBR": None, "DIV": 0, "ROE": None, "profit_margin": None, "sector": "Unknown"}
 
     def get_info(self, ticker: str) -> dict:
         """Get basic stock info (name, sector, market cap, etc.)."""

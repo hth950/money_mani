@@ -51,6 +51,24 @@ class DailyScan:
         self.position_service = PositionService()
         self.conflict_resolver = ConflictResolver()
 
+        # DiversityScorer for ensemble filter
+        try:
+            from scoring.diversity_scorer import DiversityScorer
+            import yaml
+            from pathlib import Path
+            scoring_yaml = Path(__file__).parent.parent / "config" / "scoring.yaml"
+            if scoring_yaml.exists():
+                with open(scoring_yaml) as f:
+                    _scoring_cfg = yaml.safe_load(f) or {}
+            else:
+                _scoring_cfg = {}
+            _ensemble_cfg = _scoring_cfg.get("ensemble", {})
+            self._diversity_scorer = DiversityScorer(
+                min_category_diversity=_ensemble_cfg.get("min_category_diversity", 3)
+            )
+        except ImportError:
+            self._diversity_scorer = None
+
     def _get_top_strategies(self) -> list:
         """Get strategies ranked by backtest + live performance blend.
 
@@ -58,15 +76,43 @@ class DailyScan:
         Otherwise returns only top N.
         """
         with get_db() as db:
-            bt_rows = db.execute("""
-                SELECT strategy_name,
-                       AVG(total_return) as avg_return,
-                       AVG(sharpe_ratio) as avg_sharpe,
-                       AVG(win_rate) as avg_win_rate
-                FROM backtest_results
-                WHERE is_valid = 1
-                GROUP BY strategy_name
-            """).fetchall()
+            # Check if walk_forward_results table exists
+            try:
+                db.execute("SELECT 1 FROM walk_forward_results LIMIT 1")
+                use_wf_filter = True
+            except Exception:
+                use_wf_filter = False
+
+            if use_wf_filter:
+                bt_rows = db.execute("""
+                    SELECT strategy_name,
+                           AVG(total_return) as avg_return,
+                           AVG(sharpe_ratio) as avg_sharpe,
+                           AVG(win_rate) as avg_win_rate
+                    FROM backtest_results
+                    WHERE is_valid = 1
+                      AND strategy_name NOT IN (
+                          SELECT DISTINCT strategy_name FROM walk_forward_results WHERE is_overfit = 1
+                      )
+                    GROUP BY strategy_name
+                """).fetchall()
+            else:
+                bt_rows = db.execute("""
+                    SELECT strategy_name,
+                           AVG(total_return) as avg_return,
+                           AVG(sharpe_ratio) as avg_sharpe,
+                           AVG(win_rate) as avg_win_rate
+                    FROM backtest_results
+                    WHERE is_valid = 1
+                    GROUP BY strategy_name
+                """).fetchall()
+
+            if use_wf_filter:
+                overfit_count = db.execute(
+                    "SELECT COUNT(DISTINCT strategy_name) as cnt FROM walk_forward_results WHERE is_overfit = 1"
+                ).fetchone()["cnt"]
+                if overfit_count > 0:
+                    logger.info(f"Excluded {overfit_count} overfit strategies from daily scan")
 
             live_rows = db.execute("""
                 SELECT strategy_name, win_rate, avg_pnl_pct, total_trades
@@ -175,6 +221,21 @@ class DailyScan:
         # Apply portfolio risk gate (Phase 2)
         ensemble_signals, blocked_signals = self._apply_risk_gate(ensemble_signals)
 
+        # --- Phase: Exit Scoring for open positions ---
+        exit_signals = []
+        if is_krx_day:
+            try:
+                krx_ohlcv = getattr(self, '_last_krx_ohlcv', {})
+                exit_signals.extend(self._evaluate_open_positions(krx_ohlcv, "KRX"))
+            except Exception as e:
+                logger.error(f"KRX exit scoring failed: {e}")
+        if is_nyse_day:
+            try:
+                us_ohlcv = getattr(self, '_last_us_ohlcv', {})
+                exit_signals.extend(self._evaluate_open_positions(us_ohlcv, "US"))
+            except Exception as e:
+                logger.error(f"US exit scoring failed: {e}")
+
         # Save scoring results to DB — include blocked signals for tracking
         self._save_scoring_results(ensemble_signals + blocked_signals, str(today))
 
@@ -198,6 +259,10 @@ class DailyScan:
         else:
             logger.info(f"{today}: No consensus signals (individual: {len(signals)}).")
             self.discord.send(content=f"📊 {today} 일일 스캔 완료: 합의 시그널 없음 (개별 {len(signals)}건, 기준 N={ENSEMBLE_CONSENSUS_N})")
+
+        # Send exit scoring alerts
+        if exit_signals:
+            self._send_exit_alerts(exit_signals, str(today))
 
         return {"date": str(today), "signals": ensemble_signals, "all_signals": signals, "skipped": False}
 
@@ -268,6 +333,7 @@ class DailyScan:
                 last_row = df_ind.iloc[-1]
                 return {
                     "strategy_name": strat.name,
+                    "category": strat.category,
                     "ticker": ticker,
                     "ticker_name": t_name,
                     "signal_type": signal_type,
@@ -305,6 +371,12 @@ class DailyScan:
             f"[{market}] Compute: {len(signals)} signals from {len(strategies)}x{len(ohlcv_cache)} "
             f"pairs in {compute_time:.1f}s (total: {total_time:.1f}s)"
         )
+
+        # Cache OHLCV data for exit scoring
+        if market == "KRX":
+            self._last_krx_ohlcv = ohlcv_cache
+        else:
+            self._last_us_ohlcv = ohlcv_cache
 
         gc.collect()
         return signals
@@ -423,6 +495,21 @@ class DailyScan:
         filtered = []
         summary = {}
 
+        # Load ensemble config once (outside ticker loop)
+        try:
+            import yaml
+            from pathlib import Path
+            scoring_yaml = Path(__file__).parent.parent / "config" / "scoring.yaml"
+            if scoring_yaml.exists():
+                with open(scoring_yaml) as f:
+                    _scoring_cfg = yaml.safe_load(f) or {}
+            else:
+                _scoring_cfg = {}
+        except Exception:
+            _scoring_cfg = {}
+        ensemble_cfg = _scoring_cfg.get("ensemble", {})
+        use_diversity = ensemble_cfg.get("use_diversity_scorer", False) and self._diversity_scorer is not None
+
         for ticker, groups in by_ticker.items():
             buy_count = len(groups["buy"])
             sell_count = len(groups["sell"])
@@ -438,23 +525,76 @@ class DailyScan:
                                groups["sell"][0]["ticker_name"] if groups["sell"] else ticker,
             }
 
+            # Build signals_by_strategy for DiversityScorer (inside ticker loop)
+            if use_diversity:
+                signals_by_strategy = {}
+                for sig in groups["buy"] + groups["sell"]:
+                    signals_by_strategy[sig["strategy_name"]] = {
+                        "category": sig.get("category") or "unknown",
+                        "signal_type": sig["signal_type"],
+                    }
+
             # Emit consensus BUY: pick one representative signal, annotate with consensus info
-            if buy_count >= ENSEMBLE_CONSENSUS_N:
-                rep = groups["buy"][0].copy()
-                rep["consensus_count"] = buy_count
-                rep["consensus_strategies"] = buy_names
-                rep["signal_type"] = "BUY"
-                filtered.append(rep)
-                logger.info(f"ENSEMBLE BUY {ticker}: {buy_count}/{len(buy_names)} strategies agree")
+            if use_diversity:
+                diversity_buy = self._diversity_scorer.score_ensemble(signals_by_strategy, "BUY")
+                passes_diversity = (
+                    diversity_buy["weighted_score"] >= ensemble_cfg.get("min_weighted_score", 3.0)
+                    and diversity_buy["meets_diversity_min"]
+                )
+                passes_fallback = buy_count >= ensemble_cfg.get("fallback_count", ENSEMBLE_CONSENSUS_N)
+
+                if passes_diversity or passes_fallback:
+                    rep = groups["buy"][0].copy()
+                    rep["consensus_count"] = buy_count
+                    rep["consensus_strategies"] = buy_names
+                    rep["signal_type"] = "BUY"
+                    rep["diversity_score"] = diversity_buy
+                    filtered.append(rep)
+                    logger.info(
+                        f"ENSEMBLE BUY {ticker}: {buy_count} strategies, "
+                        f"diversity={diversity_buy['weighted_score']:.2f}, "
+                        f"categories={diversity_buy['agreeing_categories']}/{diversity_buy['total_categories']}"
+                    )
+            else:
+                # Original logic (fallback)
+                if buy_count >= ENSEMBLE_CONSENSUS_N:
+                    rep = groups["buy"][0].copy()
+                    rep["consensus_count"] = buy_count
+                    rep["consensus_strategies"] = buy_names
+                    rep["signal_type"] = "BUY"
+                    filtered.append(rep)
+                    logger.info(f"ENSEMBLE BUY {ticker}: {buy_count}/{len(buy_names)} strategies agree")
 
             # Emit consensus SELL
-            if sell_count >= ENSEMBLE_CONSENSUS_N:
-                rep = groups["sell"][0].copy()
-                rep["consensus_count"] = sell_count
-                rep["consensus_strategies"] = sell_names
-                rep["signal_type"] = "SELL"
-                filtered.append(rep)
-                logger.info(f"ENSEMBLE SELL {ticker}: {sell_count}/{len(sell_names)} strategies agree")
+            if use_diversity:
+                diversity_sell = self._diversity_scorer.score_ensemble(signals_by_strategy, "SELL")
+                passes_diversity_sell = (
+                    diversity_sell["weighted_score"] >= ensemble_cfg.get("min_weighted_score", 3.0)
+                    and diversity_sell["meets_diversity_min"]
+                )
+                passes_fallback_sell = sell_count >= ensemble_cfg.get("fallback_count", ENSEMBLE_CONSENSUS_N)
+
+                if passes_diversity_sell or passes_fallback_sell:
+                    rep = groups["sell"][0].copy()
+                    rep["consensus_count"] = sell_count
+                    rep["consensus_strategies"] = sell_names
+                    rep["signal_type"] = "SELL"
+                    rep["diversity_score"] = diversity_sell
+                    filtered.append(rep)
+                    logger.info(
+                        f"ENSEMBLE SELL {ticker}: {sell_count} strategies, "
+                        f"diversity={diversity_sell['weighted_score']:.2f}, "
+                        f"categories={diversity_sell['agreeing_categories']}/{diversity_sell['total_categories']}"
+                    )
+            else:
+                # Original logic (fallback)
+                if sell_count >= ENSEMBLE_CONSENSUS_N:
+                    rep = groups["sell"][0].copy()
+                    rep["consensus_count"] = sell_count
+                    rep["consensus_strategies"] = sell_names
+                    rep["signal_type"] = "SELL"
+                    filtered.append(rep)
+                    logger.info(f"ENSEMBLE SELL {ticker}: {sell_count}/{len(sell_names)} strategies agree")
 
         logger.info(f"Ensemble filter: {len(signals)} individual -> {len(filtered)} consensus (N>={ENSEMBLE_CONSENSUS_N})")
         return filtered, summary
@@ -486,6 +626,79 @@ class DailyScan:
             logger.debug("scoring_service not available, skipping scoring DB save")
         except Exception as e:
             logger.error(f"Failed to save scoring results: {e}")
+
+    def _evaluate_open_positions(self, ohlcv_cache: dict, market: str) -> list[dict]:
+        """Evaluate all open positions for exit signals."""
+        try:
+            from scoring.exit_scorer import ExitScorer
+            exit_scorer = ExitScorer()
+        except ImportError:
+            logger.debug("exit_scorer module not available, skipping exit evaluation")
+            return []
+
+        if not exit_scorer.enabled:
+            logger.info("Exit scoring disabled")
+            return []
+
+        positions = self.position_service.get_open_positions()
+        # Filter by market
+        positions = [p for p in positions if p.get("market") == market]
+
+        if not positions:
+            return []
+
+        exit_signals = []
+        for pos in positions:
+            ticker = pos["ticker"]
+            df = ohlcv_cache.get(ticker)
+            if df is None or df.empty:
+                continue
+
+            try:
+                result = exit_scorer.evaluate(
+                    ticker=ticker,
+                    market=market,
+                    entry_price=pos["entry_price"],
+                    entry_date=pos["entry_date"],
+                    ohlcv_df=df,
+                )
+
+                if result["decision"] != "HOLD":
+                    exit_signals.append({
+                        "ticker": ticker,
+                        "ticker_name": pos.get("ticker_name", ticker),
+                        "market": market,
+                        "signal_type": "SELL",
+                        "exit_score": result["exit_score"],
+                        "exit_decision": result["decision"],
+                        "exit_reason": result["reason"],
+                        "exit_details": result["details"],
+                        "exit_scores": result["scores"],
+                        "position_id": pos["id"],
+                        "entry_price": pos["entry_price"],
+                        "pnl_pct": result["details"].get("pnl_pct", 0),
+                        "price": result["details"].get("current_price", 0),
+                        "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                    })
+            except Exception as e:
+                logger.error(f"Exit evaluation failed for {ticker}: {e}")
+
+        if exit_signals:
+            logger.info(f"[{market}] Exit signals: {len(exit_signals)} positions flagged for exit")
+        return exit_signals
+
+    def _send_exit_alerts(self, exit_signals: list[dict], date_str: str):
+        """Send Discord alerts for exit scoring results."""
+        from alerts.formatter import AlertFormatter
+
+        for sig in exit_signals:
+            try:
+                embed = AlertFormatter.format_exit_signal_alert(sig)
+                self.discord.send(embed=embed)
+            except Exception as e:
+                logger.error(f"Failed to send exit alert for {sig.get('ticker')}: {e}")
+
+        logger.info(f"Sent {len(exit_signals)} exit scoring alerts")
 
     def _save_signals_to_db(self, signals: list[dict], date_str: str):
         """Save all individual signals to DB for tracking (no alerts)."""

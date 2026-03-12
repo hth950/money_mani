@@ -54,7 +54,7 @@ class DiversityScorer:
         # Group by category
         by_category = defaultdict(list)
         for name, info in agreeing.items():
-            cat = info.get("category", "unknown")
+            cat = info.get("category") or "unknown"
             by_category[cat].append(name)
 
         # Calculate weighted votes: 1/sqrt(N) per strategy in category of N
