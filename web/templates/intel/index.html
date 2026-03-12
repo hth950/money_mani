@@ -54,6 +54,13 @@
 </div>
 
 <script>
+function toKST(utcStr) {
+    const d = new Date(utcStr + 'Z');
+    const p = {};
+    new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Seoul', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false}).formatToParts(d).forEach(v => p[v.type] = v.value);
+    return p.month + '/' + p.day + ' ' + p.hour + ':' + p.minute;
+}
+
 const CATEGORY_LABELS = {
     policy: '정책/규제', earnings: '기업 실적', sector: '섹터/테마',
     global: '글로벌', event: '이벤트', supply_demand: '수급'
@@ -144,16 +151,10 @@ function renderIssueCard(issue) {
           (issue.accuracy_score * 100).toFixed(0) + '% 정확</span>'
         : '';
 
-    // Format time display
+    // Format time display (KST)
     let timeStr = '';
     if (issue.created_at) {
-        const d = new Date(issue.created_at + 'Z');  // UTC -> local
-        const kst = new Date(d.getTime() + 9*60*60*1000);
-        const mm = String(kst.getMonth()+1).padStart(2,'0');
-        const dd = String(kst.getDate()).padStart(2,'0');
-        const hh = String(kst.getHours()).padStart(2,'0');
-        const mi = String(kst.getMinutes()).padStart(2,'0');
-        timeStr = mm + '/' + dd + ' ' + hh + ':' + mi;
+        timeStr = toKST(issue.created_at);
     }
 
     return '<article style="margin-bottom:1rem">' +
@@ -195,16 +196,7 @@ async function loadScans() {
         for (const s of scans) {
             const statusColor = s.status === 'success' ? '#00B050' :
                                s.status === 'partial' ? '#F39C12' : '#FF0000';
-            let scanTime = s.created_at || '';
-            if (scanTime) {
-                const d = new Date(scanTime + 'Z');
-                const kst = new Date(d.getTime() + 9*60*60*1000);
-                const mm = String(kst.getMonth()+1).padStart(2,'0');
-                const dd = String(kst.getDate()).padStart(2,'0');
-                const hh = String(kst.getHours()).padStart(2,'0');
-                const mi = String(kst.getMinutes()).padStart(2,'0');
-                scanTime = mm + '/' + dd + ' ' + hh + ':' + mi;
-            }
+            let scanTime = s.created_at ? toKST(s.created_at) : '';
             const scanLabel = SCAN_LABELS[s.scan_type] || s.scan_type;
             html += '<tr><td>' + scanTime + '</td>' +
                 '<td>' + scanLabel + '</td>' +
