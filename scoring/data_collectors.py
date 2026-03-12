@@ -43,125 +43,89 @@ def _get_sector_map() -> dict:
 
 
 class FundamentalCollector:
-    """Fundamental data collection and scoring (0~1)."""
+    """Fundamental data via yfinance (works for both KRX and US)."""
 
     def __init__(self):
         self._cache: dict[str, dict] = {}
 
     def score(self, ticker: str, market: str) -> dict:
-        """Return fundamental score and details.
-
-        Returns:
-            {"score": 0.0~1.0, "details": {"per_score": ..., "pbr_score": ..., "div_score": ...}}
-        """
-        neutral = {"score": 0.5, "details": {"per_score": 0.5, "pbr_score": 0.5, "div_score": 0.5}}
+        neutral = {"score": 0.5, "details": {"per_score": 0.5, "roe_score": 0.5, "div_score": 0.5, "profit_score": 0.5}}
 
         cache_key = f"{market}:{ticker}"
         if cache_key in self._cache:
             return self._cache[cache_key]
 
         try:
-            if market == "KRX":
-                result = self._score_krx(ticker, neutral)
-            else:
-                result = self._score_us(ticker, neutral)
+            result = self._score_yfinance(ticker, market, neutral)
             self._cache[cache_key] = result
-            if len(self._cache) > 50:
-                logger.warning(f"FundamentalCollector cache size: {len(self._cache)}")
             return result
         except Exception as e:
             logger.warning(f"FundamentalCollector.score failed for {ticker}: {e}")
             return neutral
 
-    def _score_krx(self, ticker: str, neutral: dict) -> dict:
-        from market_data.krx_fetcher import KRXFetcher
-        today = datetime.now(KST).strftime("%Y-%m-%d")
-        start = (datetime.now(KST) - timedelta(days=5)).strftime("%Y-%m-%d")
-        try:
-            df = KRXFetcher().get_fundamentals(ticker, start, today)
-        except Exception as e:
-            logger.warning(f"KRX get_fundamentals failed for {ticker}: {e}")
-            return neutral
+    def _score_yfinance(self, ticker: str, market: str, neutral: dict) -> dict:
+        import yfinance as yf
 
-        if df is None or df.empty:
-            return neutral
+        if market == "KRX":
+            # Try KOSPI (.KS) then KOSDAQ (.KQ)
+            info = None
+            for suffix in [".KS", ".KQ"]:
+                try:
+                    info = yf.Ticker(ticker + suffix).info
+                    if info.get("forwardPE") or info.get("trailingPE"):
+                        break
+                except Exception:
+                    continue
+            if not info:
+                return neutral
+        else:
+            try:
+                info = yf.Ticker(ticker).info
+            except Exception:
+                return neutral
 
-        # Use the latest row
-        row = df.iloc[-1]
-        ticker_per = float(row.get("PER", 0) or 0)
-        ticker_pbr = float(row.get("PBR", 0) or 0)
-        ticker_div = float(row.get("DIV", 0) or 0)
+        per = info.get("forwardPE") or info.get("trailingPE") or 0
+        roe = info.get("returnOnEquity") or 0
+        div_yield = info.get("dividendYield") or 0
+        profit_margin = info.get("profitMargins") or 0
 
-        # Sector averages from KRX listings fundamentals (simplified: use fixed benchmarks)
-        # Full sector-avg computation requires joining fundamentals for all sector peers
-        # which is too expensive for v1; use fixed sector benchmarks instead.
-        sector_avg_per = 15.0
-        sector_avg_pbr = 1.5
+        # PER score: lower is better (0 at PER=30, 1 at PER=0)
+        per_score = max(0.0, min(1.0, 1.0 - (per / 30.0))) if per > 0 else 0.5
+        # ROE score: higher is better (cap at 30%)
+        roe_score = min(1.0, max(0.0, roe / 0.30)) if roe > 0 else 0.3
+        # Dividend score: higher is better (cap at 5%)
+        div_score = min(1.0, div_yield / 0.05) if div_yield > 0 else 0.0
+        # Profitability score: higher is better (cap at 20%)
+        profit_score = min(1.0, max(0.0, profit_margin / 0.20)) if profit_margin > 0 else 0.3
 
-        per_score = max(0.0, 1.0 - (ticker_per / sector_avg_per)) if ticker_per > 0 else 0.5
-        pbr_score = max(0.0, 1.0 - (ticker_pbr / sector_avg_pbr)) if ticker_pbr > 0 else 0.5
-        div_score = min(1.0, ticker_div / 5.0)
-
-        fundamental_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
-
-        return {
-            "score": round(fundamental_score, 4),
-            "details": {
-                "per_score": round(per_score, 4),
-                "pbr_score": round(pbr_score, 4),
-                "div_score": round(div_score, 4),
-                "per": ticker_per,
-                "pbr": ticker_pbr,
-                "div": ticker_div,
-            },
-        }
-
-    def _score_us(self, ticker: str, neutral: dict) -> dict:
-        from market_data.us_fetcher import USFetcher
-        try:
-            data = USFetcher().get_fundamentals(ticker)
-        except Exception as e:
-            logger.warning(f"US get_fundamentals failed for {ticker}: {e}")
-            return neutral
-
-        ticker_per = float(data.get("PER") or 0)
-        ticker_pbr = float(data.get("PBR") or 0)
-        ticker_div = float(data.get("DIV") or 0)
-
-        # US: use 0.5 default for sector averages (simplified)
-        per_score = 0.5
-        pbr_score = 0.5
-        div_score = min(1.0, ticker_div / 5.0)
-
-        fundamental_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
+        fundamental_score = per_score * 0.3 + roe_score * 0.3 + div_score * 0.2 + profit_score * 0.2
 
         return {
             "score": round(fundamental_score, 4),
             "details": {
                 "per_score": round(per_score, 4),
-                "pbr_score": round(pbr_score, 4),
+                "roe_score": round(roe_score, 4),
                 "div_score": round(div_score, 4),
-                "per": ticker_per,
-                "pbr": ticker_pbr,
-                "div": ticker_div,
+                "profit_score": round(profit_score, 4),
+                "per": round(per, 2) if per else 0,
+                "roe": round(roe, 4) if roe else 0,
+                "div": round(div_yield, 4) if div_yield else 0,
+                "profit_margin": round(profit_margin, 4) if profit_margin else 0,
+                "sector": info.get("sector", "Unknown"),
             },
         }
 
 
 class FlowCollector:
-    """Investor flow data collection and scoring (0~1) - KRX only."""
+    """Volume-based flow proxy (KRX API blocked, use OHLCV volume instead)."""
 
     def __init__(self):
         self._cache: dict[str, dict] = {}
 
     def score(self, ticker: str, market: str) -> dict:
-        """Return flow score and details.
-
-        KRX only; US returns neutral 0.5.
-        """
         neutral = {
             "score": 0.5,
-            "details": {"foreign_streak_score": 0.5, "inst_streak_score": 0.5},
+            "details": {"volume_surge": 1.0, "price_momentum": 0.0},
         }
 
         if market != "KRX":
@@ -172,64 +136,66 @@ class FlowCollector:
             return self._cache[cache_key]
 
         try:
-            from market_data.krx_fetcher import KRXFetcher
-            today = datetime.now(KST).strftime("%Y-%m-%d")
-            start = (datetime.now(KST) - timedelta(days=14)).strftime("%Y-%m-%d")
-            df = KRXFetcher().get_investor_flows(ticker, start, today)
-        except Exception as e:
-            logger.warning(f"FlowCollector get_investor_flows failed for {ticker}: {e}")
-            return neutral
-
-        if df is None or df.empty:
-            return neutral
-
-        try:
-            # Identify foreign and institutional columns
-            # pykrx returns columns like: 기관합계, 외국인합계, 개인, etc.
-            foreign_col = None
-            inst_col = None
-            for col in df.columns:
-                col_str = str(col)
-                if "외국" in col_str:
-                    foreign_col = col
-                if "기관" in col_str:
-                    inst_col = col
-
-            recent = df.tail(10)
-
-            def consecutive_buy_days(series) -> int:
-                """Count trailing consecutive positive days."""
-                count = 0
-                for val in reversed(series.tolist()):
-                    if val > 0:
-                        count += 1
-                    else:
-                        break
-                return count
-
-            foreign_streak = consecutive_buy_days(recent[foreign_col]) if foreign_col is not None else 0
-            inst_streak = consecutive_buy_days(recent[inst_col]) if inst_col is not None else 0
-
-            foreign_streak_score = min(1.0, foreign_streak / 10)
-            inst_streak_score = min(1.0, inst_streak / 10)
-            flow_score = foreign_streak_score * 0.5 + inst_streak_score * 0.5
-
-            result = {
-                "score": round(flow_score, 4),
-                "details": {
-                    "foreign_streak_score": round(foreign_streak_score, 4),
-                    "inst_streak_score": round(inst_streak_score, 4),
-                    "foreign_consecutive_buy_days": foreign_streak,
-                    "inst_consecutive_buy_days": inst_streak,
-                },
-            }
+            result = self._score_volume_proxy(ticker, neutral)
             self._cache[cache_key] = result
-            if len(self._cache) > 50:
-                logger.warning(f"FlowCollector cache size: {len(self._cache)}")
             return result
         except Exception as e:
-            logger.warning(f"FlowCollector scoring failed for {ticker}: {e}")
+            logger.warning(f"FlowCollector.score failed for {ticker}: {e}")
             return neutral
+
+    def _score_volume_proxy(self, ticker: str, neutral: dict) -> dict:
+        from pykrx import stock
+        end = datetime.now(KST).strftime("%Y%m%d")
+        start = (datetime.now(KST) - timedelta(days=40)).strftime("%Y%m%d")
+
+        df = stock.get_market_ohlcv_by_date(start, end, ticker)
+        if df is None or len(df) < 20:
+            return neutral
+
+        # Volume columns: pykrx 1.2.4 may use Korean or English names
+        vol_col = None
+        close_col = None
+        for col in df.columns:
+            col_l = str(col).lower()
+            if "거래량" in col_l or "volume" in col_l:
+                vol_col = col
+            if "종가" in col_l or "close" in col_l:
+                close_col = col
+        if vol_col is None or close_col is None:
+            # Fallback: assume column order (Open, High, Low, Close, Volume)
+            vol_col = df.columns[-1]
+            close_col = df.columns[3]
+
+        volumes = df[vol_col].astype(float)
+        closes = df[close_col].astype(float)
+
+        # Volume surge: 5-day avg / 20-day avg (>1 = increasing interest)
+        vol_5d = volumes.tail(5).mean()
+        vol_20d = volumes.tail(20).mean()
+        volume_surge = vol_5d / vol_20d if vol_20d > 0 else 1.0
+
+        # Price momentum: 5-day return
+        if len(closes) >= 6 and closes.iloc[-6] > 0:
+            price_momentum = (closes.iloc[-1] - closes.iloc[-6]) / closes.iloc[-6]
+        else:
+            price_momentum = 0.0
+
+        # Volume surge score: 0.5 at ratio=1.0, 1.0 at ratio=2.0+
+        vol_score = min(1.0, max(0.0, (volume_surge - 0.5) / 1.5))
+        # Momentum score: -5% → 0.0, 0% → 0.5, +5% → 1.0
+        mom_score = min(1.0, max(0.0, (price_momentum + 0.05) / 0.10))
+
+        flow_score = vol_score * 0.5 + mom_score * 0.5
+
+        return {
+            "score": round(flow_score, 4),
+            "details": {
+                "volume_surge": round(volume_surge, 4),
+                "price_momentum": round(price_momentum, 4),
+                "vol_score": round(vol_score, 4),
+                "mom_score": round(mom_score, 4),
+            },
+        }
 
 
 class MacroCollector:
