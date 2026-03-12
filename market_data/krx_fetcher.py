@@ -55,15 +55,32 @@ class KRXFetcher:
         return df
 
     def get_investor_flows(self, ticker: str, start: str, end: str = None) -> pd.DataFrame:
-        """Get investor trading data (institutional, foreign, individual)."""
+        """Get investor trading data (institutional, foreign, individual).
+
+        Tries pykrx first; falls back to Naver Finance scraper if pykrx is
+        IP-blocked (e.g. on OCI cloud servers).
+        """
+        end_str = end or datetime.now(KST).strftime("%Y-%m-%d")
         start_fmt = start.replace("-", "")
-        end_fmt = (end or datetime.now(KST).strftime("%Y%m%d")).replace("-", "")
+        end_fmt = end_str.replace("-", "")
         logger.info(f"Fetching KRX investor flows: {ticker}")
         df = krx.get_market_trading_value_by_date(start_fmt, end_fmt, ticker)
         self._wait()
-        if df.empty:
-            logger.warning(f"No investor flow data for {ticker}")
-        return df
+        if not df.empty:
+            return df
+
+        # Fallback: Naver Finance scraper (works from cloud IPs)
+        logger.info(f"pykrx flow empty for {ticker}, trying NaverFlowFetcher")
+        try:
+            from market_data.naver_flow_fetcher import NaverFlowFetcher
+            naver_df = NaverFlowFetcher().get_investor_flows(ticker, start, end_str)
+            if naver_df is not None and not naver_df.empty:
+                return naver_df
+        except Exception as e:
+            logger.debug(f"NaverFlowFetcher failed for {ticker}: {e}")
+
+        logger.warning(f"No investor flow data for {ticker}")
+        return pd.DataFrame()
 
     def get_top_tickers(self, market: str = "KOSPI", n: int = 30) -> list[str]:
         """Get top N tickers by market cap."""

@@ -3,21 +3,27 @@
 import logging
 from datetime import datetime, timedelta, timezone
 from web.db.connection import get_db
+from utils.cache import TTLCache
 
 KST = timezone(timedelta(hours=9))
 logger = logging.getLogger("money_mani.scoring.intel_scorer")
+
+# Module-level cache: persists across IntelScorer instances created per scan
+_intel_accuracy_cache: TTLCache = TTLCache(default_ttl=3600, maxsize=8)  # 1 hour
 
 
 class IntelScorer:
     """Score ticker sentiment from market intelligence data."""
 
     def __init__(self):
-        self._source_accuracy_cache = None
+        pass  # Uses module-level _intel_accuracy_cache
 
     def _get_source_accuracy(self, days: int = 30) -> dict:
         """Get avg accuracy grouped by category from recent issues."""
-        if self._source_accuracy_cache is not None:
-            return self._source_accuracy_cache
+        cache_key = f"accuracy:{days}"
+        hit, cached = _intel_accuracy_cache.get(cache_key)
+        if hit:
+            return cached
         try:
             cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
             with get_db() as db:
@@ -32,12 +38,11 @@ class IntelScorer:
             for r in rows:
                 if r["avg_accuracy"] is not None and r["cnt"] >= 3:
                     result[r["category"]] = round(r["avg_accuracy"], 4)
-            self._source_accuracy_cache = result
+            _intel_accuracy_cache.set(cache_key, result)
             logger.info(f"Loaded source accuracy: {result}")
             return result
         except Exception as e:
             logger.warning(f"Source accuracy query failed: {e}")
-            self._source_accuracy_cache = {}
             return {}
 
     def score(self, ticker: str, market: str = "KRX") -> dict:

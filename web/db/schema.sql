@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS scoring_results (
     fundamental_score REAL,
     flow_score REAL,
     intel_score REAL,
+    macro_score REAL,
     composite_score REAL,
     score_breakdown_json TEXT,
     decision TEXT,

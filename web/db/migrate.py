@@ -12,6 +12,8 @@ def run_schema_migrations():
     migrations = [
         ("scoring_results_ticker_name",
          "ALTER TABLE scoring_results ADD COLUMN ticker_name TEXT"),
+        ("scoring_results_macro_score",
+         "ALTER TABLE scoring_results ADD COLUMN macro_score REAL"),
     ]
     with get_db() as db:
         for name, sql in migrations:

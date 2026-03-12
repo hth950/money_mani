@@ -21,13 +21,14 @@ class ScoringService:
                 db.execute("""
                     INSERT INTO scoring_results
                     (ticker, ticker_name, market, scan_date, technical_score, fundamental_score,
-                     flow_score, intel_score, composite_score, score_breakdown_json,
+                     flow_score, intel_score, macro_score, composite_score, score_breakdown_json,
                      decision, block_reason, weights_used_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     ticker, ticker_name or ticker, market, scan_date,
                     scores.get("technical"), scores.get("fundamental"),
                     scores.get("flow"), scores.get("intel"),
+                    scores.get("macro"),
                     scores.get("composite"),
                     json.dumps(scores, ensure_ascii=False),
                     decision, block_reason,
@@ -101,7 +102,8 @@ class ScoringService:
                            AVG(technical_score) as avg_tech,
                            AVG(fundamental_score) as avg_fund,
                            AVG(flow_score) as avg_flow,
-                           AVG(intel_score) as avg_intel
+                           AVG(intel_score) as avg_intel,
+                           AVG(macro_score) as avg_macro
                     FROM scoring_results
                     GROUP BY scan_date
                     ORDER BY scan_date DESC
