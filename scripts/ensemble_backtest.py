@@ -236,6 +236,49 @@ def run_category_ensemble(strategies: list, df: pd.DataFrame, price_df: pd.DataF
     return results
 
 
+def run_diversity_ensemble(signal_df: pd.DataFrame, price_df: pd.DataFrame, strategies: list) -> None:
+    """Run diversity-weighted ensemble alongside standard consensus and print report."""
+    from scoring.diversity_scorer import DiversityScorer
+
+    scorer = DiversityScorer()
+
+    # Build strategy category map: {name: category}
+    strategy_categories = {s.name: getattr(s, "category", "unknown") for s in strategies}
+
+    logger.info("\n--- Diversity-Weighted Ensemble Report ---")
+    logger.info(f"{'Date':>12} | {'BUY raw':>7} | {'BUY wt':>7} | {'cats':>4} | {'div_ok':>6}")
+    logger.info("-" * 55)
+
+    reported = 0
+    for date, row in signal_df.iterrows():
+        # Build signals_by_strategy for this date
+        signals_by_strategy = {}
+        for strat_name, sig_val in row.items():
+            cat = strategy_categories.get(strat_name, "unknown")
+            if sig_val == 1:
+                sig_type = "BUY"
+            elif sig_val == -1:
+                sig_type = "SELL"
+            else:
+                sig_type = "HOLD"
+            signals_by_strategy[strat_name] = {"category": cat, "signal_type": sig_type}
+
+        buy_result = scorer.score_ensemble(signals_by_strategy, signal_type="BUY")
+
+        if buy_result["raw_count"] >= 2:
+            date_str = str(date.date()) if hasattr(date, "date") else str(date)
+            logger.info(
+                f"{date_str:>12} | {buy_result['raw_count']:>7} | {buy_result['weighted_score']:>7.3f} | "
+                f"{buy_result['agreeing_categories']:>4} | {str(buy_result['meets_diversity_min']):>6}"
+            )
+            reported += 1
+
+    if reported == 0:
+        logger.info("  (no days with 2+ agreeing BUY strategies)")
+
+    logger.info(f"\nDiversity report: {reported} signal days shown")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ensemble strategy backtester")
     parser.add_argument("--ticker", type=str, default="005930", help="Ticker(s), comma-separated")
@@ -244,6 +287,7 @@ def main():
     parser.add_argument("--min-consensus", type=int, default=2, help="Min consensus N")
     parser.add_argument("--max-consensus", type=int, default=15, help="Max consensus N")
     parser.add_argument("--by-category", action="store_true", help="Also test per-category ensembles")
+    parser.add_argument("--diversity", action="store_true", help="Also output diversity-weighted ensemble report")
     args = parser.parse_args()
 
     config = load_config()
@@ -342,6 +386,10 @@ def main():
                             f"@ {t['entry_price']:,.0f}->{t['exit_price']:,.0f} "
                             f"P&L={t['pnl_pct']:+.1f}% hold={t['holding_days']}d "
                             f"consensus=B{t['buy_consensus']}/S{t['sell_consensus']}")
+
+        # Diversity-weighted ensemble report
+        if args.diversity:
+            run_diversity_ensemble(signal_df, price_df, strategies)
 
         # Per-category ensemble
         if args.by_category:

@@ -167,6 +167,15 @@ class DailyScan:
         # Apply ensemble consensus filter
         ensemble_signals, consensus_summary = self._apply_ensemble_filter(signals)
 
+        # Apply multi-layer scoring (with fallback to original signals)
+        ensemble_signals = self._apply_multi_layer_scoring(ensemble_signals, len(strategies))
+
+        # Apply portfolio risk gate (Phase 2)
+        ensemble_signals = self._apply_risk_gate(ensemble_signals)
+
+        # Save scoring results to DB (Phase 5)
+        self._save_scoring_results(ensemble_signals, str(today))
+
         # Classify conviction for each consensus signal
         for sig in ensemble_signals:
             log_conviction(sig)
@@ -244,6 +253,102 @@ class DailyScan:
 
         return signals
 
+    def _apply_multi_layer_scoring(self, ensemble_signals: list[dict], total_strategies: int) -> list[dict]:
+        """Apply multi-layer scoring to ensemble signals.
+
+        Falls back to original signals if scoring fails or is disabled.
+        """
+        try:
+            from scoring.multi_layer_scorer import MultiLayerScorer
+            scorer = MultiLayerScorer()
+
+            if not scorer.enabled:
+                logger.info("Multi-layer scoring disabled, using consensus only")
+                return ensemble_signals
+
+            scored_signals = []
+            for sig in ensemble_signals:
+                try:
+                    result = scorer.score(
+                        ticker=sig["ticker"],
+                        market=sig.get("market", "KRX"),
+                        consensus_count=sig.get("consensus_count", 1),
+                        total_strategies=total_strategies,
+                    )
+
+                    # Attach scoring data to signal
+                    sig["composite_score"] = result["composite_score"]
+                    sig["score_decision"] = result["decision"]
+                    sig["score_breakdown"] = result["scores"]
+                    sig["score_details"] = result["details"]
+                    sig["score_weights"] = result["weights"]
+
+                    # Filter: only EXECUTE and WATCH pass through
+                    if result["decision"] in ("EXECUTE", "WATCH"):
+                        scored_signals.append(sig)
+                    else:
+                        logger.info(f"SKIP {sig['ticker']}: composite={result['composite_score']:.2%}")
+
+                except Exception as e:
+                    logger.warning(f"Scoring failed for {sig['ticker']}, keeping signal: {e}")
+                    sig["composite_score"] = None
+                    sig["score_decision"] = "FALLBACK"
+                    scored_signals.append(sig)
+
+            execute_count = sum(1 for s in scored_signals if s.get("score_decision") == "EXECUTE")
+            watch_count = sum(1 for s in scored_signals if s.get("score_decision") == "WATCH")
+            skip_count = len(ensemble_signals) - len(scored_signals)
+            logger.info(f"Multi-layer scoring: {len(ensemble_signals)} -> {len(scored_signals)} "
+                        f"(EXECUTE={execute_count}, WATCH={watch_count}, SKIP={skip_count})")
+
+            return scored_signals
+
+        except ImportError:
+            logger.warning("scoring module not available, using consensus only")
+            return ensemble_signals
+        except Exception as e:
+            logger.error(f"Multi-layer scoring error, falling back: {e}")
+            return ensemble_signals
+
+    def _apply_risk_gate(self, ensemble_signals: list[dict]) -> list[dict]:
+        """Apply portfolio risk management gate (Phase 2).
+
+        BUY signals that violate risk constraints are marked BLOCKED.
+        Falls back to passing all signals if risk module unavailable.
+        """
+        try:
+            from scoring.risk_manager import PortfolioRiskManager
+            manager = PortfolioRiskManager()
+
+            if not manager.enabled:
+                logger.info("Portfolio risk management disabled")
+                return ensemble_signals
+
+            passed = []
+            for sig in ensemble_signals:
+                if sig["signal_type"] == "BUY":
+                    allowed, reason = manager.check_can_buy(
+                        sig["ticker"], sig.get("market", "KRX")
+                    )
+                    if not allowed:
+                        sig["score_decision"] = "BLOCKED"
+                        sig["block_reason"] = reason
+                        logger.info(f"BLOCKED {sig['ticker']}: {reason}")
+                        continue
+                passed.append(sig)
+
+            blocked = len(ensemble_signals) - len(passed)
+            if blocked:
+                logger.info(f"Risk gate: {blocked} signals blocked, {len(passed)} passed")
+            return passed
+
+        except ImportError:
+            logger.warning("risk_manager module not available, skipping risk gate")
+            return ensemble_signals
+        except Exception as e:
+            logger.error(f"Risk gate error, passing all: {e}")
+            return ensemble_signals
+
     def _apply_ensemble_filter(self, signals: list[dict]) -> tuple[list[dict], dict]:
         """Group signals by ticker, keep only those meeting consensus threshold.
 
@@ -295,6 +400,33 @@ class DailyScan:
 
         logger.info(f"Ensemble filter: {len(signals)} individual -> {len(filtered)} consensus (N>={ENSEMBLE_CONSENSUS_N})")
         return filtered, summary
+
+    def _save_scoring_results(self, signals: list[dict], date_str: str):
+        """Save multi-layer scoring results to DB (Phase 5)."""
+        try:
+            from web.services.scoring_service import ScoringService
+            service = ScoringService()
+            for sig in signals:
+                if sig.get("composite_score") is not None:
+                    service.save_scoring_result(
+                        ticker=sig["ticker"],
+                        market=sig.get("market", "KRX"),
+                        scan_date=date_str,
+                        scores={
+                            "technical": sig.get("score_breakdown", {}).get("technical"),
+                            "fundamental": sig.get("score_breakdown", {}).get("fundamental"),
+                            "flow": sig.get("score_breakdown", {}).get("flow"),
+                            "intel": sig.get("score_breakdown", {}).get("intel"),
+                            "composite": sig.get("composite_score"),
+                        },
+                        decision=sig.get("score_decision", "UNKNOWN"),
+                        block_reason=sig.get("block_reason"),
+                        weights=sig.get("score_weights"),
+                    )
+        except ImportError:
+            logger.debug("scoring_service not available, skipping scoring DB save")
+        except Exception as e:
+            logger.error(f"Failed to save scoring results: {e}")
 
     def _save_signals_to_db(self, signals: list[dict], date_str: str):
         """Save all individual signals to DB for tracking (no alerts)."""
@@ -360,10 +492,19 @@ class DailyScan:
         for sig in new_signals:
             consensus_n = sig.get("consensus_count", 1)
             strat_names = sig.get("consensus_strategies", [sig["strategy_name"]])
-            self.discord.send_signal_alert(sig, extra_info={
+            extra = {
                 "consensus": f"{consensus_n}개 전략 합의 (기준: {ENSEMBLE_CONSENSUS_N})",
                 "strategies": ", ".join(strat_names[:5]) + (f" 외 {len(strat_names)-5}개" if len(strat_names) > 5 else ""),
-            })
+            }
+            # Add scoring info if available
+            if sig.get("composite_score") is not None:
+                breakdown = sig.get("score_breakdown", {})
+                extra["composite_score"] = f"{sig['composite_score']:.0%}"
+                extra["score_decision"] = sig.get("score_decision", "N/A")
+                extra["score_breakdown"] = " | ".join(
+                    f"{k}:{v:.0%}" for k, v in breakdown.items()
+                ) if breakdown else ""
+            self.discord.send_signal_alert(sig, extra_info=extra)
 
         # Daily summary with consensus info
         self.discord.send_daily_summary(new_signals, date_str, ensemble_n=ENSEMBLE_CONSENSUS_N, consensus_summary=consensus_summary)

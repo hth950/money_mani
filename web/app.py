@@ -72,3 +72,7 @@ app.include_router(performance_router)
 app.include_router(knowledge_router)
 from web.routers.market_intel import router as intel_router
 app.include_router(intel_router)
+from web.routers.risk import router as risk_router
+app.include_router(risk_router)
+from web.routers.scoring import router as scoring_router
+app.include_router(scoring_router)

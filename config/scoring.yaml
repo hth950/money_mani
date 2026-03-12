@@ -1,0 +1,21 @@
+# Multi-layer scoring configuration
+enabled: true
+fallback_on_error: true
+
+# Market-specific weight profiles
+weights:
+  KRX:
+    technical: 0.35
+    fundamental: 0.25
+    flow: 0.25
+    intel: 0.15
+  US:
+    technical: 0.50
+    fundamental: 0.20
+    flow: 0.0
+    intel: 0.30
+
+# Decision thresholds
+thresholds:
+  execute: 0.60
+  watch: 0.40

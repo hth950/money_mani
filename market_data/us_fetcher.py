@@ -36,6 +36,20 @@ class USFetcher:
         df.index = df.index.tz_localize(None)
         return df
 
+    def get_fundamentals(self, ticker: str) -> dict:
+        """Get fundamental data from yfinance."""
+        try:
+            info = yf.Ticker(ticker).info
+            return {
+                "PER": info.get("trailingPE", None),
+                "PBR": info.get("priceToBook", None),
+                "DIV": (info.get("dividendYield") or 0) * 100,
+                "sector": info.get("sector", "Unknown"),
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get fundamentals for {ticker}: {e}")
+            return {"PER": None, "PBR": None, "DIV": 0, "sector": "Unknown"}
+
     def get_info(self, ticker: str) -> dict:
         """Get basic stock info (name, sector, market cap, etc.)."""
         stock = yf.Ticker(ticker)

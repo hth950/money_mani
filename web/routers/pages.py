@@ -77,3 +77,7 @@ async def performance_page(request: Request):
 @router.get("/intel", response_class=HTMLResponse)
 async def intel_page(request: Request):
     return templates.TemplateResponse("intel/index.html", {"request": request})
+
+@router.get("/scoring", response_class=HTMLResponse)
+async def scoring_page(request: Request):
+    return templates.TemplateResponse("scoring/index.html", {"request": request})

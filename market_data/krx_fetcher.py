@@ -50,6 +50,8 @@ class KRXFetcher:
         logger.info(f"Fetching KRX fundamentals: {ticker}")
         df = krx.get_market_fundamental(start_fmt, end_fmt, ticker)
         self._wait()
+        if df.empty:
+            logger.warning(f"No fundamental data for {ticker}")
         return df
 
     def get_investor_flows(self, ticker: str, start: str, end: str = None) -> pd.DataFrame:
@@ -59,6 +61,8 @@ class KRXFetcher:
         logger.info(f"Fetching KRX investor flows: {ticker}")
         df = krx.get_market_trading_value_by_date(start_fmt, end_fmt, ticker)
         self._wait()
+        if df.empty:
+            logger.warning(f"No investor flow data for {ticker}")
         return df
 
     def get_top_tickers(self, market: str = "KOSPI", n: int = 30) -> list[str]:

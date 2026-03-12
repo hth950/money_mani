@@ -267,3 +267,44 @@ CREATE TABLE IF NOT EXISTS intel_signal_correlation (
 
 CREATE INDEX IF NOT EXISTS idx_correlation_date ON intel_signal_correlation (date);
 CREATE INDEX IF NOT EXISTS idx_correlation_ticker ON intel_signal_correlation (ticker);
+
+-- Multi-layer scoring results (Phase 5)
+CREATE TABLE IF NOT EXISTS scoring_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id INTEGER,
+    ticker TEXT NOT NULL,
+    market TEXT NOT NULL,
+    scan_date TEXT NOT NULL,
+    technical_score REAL,
+    fundamental_score REAL,
+    flow_score REAL,
+    intel_score REAL,
+    composite_score REAL,
+    score_breakdown_json TEXT,
+    decision TEXT,
+    block_reason TEXT,
+    weights_used_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_scoring_date ON scoring_results (scan_date);
+CREATE INDEX IF NOT EXISTS idx_scoring_ticker ON scoring_results (ticker);
+CREATE INDEX IF NOT EXISTS idx_scoring_decision ON scoring_results (decision);
+
+-- Daily scoring summary (Phase 5)
+CREATE TABLE IF NOT EXISTS daily_scoring_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_date TEXT NOT NULL,
+    market TEXT NOT NULL,
+    total_signals INTEGER,
+    execute_count INTEGER,
+    watch_count INTEGER,
+    skip_count INTEGER,
+    blocked_count INTEGER,
+    avg_composite_score REAL,
+    top_scores_json TEXT,
+    risk_status_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_scoring_summary_date ON daily_scoring_summary (report_date);

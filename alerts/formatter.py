@@ -47,6 +47,25 @@ class AlertFormatter:
                 fields.append({"name": "합의", "value": extra_info["consensus"], "inline": True})
             if extra_info.get("strategies"):
                 fields.append({"name": "동의 전략", "value": extra_info["strategies"], "inline": False})
+            # Score breakdown (if multi-layer scoring is active)
+            if extra_info.get("composite_score"):
+                fields.append({
+                    "name": "📊 종합 점수",
+                    "value": extra_info["composite_score"],
+                    "inline": True,
+                })
+            if extra_info.get("score_decision"):
+                fields.append({
+                    "name": "결정",
+                    "value": extra_info["score_decision"],
+                    "inline": True,
+                })
+            if extra_info.get("score_breakdown"):
+                fields.append({
+                    "name": "점수 상세",
+                    "value": extra_info["score_breakdown"],
+                    "inline": False,
+                })
         elif consensus_n:
             strats = signal.get("consensus_strategies", [])
             fields.append({"name": "합의 수", "value": f"{consensus_n}개 전략", "inline": True})
@@ -70,6 +89,45 @@ class AlertFormatter:
             "fields": fields,
             "footer": {"text": "Money Mani 앙상블 트레이딩"},
         }
+
+    @staticmethod
+    def format_daily_scoring_report(summary: dict) -> dict:
+        """Format daily scoring summary for Discord."""
+        execute = summary.get("execute_count", 0)
+        watch = summary.get("watch_count", 0)
+        skip = summary.get("skip_count", 0)
+        blocked = summary.get("blocked_count", 0)
+        avg_score = summary.get("avg_composite_score", 0)
+
+        description = (
+            f"**EXECUTE**: {execute}건 | **WATCH**: {watch}건 | "
+            f"**SKIP**: {skip}건 | **BLOCKED**: {blocked}건\n"
+            f"평균 종합점수: {avg_score:.0%}" if avg_score else
+            f"**EXECUTE**: {execute}건 | **WATCH**: {watch}건 | "
+            f"**SKIP**: {skip}건 | **BLOCKED**: {blocked}건"
+        )
+
+        embed = {
+            "title": f"📊 일일 스코어링 리포트 ({summary.get('date', 'today')})",
+            "description": description,
+            "color": 0x3498DB,
+            "fields": [],
+        }
+
+        # Top scorers
+        top_scores = summary.get("top_scores", [])
+        if top_scores:
+            top_text = "\n".join(
+                f"• {s['ticker']} ({s.get('ticker_name', '')}) - {s['composite_score']:.0%} [{s['decision']}]"
+                for s in top_scores[:5]
+            )
+            embed["fields"].append({
+                "name": "🏆 상위 종목",
+                "value": top_text,
+                "inline": False,
+            })
+
+        return embed
 
     @staticmethod
     def format_backtest_report(result: dict) -> dict:
