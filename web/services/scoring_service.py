@@ -11,9 +11,13 @@ class ScoringService:
 
     def save_scoring_result(self, ticker, market, scan_date, scores, decision,
                             ticker_name=None, block_reason=None, weights=None):
-        """Save a scoring result to DB."""
+        """Save a scoring result to DB (upsert: same ticker+date replaces old)."""
         try:
             with get_db() as db:
+                db.execute("""
+                    DELETE FROM scoring_results
+                    WHERE ticker = ? AND scan_date = ?
+                """, (ticker, scan_date))
                 db.execute("""
                     INSERT INTO scoring_results
                     (ticker, ticker_name, market, scan_date, technical_score, fundamental_score,
