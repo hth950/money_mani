@@ -161,29 +161,6 @@ def _reset_dart_counter():
         logger.error(f"DART counter reset failed: {e}")
 
 
-def _run_dart_event_cache_refresh():
-    """Job: DART 이벤트 캘린더 일 1회 갱신 (06:00 KST)."""
-    try:
-        from scoring.dart_event_scorer import refresh_event_cache
-        refresh_event_cache()
-        logger.info("DART event cache refreshed")
-    except Exception as e:
-        logger.error(f"DART event cache refresh failed: {e}")
-
-
-def _run_weight_optimizer():
-    """Job: 월 1회 가중치 최적화 제안 (매월 1일 09:00 KST)."""
-    try:
-        logger.info("=== Weight Optimizer Job Started ===")
-        from scripts.weight_optimizer import run_optimization
-        result = run_optimization()
-        logger.info(f"Weight optimizer result: {result}")
-    except Exception as e:
-        logger.error(f"Weight optimizer job failed: {e}", exc_info=True)
-    finally:
-        gc.collect()
-
-
 def _run_correlation_report():
     """Job: weekly score-return correlation report."""
     try:
@@ -338,24 +315,6 @@ def start_scheduler():
         name="DART Daily Counter Reset",
     )
     logger.info("Scheduled DART counter reset: 00:05 KST (daily)")
-
-    # DART 이벤트 캘린더 갱신 (매일 06:00 KST)
-    scheduler.add_job(
-        _run_dart_event_cache_refresh,
-        CronTrigger(minute="0", hour="6", timezone=tz),
-        id="dart_event_cache_refresh",
-        name="DART Event Cache Refresh",
-    )
-    logger.info("Scheduled DART event cache refresh: 06:00 KST (daily)")
-
-    # 가중치 최적화 제안 (매월 1일 09:00 KST)
-    scheduler.add_job(
-        _run_weight_optimizer,
-        CronTrigger(day="1", hour="9", minute="0", timezone=tz),
-        id="monthly_weight_optimizer",
-        name="Monthly Weight Optimizer",
-    )
-    logger.info("Scheduled weight optimizer: 1st of every month 09:00 KST")
 
     # Weekly correlation report (매주 일요일 09:00 KST)
     scheduler.add_job(

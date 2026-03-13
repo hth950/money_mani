@@ -96,11 +96,9 @@ class DartEventScorer:
     def _is_enabled(self) -> bool:
         """config/scoring.yaml의 dart_events.enabled 확인."""
         try:
-            import os, yaml
-            cfg_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'scoring.yaml')
-            with open(cfg_path) as f:
-                cfg = yaml.safe_load(f)
-            return cfg.get('dart_events', {}).get('enabled', False)
+            from utils.config_loader import load_config
+            config = load_config()
+            return config.get("scoring", {}).get("dart_events", {}).get("enabled", False)
         except Exception:
             return False
 
@@ -128,8 +126,8 @@ class DartEventScorer:
         new_cache: dict[str, list[dict]] = {}
 
         try:
-            from scoring.dart_fundamental import DARTFundamentalClient
-            fetcher = DARTFundamentalClient()
+            from scoring.dart_fundamental import DARTFundamentalFetcher
+            fetcher = DARTFundamentalFetcher()
 
             # majorRport: 주요사항보고서 조회
             data = fetcher._get("list.json", {

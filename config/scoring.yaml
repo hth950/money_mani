@@ -108,16 +108,13 @@ exit_strategy:
 
 macro:
   enabled: true
-  vix:
-    # Piecewise-linear anchor points: [vix_level, score]
-    # VIX outside this range is clamped to boundary values.
-    # Tune after correlation_analysis.py shows macro r > 0.1.
-    anchors:
-      - [15, 0.80]   # Ultra-low VIX: complacency / self-satisfaction zone
-      - [20, 0.70]   # Calm market
-      - [25, 0.50]   # Knee point: rising vol, correlation spike starts
-      - [35, 0.15]   # Extreme fear / liquidity stress
-    clamp: true
+  vix_thresholds:
+    low: 20.0
+    high: 30.0
+  scores:
+    low: 0.7
+    medium: 0.5
+    high: 0.2
 
 flow_scoring:
   enabled: true
@@ -129,4 +126,5 @@ flow_scoring:
     synergy: 0.20
 
 dart_events:
-  enabled: false   # 안전 롤아웃: 준비되면 true로 변경
+  enabled: false   # 기본 비활성화, 안전 롤아웃
+  poll_hour: 6     # 매일 06:00 KST 폴링

@@ -81,3 +81,7 @@ async def intel_page(request: Request):
 @router.get("/scoring", response_class=HTMLResponse)
 async def scoring_page(request: Request):
     return templates.TemplateResponse("scoring/index.html", {"request": request})
+
+@router.get("/guide", response_class=HTMLResponse)
+async def guide_page(request: Request):
+    return templates.TemplateResponse("guide/index.html", {"request": request})

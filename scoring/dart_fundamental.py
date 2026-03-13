@@ -1,53 +1,40 @@
-"""DART Open API based fundamental data collector for KRX stocks.
-
-Provides PER, PBR, ROE, DIV for KRX tickers using:
-- DART financial statement API (재무제표) for equity/net_income
-- FinanceDataReader for market cap (works without KRX IP block)
-- Shares outstanding from DART 주식총수 API
-
-DART free tier: 10,000 req/day. Corp-code mapping cached daily.
-Individual ticker data cached 4 hours (via module-level TTLCache).
-
-Usage:
-    client = DARTFundamentalClient()
-    data = client.get_fundamentals("005930")
-    # -> {"per": 12.3, "pbr": 1.1, "roe": 0.15, "div": 2.0}
-"""
+"""DART Open API 기반 KRX 펀더멘탈 데이터 수집 및 스코어링."""
 
 import io
 import logging
-import zipfile
-import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
 import threading
+import time
+import zipfile
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+import xml.etree.ElementTree as ET
 
 import requests
-
-from utils.cache import TTLCache
-from utils.config_loader import get_env
 
 KST = timezone(timedelta(hours=9))
 logger = logging.getLogger("money_mani.scoring.dart_fundamental")
 
-DART_BASE = "https://opendart.fss.or.kr/api"
-
-# Module-level caches
-_corp_code_cache: TTLCache = TTLCache(default_ttl=24 * 3600, maxsize=4)   # mapping: daily
-_financial_cache: TTLCache = TTLCache(default_ttl=4 * 3600, maxsize=512)  # per ticker: 4h
-
-# ── Rate limit 모니터링 ────────────────────────────────────────────────
+# ── DART Rate Limit 모니터링 ─────────────────────────────────────────
 _dart_counter_lock = threading.Lock()
 _dart_daily_counter: int = 0
-_dart_counter_date: str = ""
+_dart_counter_date: str = ""  # YYYY-MM-DD, 날짜 변경 시 자동 리셋
 _DART_DAILY_LIMIT: int = 40_000
-_DART_WARN_THRESHOLD: float = 0.80  # 32,000건 도달 시 Discord 경고
-_dart_warned_today: bool = False
+_DART_WARN_THRESHOLD: float = 0.80  # 32,000건 도달 시 경고
+_dart_warned_today: bool = False  # 당일 경고 중복 방지
+
+# ── TTLCache 캐시 설정 ───────────────────────────────────────────────
+try:
+    from utils.cache import TTLCache
+    _corp_code_cache = TTLCache(ttl=24 * 3600, maxsize=1)   # corpCode 매핑 (24h)
+    _financial_cache = TTLCache(ttl=4 * 3600, maxsize=512)   # 재무제표 (4h)
+except ImportError:
+    # Fallback to simple dict if TTLCache not available
+    _corp_code_cache = None
+    _financial_cache = None
 
 
-def _track_dart_call() -> int:
-    """DART API 호출 카운터 증가. 날짜 변경 시 자동 리셋. 임계값 초과 시 Discord 경고."""
+def _increment_dart_counter() -> int:
+    """API 호출 카운터 증가. 날짜 변경 시 자동 리셋."""
     global _dart_daily_counter, _dart_counter_date, _dart_warned_today
     today = datetime.now(KST).strftime("%Y-%m-%d")
     with _dart_counter_lock:
@@ -57,17 +44,16 @@ def _track_dart_call() -> int:
             _dart_warned_today = False
         _dart_daily_counter += 1
         count = _dart_daily_counter
-        warn_at = int(_DART_DAILY_LIMIT * _DART_WARN_THRESHOLD)
-        should_warn = count >= warn_at and not _dart_warned_today
-        if should_warn:
-            _dart_warned_today = True
-    if should_warn:
+
+    warn_at = int(_DART_DAILY_LIMIT * _DART_WARN_THRESHOLD)
+    if count >= warn_at and not _dart_warned_today:
+        _dart_warned_today = True  # 중복 방지
         _send_dart_limit_warning(count)
     return count
 
 
 def reset_dart_counter():
-    """스케줄러에서 매일 00:05 KST에 호출."""
+    """스케줄러에서 자정에 호출 (매일 00:05 KST)."""
     global _dart_daily_counter, _dart_counter_date, _dart_warned_today
     with _dart_counter_lock:
         _dart_daily_counter = 0
@@ -80,307 +66,289 @@ def _send_dart_limit_warning(count: int):
     """Discord로 DART rate limit 경고 발송."""
     try:
         from alerts.discord_webhook import DiscordNotifier
+        notifier = DiscordNotifier()
         embed = {
             "title": "⚠️ DART API 일일 한도 경고",
-            "description": (
-                f"오늘 DART API 호출이 **{count:,}건**에 달했습니다.\n"
-                f"일일 한도: {_DART_DAILY_LIMIT:,}건 / 경고 기준: {int(_DART_DAILY_LIMIT * _DART_WARN_THRESHOLD):,}건"
-            ),
-            "color": 0xF39C12,
+            "description": f"오늘 DART API 호출이 **{count:,}건**에 달했습니다.\n"
+                           f"일일 한도: {_DART_DAILY_LIMIT:,}건 (경고 기준: {int(_DART_DAILY_LIMIT * _DART_WARN_THRESHOLD):,}건)",
+            "color": 0xF39C12,  # 주황
             "fields": [
-                {"name": "사용량", "value": f"{count:,} / {_DART_DAILY_LIMIT:,}", "inline": True},
+                {"name": "현재 사용량", "value": f"{count:,} / {_DART_DAILY_LIMIT:,}", "inline": True},
                 {"name": "사용률", "value": f"{count / _DART_DAILY_LIMIT * 100:.1f}%", "inline": True},
             ],
             "timestamp": datetime.now(KST).isoformat(),
         }
-        DiscordNotifier().send(embed=embed)
+        notifier.send(embed=embed)
     except Exception as e:
         logger.error(f"Failed to send DART limit warning: {e}")
 
 
-class DARTFundamentalClient:
-    """Fetch KRX fundamental data (PER/PBR/ROE/DIV) via DART Open API."""
+class DARTFundamentalFetcher:
+    """DART API로 KRX 종목 펀더멘탈 데이터 수집."""
 
-    def __init__(self):
-        self._api_key = get_env("DART_API_KEY")
+    BASE_URL = "https://opendart.fss.or.kr/api"
+
+    def __init__(self, api_key: str = None):
+        """api_key: 환경변수 DART_API_KEY 또는 직접 전달."""
+        if api_key:
+            self._api_key = api_key
+        else:
+            from utils.config_loader import get_env
+            self._api_key = get_env("DART_API_KEY", "")
         if not self._api_key:
-            logger.warning("DART_API_KEY not set — DARTFundamentalClient disabled")
-
-    @property
-    def enabled(self) -> bool:
-        return bool(self._api_key)
-
-    # ------------------------------------------------------------------ #
-    # Public                                                               #
-    # ------------------------------------------------------------------ #
-
-    def get_fundamentals(self, ticker: str) -> dict | None:
-        """Return {per, pbr, roe, div} or None if unavailable.
-
-        Tries latest available annual year (current-1 or current-2).
-        """
-        if not self.enabled:
-            return None
-
-        cache_key = f"fund:{ticker}"
-        hit, cached = _financial_cache.get(cache_key)
-        if hit:
-            return cached
-
-        result = self._fetch(ticker)
-        if result:
-            _financial_cache.set(cache_key, result)
-        return result
+            logger.warning("DART API key not configured (DART_API_KEY)")
 
     def _get(self, endpoint: str, params: dict) -> dict:
-        """DART API 범용 호출 (dart_event_scorer에서 사용)."""
-        url = f"https://opendart.fss.or.kr/api/{endpoint}"
-        params = {**params, "crtfc_key": self._api_key}
-        _track_dart_call()
+        """DART API GET 요청. 호출 카운터 증가."""
+        _increment_dart_counter()
+        params["crtfc_key"] = self._api_key
+        url = f"{self.BASE_URL}/{endpoint}"
         try:
-            r = requests.get(url, params=params, timeout=10)
-            r.raise_for_status()
-            return r.json()
+            resp = requests.get(url, params=params, timeout=15)
+            resp.raise_for_status()
+            return resp.json()
         except Exception as e:
-            logger.warning(f"DART API _get({endpoint}) failed: {e}")
+            logger.warning(f"DART API error ({endpoint}): {e}")
             return {}
 
-    def get_corp_code_map(self) -> dict:
-        """ticker -> corp_code 매핑 반환 (dart_event_scorer에서 사용)."""
-        return self._load_corp_code_mapping()
+    def get_corp_code_map(self) -> dict[str, str]:
+        """종목코드 → corp_code 매핑 (일 1회 캐시).
 
-    # ------------------------------------------------------------------ #
-    # Internal                                                             #
-    # ------------------------------------------------------------------ #
-
-    def _fetch(self, ticker: str) -> dict | None:
-        corp_code = self._corp_code(ticker)
-        if not corp_code:
-            logger.debug(f"No corp_code for {ticker}")
-            return None
-
-        now_year = datetime.now(KST).year
-        # In Jan-Mar, the previous year's annual report may not be filed yet
-        years_to_try = [now_year - 1, now_year - 2]
-        for year in years_to_try:
-            data = self._financial_statement(corp_code, year)
-            if data:
-                # Try to enrich with market cap-based ratios
-                return self._build_ratios(ticker, data, year)
-
-        logger.debug(f"No DART financial data for {ticker}")
-        return None
-
-    def _corp_code(self, ticker: str) -> str | None:
-        """Look up DART corp_code from KRX ticker (6-digit string)."""
-        mapping = self._load_corp_code_mapping()
-        return mapping.get(ticker.zfill(6))
-
-    def _load_corp_code_mapping(self) -> dict:
-        """Download and cache DART corp_code → stock_code mapping."""
-        hit, cached = _corp_code_cache.get("mapping")
-        if hit:
-            return cached
-
-        try:
-            url = f"{DART_BASE}/corpCode.xml"
-            _track_dart_call()
-            r = requests.get(url, params={"crtfc_key": self._api_key}, timeout=30)
-            r.raise_for_status()
-            with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-                xml_bytes = z.read(z.namelist()[0])
-            root = ET.fromstring(xml_bytes)
-            mapping: dict[str, str] = {}
-            for item in root.findall(".//list"):
-                stock_code = (item.findtext("stock_code") or "").strip()
-                corp_code = (item.findtext("corp_code") or "").strip()
-                if stock_code and corp_code:
-                    mapping[stock_code] = corp_code
-            logger.info(f"DART corp_code mapping loaded: {len(mapping)} entries")
-            _corp_code_cache.set("mapping", mapping)
-            return mapping
-        except Exception as e:
-            logger.warning(f"Failed to load DART corp_code mapping: {e}")
-            return {}
-
-    def _financial_statement(self, corp_code: str, year: int) -> dict | None:
-        """Fetch consolidated annual financial statements.
-
-        Returns dict with equity, net_income, shares, revenue or None.
+        Returns:
+            {"005930": "00126380", ...}
         """
+        # 캐시 확인
+        if _corp_code_cache is not None:
+            hit, cached = _corp_code_cache.get("corp_code_map")
+            if hit:
+                return cached
+
+        # DART에서 corpCode.xml 다운로드 (zip)
+        _increment_dart_counter()
         try:
-            url = f"{DART_BASE}/fnlttSinglAcntAll.json"
-            params = {
-                "crtfc_key": self._api_key,
-                "corp_code": corp_code,
-                "bsns_year": str(year),
-                "reprt_code": "11011",  # 사업보고서 (annual)
-                "fs_div": "CFS",        # 연결재무제표
-            }
-            _track_dart_call()
-            r = requests.get(url, params=params, timeout=15)
-            data = r.json()
+            url = f"{self.BASE_URL}/corpCode.xml"
+            resp = requests.get(url, params={"crtfc_key": self._api_key}, timeout=30)
+            resp.raise_for_status()
 
-            if data.get("status") != "000":
-                # Fallback to OFS (별도재무제표) if CFS not available
-                params["fs_div"] = "OFS"
-                _track_dart_call()
-                r = requests.get(url, params=params, timeout=15)
-                data = r.json()
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+                xml_data = z.read("CORPCODE.xml")
 
-            if data.get("status") != "000" or not data.get("list"):
-                return None
+            root = ET.fromstring(xml_data)
+            corp_map = {}
+            for item in root.findall("list"):
+                stock_code = item.findtext("stock_code", "").strip()
+                corp_code = item.findtext("corp_code", "").strip()
+                if stock_code and corp_code:
+                    corp_map[stock_code] = corp_code
 
-            # Keep the maximum value for duplicate account names
-            # (CFS has subtotals; the consolidated total is the largest)
-            items: dict[str, float] = {}
-            for item in data["list"]:
-                if item.get("thstrm_amount"):
-                    name = item["account_nm"].strip()
-                    val = self._parse_amount(item.get("thstrm_amount"))
-                    if name not in items or val > items[name]:
-                        items[name] = val
-
-            equity = (
-                items.get("자본총계")
-                or items.get("지배기업소유주지분")
-                or items.get("자본")
-                or 0
-            )
-            net_income = (
-                items.get("당기순이익(손실)")
-                or items.get("당기순이익")
-                or items.get("분기순이익")
-                or 0
-            )
-            revenue = (
-                items.get("매출액")
-                or items.get("영업수익")
-                or 0
-            )
-
-            if equity == 0 and net_income == 0:
-                return None
-
-            return {"equity": equity, "net_income": net_income, "revenue": revenue, "year": year}
-
+            if _corp_code_cache is not None:
+                _corp_code_cache.set("corp_code_map", corp_map)
+            logger.info(f"Loaded {len(corp_map)} corp codes from DART")
+            return corp_map
         except Exception as e:
-            logger.debug(f"DART financial_statement failed for corp {corp_code} {year}: {e}")
-            return None
+            logger.error(f"Failed to download DART corp codes: {e}")
+            return {}
 
-    def _get_shares(self, corp_code: str, year: int) -> int:
-        """Fetch total issued shares from DART 주식총수 API."""
-        try:
-            url = f"{DART_BASE}/stockTotqySttus.json"
-            params = {
-                "crtfc_key": self._api_key,
+    def get_financial_data(self, ticker: str) -> dict:
+        """PER/PBR/ROE 계산용 재무 데이터 반환.
+
+        캐시: 4시간 TTL.
+        연결재무제표(CFS) 우선, 없으면 별도재무제표(OFS) 폴백.
+
+        Returns:
+            {"per": float, "pbr": float, "roe": float, "div_yield": float,
+             "market_cap": float, "source": "dart"}
+        """
+        if _financial_cache is not None:
+            hit, cached = _financial_cache.get(ticker)
+            if hit:
+                return cached
+
+        result = self._fetch_fundamentals(ticker)
+        if result and _financial_cache is not None:
+            _financial_cache.set(ticker, result)
+        return result
+
+    def _fetch_fundamentals(self, ticker: str) -> dict:
+        """실제 DART API 호출로 펀더멘탈 계산."""
+        # 1. corp_code 조회
+        corp_map = self.get_corp_code_map()
+        corp_code = corp_map.get(ticker)
+        if not corp_code:
+            logger.warning(f"No corp_code for {ticker}")
+            return {}
+
+        # 2. 최신 회계연도 결정 (당해 3월 이전이면 전전년도)
+        now = datetime.now(KST)
+        year = now.year - 1 if now.month < 4 else now.year - 1
+        bsns_year = str(year)
+
+        # 3. 재무제표 (CFS 우선, OFS 폴백)
+        financials = {}
+        for fs_div in ["CFS", "OFS"]:
+            data = self._get("fnlttSinglAcntAll.json", {
                 "corp_code": corp_code,
-                "bsns_year": str(year),
-                "reprt_code": "11011",
-            }
-            _track_dart_call()
-            r = requests.get(url, params=params, timeout=10)
-            data = r.json()
+                "bsns_year": bsns_year,
+                "reprt_code": "11011",  # 사업보고서
+                "fs_div": fs_div,
+            })
             if data.get("status") == "000" and data.get("list"):
-                for item in data["list"]:
-                    # 보통주 발행주식 총수
-                    if "보통주" in (item.get("se") or ""):
-                        val = item.get("istc_totqy", "0").replace(",", "")
-                        return int(val)
-        except Exception as e:
-            logger.debug(f"DART stockTotqySttus failed: {e}")
-        return 0
+                financials = self._parse_financials(data["list"])
+                if financials:
+                    break
 
-    def _get_market_cap(self, ticker: str) -> float:
-        """Get current market cap via yfinance (works from any IP)."""
+        if not financials:
+            return {}
+
+        # 4. 시가총액 (yfinance .KS)
+        market_cap = self._get_market_cap_yfinance(ticker)
+        if not market_cap:
+            return {}
+
+        # 5. PER/PBR/ROE 계산
+        net_income = financials.get("net_income", 0)
+        equity = financials.get("equity", 0)
+
+        per = market_cap / net_income if net_income > 0 else 0
+        pbr = market_cap / equity if equity > 0 else 0
+        roe = net_income / equity if equity > 0 else 0
+
+        # 6. 배당수익률 (DART 배당 API)
+        div_yield = self._get_dividend_yield(corp_code, bsns_year, market_cap)
+
+        return {
+            "per": round(per, 2),
+            "pbr": round(pbr, 2),
+            "roe": round(roe, 4),
+            "div_yield": round(div_yield, 4),
+            "market_cap": market_cap,
+            "net_income": net_income,
+            "equity": equity,
+            "source": "dart",
+            "year": bsns_year,
+        }
+
+    def _parse_financials(self, items: list) -> dict:
+        """재무제표 항목에서 자본총계/당기순이익/매출액 추출."""
+        result = {}
+        target_accounts = {
+            "ifrs-full_Equity": "equity",
+            "dart_TotalEquity": "equity",
+            "ifrs-full_ProfitLoss": "net_income",
+            "dart_NetIncome": "net_income",
+            "ifrs-full_Revenue": "revenue",
+            "dart_Revenue": "revenue",
+        }
+
+        for item in items:
+            account_id = item.get("account_id", "")
+            account_nm = item.get("account_nm", "")
+            thstrm_amount = item.get("thstrm_amount", "0") or "0"
+
+            # account_id 기반 매핑
+            key = target_accounts.get(account_id)
+            if not key:
+                # 계정명 기반 폴백
+                if "자본총계" in account_nm:
+                    key = "equity"
+                elif "당기순이익" in account_nm:
+                    key = "net_income"
+                elif "매출액" in account_nm or "수익(매출액)" in account_nm:
+                    key = "revenue"
+
+            if key and key not in result:
+                try:
+                    val = int(thstrm_amount.replace(",", ""))
+                    result[key] = val * 1_000_000  # 단위: 백만원 → 원
+                except (ValueError, AttributeError):
+                    pass
+
+        return result
+
+    def _get_market_cap_yfinance(self, ticker: str) -> float:
+        """yfinance로 시가총액 조회 (KRX IP 차단 우회)."""
         try:
             import yfinance as yf
             t = yf.Ticker(f"{ticker}.KS")
-            hist = t.history(period="5d")
-            if hist.empty:
-                return 0.0
-            price = float(hist["Close"].iloc[-1])
-            # Prefer yfinance shares; fall back to DART shares API
-            shares = t.info.get("sharesOutstanding") or 0
-            if not shares:
-                corp_code = self._corp_code(ticker)
-                if corp_code:
-                    shares = self._get_shares(corp_code, datetime.now(KST).year - 1)
-            return price * shares if shares else 0.0
+            info = t.info
+            return float(info.get("marketCap") or 0)
         except Exception as e:
-            logger.debug(f"MarketCap fetch failed for {ticker}: {e}")
+            logger.warning(f"yfinance market cap failed for {ticker}: {e}")
+            return 0.0
+
+    def _get_dividend_yield(self, corp_code: str, bsns_year: str, market_cap: float) -> float:
+        """DART 배당 API에서 보통주 DPS 추출 → 배당수익률 계산."""
+        if not market_cap:
+            return 0.0
+        try:
+            data = self._get("alotMatter.json", {
+                "corp_code": corp_code,
+                "bsns_year": bsns_year,
+                "reprt_code": "11011",
+            })
+            if data.get("status") != "000" or not data.get("list"):
+                return 0.0
+
+            # 보통주 현금배당금 총액
+            for item in data["list"]:
+                se = item.get("se", "")
+                if "보통주" in se and "현금" in se:
+                    amount_str = item.get("dps", "0") or "0"
+                    dps = float(amount_str.replace(",", ""))
+                    # 발행주식수로 배당수익률 계산 (근사값)
+                    shares = self._get_shares_outstanding(corp_code, bsns_year)
+                    if shares and dps:
+                        price = market_cap / shares
+                        return dps / price if price > 0 else 0.0
+        except Exception as e:
+            logger.warning(f"Failed to get dividend yield: {e}")
         return 0.0
 
-    def _build_ratios(self, ticker: str, fs: dict, year: int) -> dict | None:
-        """Compute PER, PBR, ROE, DIV from financial statement + market cap."""
-        equity = fs["equity"]
-        net_income = fs["net_income"]
-        market_cap = self._get_market_cap(ticker)
-
-        if market_cap <= 0 or equity <= 0:
-            return None
-
-        pbr = market_cap / equity
-        roe = net_income / equity if equity > 0 else 0
-
-        # PER: needs shares or use market_cap / net_income directly
-        per = market_cap / net_income if net_income > 0 else 0
-
-        # DIV: try shares outstanding (best effort)
-        div = 0.0
-        shares = self._get_shares(
-            self._corp_code(ticker) or "", year
-        )
-        if shares > 0 and market_cap > 0:
-            price = market_cap / shares
-            div = self._get_dividend_yield(ticker, year, price)
-
-        result = {
-            "PER": round(per, 2),
-            "PBR": round(pbr, 2),
-            "ROE": round(roe, 4),
-            "DIV": round(div, 2),
-            "source": "dart",
-            "year": year,
-        }
-        logger.debug(f"DART fundamentals {ticker}: {result}")
-        return result
-
-    def _get_dividend_yield(self, ticker: str, year: int, price: float) -> float:
-        """Estimate dividend yield from DART 배당 API (best effort)."""
+    def _get_shares_outstanding(self, corp_code: str, bsns_year: str) -> int:
+        """발행주식수 조회 (DART stockTotqySttus API)."""
         try:
-            corp_code = self._corp_code(ticker)
-            if not corp_code:
-                return 0.0
-            url = f"{DART_BASE}/alotMatter.json"
-            params = {
-                "crtfc_key": self._api_key,
+            data = self._get("stockTotqySttus.json", {
                 "corp_code": corp_code,
-                "bsns_year": str(year),
+                "bsns_year": bsns_year,
                 "reprt_code": "11011",
-            }
-            _track_dart_call()
-            r = requests.get(url, params=params, timeout=10)
-            data = r.json()
+            })
             if data.get("status") == "000" and data.get("list"):
                 for item in data["list"]:
-                    if "보통주" in (item.get("se") or ""):
-                        dps = self._parse_amount(item.get("dps"))
-                        if dps and price > 0:
-                            return (dps / price) * 100
-        except Exception:
-            pass
-        return 0.0
+                    if "보통주" in item.get("se", ""):
+                        shares_str = item.get("istc_totqy", "0") or "0"
+                        return int(shares_str.replace(",", ""))
+        except Exception as e:
+            logger.warning(f"Failed to get shares outstanding: {e}")
+        return 0
 
-    @staticmethod
-    def _parse_amount(value: str | None) -> float:
-        """Parse DART amount string (may include commas, minus, parentheses)."""
-        if not value:
-            return 0.0
-        value = str(value).replace(",", "").replace(" ", "")
-        if value.startswith("(") and value.endswith(")"):
-            value = "-" + value[1:-1]
-        try:
-            return float(value)
-        except ValueError:
-            return 0.0
+
+def score_dart_fundamental(ticker: str, neutral: dict) -> dict:
+    """DART 기반 펀더멘탈 스코어 반환. data_collectors.py에서 호출."""
+    fetcher = DARTFundamentalFetcher()
+    data = fetcher.get_financial_data(ticker)
+    if not data:
+        return neutral
+
+    per = data.get("per", 0)
+    pbr = data.get("pbr", 0)
+    div_yield = data.get("div_yield", 0)
+
+    # sector_avg는 기본값 사용 (DART 데이터는 섹터 벤치마크 없이 절대값 기준)
+    per_score = max(0.0, 1.0 - (per / 20.0)) if per > 0 else 0.5
+    pbr_score = max(0.0, 1.0 - (pbr / 1.5)) if pbr > 0 else 0.5
+    div_score = min(1.0, div_yield / 0.05) if div_yield > 0 else 0.0
+
+    fund_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
+
+    return {
+        "score": round(fund_score, 4),
+        "details": {
+            "per_score": round(per_score, 4),
+            "pbr_score": round(pbr_score, 4),
+            "div_score": round(div_score, 4),
+            "per": per,
+            "pbr": pbr,
+            "div": div_yield * 100,
+            "source": "dart",
+        },
+    }

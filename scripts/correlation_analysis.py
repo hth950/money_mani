@@ -1,208 +1,175 @@
-"""Composite score vs pnl_pct correlation analysis.
+"""스코어 vs 수익률 Spearman 순위상관 분석.
 
-Usage:
-    python scripts/correlation_analysis.py [--days 30]
-
-Purpose:
-    Measures whether composite_score (and each axis) actually predicts
-    future returns. If Spearman r < 0.1, weighting parameters should
-    be reconsidered before further tuning.
-
-Output:
-    - Console: ranked correlation table per axis
-    - File: output/analysis/correlation_{date}.json
+매주 또는 수동으로 실행하여 각 스코어링 축의 예측력을 검증.
+상관계수 < 0.1이면 가중치 재조정 경고.
 """
 
-import argparse
 import json
 import logging
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Ensure project root is on path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-logger = logging.getLogger(__name__)
+# 프로젝트 루트를 sys.path에 추가 (직접 실행 시)
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 KST = timezone(timedelta(hours=9))
-MIN_SAMPLES = 10  # Minimum joined rows required to report
+logger = logging.getLogger("money_mani.scripts.correlation_analysis")
 
-
-def load_data(days: int) -> list[dict]:
-    """Join scoring_results and signal_performance on (ticker, date).
-
-    signal_performance has one row per strategy signal, so we aggregate
-    pnl_pct to ticker-date level (AVG) before joining.
-    """
-    from web.db.connection import get_db
-
-    cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
-
-    with get_db() as db:
-        rows = db.execute("""
-            SELECT
-                sr.scan_date,
-                sr.ticker,
-                sr.market,
-                sr.technical_score,
-                sr.fundamental_score,
-                sr.flow_score,
-                sr.intel_score,
-                sr.macro_score,
-                sr.composite_score,
-                sr.decision,
-                AVG(sp.pnl_pct) AS avg_pnl_pct,
-                COUNT(sp.id)    AS signal_count
-            FROM scoring_results sr
-            JOIN signal_performance sp
-              ON sp.ticker = sr.ticker
-             AND sp.signal_date = sr.scan_date
-             AND sp.close_price IS NOT NULL
-            WHERE sr.scan_date >= ?
-              AND sr.composite_score IS NOT NULL
-            GROUP BY sr.scan_date, sr.ticker
-            ORDER BY sr.scan_date
-        """, (cutoff,)).fetchall()
-
-    return [dict(r) for r in rows]
+WARN_THRESHOLD = 0.10  # 상관계수 < 0.1 → 경고
+AXES = ["tech_score", "fundamental_score", "flow_score", "intel_score", "macro_score", "composite_score"]
 
 
 def spearman_r(x: list[float], y: list[float]) -> float:
-    """Pure-Python Spearman rank correlation (no scipy required)."""
+    """Spearman 순위상관계수 계산 (scipy 없이 순수 Python)."""
     n = len(x)
     if n < 3:
         return float("nan")
 
-    def rank(lst):
-        sorted_idx = sorted(range(n), key=lambda i: lst[i])
+    def rank(arr):
+        sorted_arr = sorted(enumerate(arr), key=lambda t: t[1])
         ranks = [0.0] * n
         i = 0
         while i < n:
             j = i
-            while j < n and lst[sorted_idx[j]] == lst[sorted_idx[i]]:
+            while j < n - 1 and sorted_arr[j + 1][1] == sorted_arr[j][1]:
                 j += 1
-            avg = (i + j - 1) / 2.0 + 1
-            for k in range(i, j):
-                ranks[sorted_idx[k]] = avg
-            i = j
+            avg_rank = (i + j) / 2 + 1
+            for k in range(i, j + 1):
+                ranks[sorted_arr[k][0]] = avg_rank
+            i = j + 1
         return ranks
 
-    rx, ry = rank(x), rank(y)
-    mean_rx = sum(rx) / n
-    mean_ry = sum(ry) / n
-    num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(n))
-    den_x = sum((rx[i] - mean_rx) ** 2 for i in range(n)) ** 0.5
-    den_y = sum((ry[i] - mean_ry) ** 2 for i in range(n)) ** 0.5
-    if den_x == 0 or den_y == 0:
-        return float("nan")
-    return num / (den_x * den_y)
+    rx = rank(x)
+    ry = rank(y)
 
-
-def analyze(rows: list[dict]) -> dict:
-    """Calculate Spearman r for composite and each axis."""
-    pnl = [r["avg_pnl_pct"] for r in rows if r["avg_pnl_pct"] is not None]
-
-    axes = {
-        "composite": "composite_score",
-        "technical": "technical_score",
-        "fundamental": "fundamental_score",
-        "flow": "flow_score",
-        "intel": "intel_score",
-        "macro": "macro_score",
-    }
-
-    results = {}
-    for label, col in axes.items():
-        scores = [r[col] for r in rows if r[col] is not None and r["avg_pnl_pct"] is not None]
-        paired_pnl = [r["avg_pnl_pct"] for r in rows if r[col] is not None and r["avg_pnl_pct"] is not None]
-        if len(scores) < MIN_SAMPLES:
-            results[label] = {"r": None, "n": len(scores), "note": "insufficient data"}
-        else:
-            r = spearman_r(scores, paired_pnl)
-            interpretation = (
-                "strong" if abs(r) >= 0.3 else
-                "moderate" if abs(r) >= 0.1 else
-                "weak/none"
-            )
-            results[label] = {"r": round(r, 4), "n": len(scores), "interpretation": interpretation}
-
-    return results
+    d_sq_sum = sum((rx[i] - ry[i]) ** 2 for i in range(n))
+    r = 1 - (6 * d_sq_sum) / (n * (n * n - 1))
+    return round(r, 4)
 
 
 def run_analysis(days: int = 90) -> dict:
-    """weight_optimizer와 correlation_report에서 호출하는 통합 진입점."""
-    data = load_data(days=days)
-    if not data:
-        return {"sample_count": 0, "correlations": {}}
-    result = analyze(data)
-    result["sample_count"] = len(data)
-    return result
+    """최근 N일 데이터로 상관분석 실행.
 
+    Returns:
+        {
+            "date": "YYYY-MM-DD",
+            "sample_count": int,
+            "correlations": {"tech_score": 0.23, ...},
+            "warnings": ["fundamental_score: r=0.08 < 0.10 (재조정 필요)"],
+        }
+    """
+    from web.db.connection import get_db
 
-def main():
-    parser = argparse.ArgumentParser(description="Composite score vs pnl_pct correlation")
-    parser.add_argument("--days", type=int, default=30, help="Lookback window in days")
-    args = parser.parse_args()
-
-    logger.info(f"Loading data for last {args.days} days...")
-    rows = load_data(args.days)
-
-    if len(rows) < MIN_SAMPLES:
-        print(f"\n[!] Only {len(rows)} joined rows found (need >= {MIN_SAMPLES}).")
-        print("    Run the system for more days before interpreting results.")
-        print("    Tip: ensure signal_performance.close_price is being updated.")
-        return
-
-    logger.info(f"Joined {len(rows)} ticker-date pairs")
-    results = analyze(rows)
-
-    print("\n" + "=" * 55)
-    print(f"  Spearman Correlation: Score vs pnl_pct  (n={len(rows)})")
-    print("=" * 55)
-    def _r_sort_key(kv):
-        r = kv[1].get("r")
-        if r is None:
-            return -1.0
-        try:
-            return abs(float(r)) if r == r else -1.0  # NaN check
-        except (TypeError, ValueError):
-            return -1.0
-
-    sorted_axes = sorted(results.items(), key=_r_sort_key, reverse=True)
-    for label, info in sorted_axes:
-        r = info.get("r")
-        is_valid = r is not None and r == r  # NaN check: NaN != NaN
-        if not is_valid:
-            print(f"  {label:<14} n={info['n']:>4}  -- {info.get('note', 'insufficient data')}")
-        else:
-            bar = "#" * int(abs(r) * 20)
-            print(f"  {label:<14} r={r:+.4f}  n={info['n']:>4}  [{bar:<20}]  {info['interpretation']}")
-    print("=" * 55)
-
-    composite_r = results.get("composite", {}).get("r")
-    if composite_r is not None:
-        if abs(composite_r) >= 0.1:
-            print(f"\n[OK] composite r={composite_r:+.4f} >= 0.1 → proceed with tuning")
-        else:
-            print(f"\n[!!] composite r={composite_r:+.4f} < 0.1 → revisit axis weights before tuning")
-
-    # Save JSON
-    out_dir = PROJECT_ROOT / "output" / "analysis"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    since = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
     today = datetime.now(KST).strftime("%Y-%m-%d")
-    out_path = out_dir / f"correlation_{today}.json"
-    payload = {
-        "generated_at": datetime.now(KST).isoformat(),
-        "lookback_days": args.days,
-        "total_rows": len(rows),
-        "correlations": results,
+
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    sr.tech_score,
+                    sr.fundamental_score,
+                    sr.flow_score,
+                    sr.intel_score,
+                    sr.macro_score,
+                    sr.composite_score,
+                    sp.return_pct
+                FROM scoring_results sr
+                JOIN signal_performance sp ON sr.ticker = sp.ticker
+                    AND sr.signal_date = sp.signal_date
+                WHERE sr.signal_date >= ?
+                  AND sp.return_pct IS NOT NULL
+                ORDER BY sr.signal_date
+                """,
+                (since,),
+            ).fetchall()
+    except Exception as e:
+        logger.error(f"DB query failed: {e}")
+        return {"error": str(e)}
+
+    if len(rows) < 10:
+        logger.warning(f"Insufficient data: {len(rows)} rows (need at least 10)")
+        return {
+            "date": today,
+            "sample_count": len(rows),
+            "correlations": {},
+            "warnings": [f"데이터 부족: {len(rows)}건 (최소 10건 필요)"],
+        }
+
+    returns = [row["return_pct"] for row in rows]
+    correlations = {}
+    warnings = []
+
+    axis_map = {
+        "tech_score": "Technical",
+        "fundamental_score": "Fundamental",
+        "flow_score": "Flow",
+        "intel_score": "Intel",
+        "macro_score": "Macro",
+        "composite_score": "Composite",
     }
-    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\nSaved → {out_path}")
+
+    for col, label in axis_map.items():
+        scores = [row[col] for row in rows if row[col] is not None]
+        if len(scores) < 10:
+            correlations[col] = None
+            continue
+        r = spearman_r(scores, returns[:len(scores)])
+        correlations[col] = r
+        if abs(r) < WARN_THRESHOLD:
+            warnings.append(f"{label}: r={r:.3f} < {WARN_THRESHOLD} → 가중치 재조정 검토 필요")
+
+    return {
+        "date": today,
+        "sample_count": len(rows),
+        "days_analyzed": days,
+        "correlations": correlations,
+        "warnings": warnings,
+    }
+
+
+def save_results(result: dict, output_dir: Path = None):
+    """결과를 JSON 파일로 저장."""
+    if output_dir is None:
+        output_dir = Path(__file__).parent.parent / "data" / "analysis"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = output_dir / f"correlation_{result['date']}.json"
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    logger.info(f"Results saved to {filename}")
+    return filename
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    main()
+    import argparse
+    logging.basicConfig(level=logging.INFO)
+
+    parser = argparse.ArgumentParser(description="스코어-수익률 상관분석")
+    parser.add_argument("--days", type=int, default=90, help="분석 기간 (일)")
+    parser.add_argument("--save", action="store_true", help="JSON 파일 저장")
+    args = parser.parse_args()
+
+    result = run_analysis(days=args.days)
+
+    print(f"\n=== 스코어 vs 수익률 상관분석 ({result.get('date', 'N/A')}) ===")
+    print(f"샘플 수: {result.get('sample_count', 0)}건 ({result.get('days_analyzed', 0)}일)")
+    print()
+
+    for col, r in result.get("correlations", {}).items():
+        if r is None:
+            print(f"  {col:25s}: 데이터 없음")
+        else:
+            status = "OK" if abs(r) >= WARN_THRESHOLD else "WARN"
+            print(f"  {col:25s}: r={r:+.3f} [{status}]")
+
+    if result.get("warnings"):
+        print("\n경고:")
+        for w in result["warnings"]:
+            print(f"  [!] {w}")
+
+    if args.save:
+        saved_to = save_results(result)
+        print(f"\n결과 저장: {saved_to}")
