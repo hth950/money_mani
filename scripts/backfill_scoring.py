@@ -173,7 +173,7 @@ def _macro_score_at(date: pd.Timestamp, vix_df: pd.DataFrame) -> dict:
         row = vix_df[vix_df.index <= date]
         if row.empty:
             return {"score": 0.5, "details": {}}
-        vix = float(row["close"].iloc[-1])
+        vix = float(row["close"].iat[-1])
 
         # Piecewise linear (from config/scoring.yaml anchors)
         anchors = [[15, 0.80], [20, 0.70], [25, 0.50], [35, 0.15]]
