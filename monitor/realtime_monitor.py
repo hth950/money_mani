@@ -400,6 +400,14 @@ class RealtimeMonitor:
         logger.info(f"ALERT: {action} {ctx.name}({ticker}) @ {last_row['Close']:,.0f}{currency} "
                     f"[{strategy.name}]{hold_tag}")
 
+        # consensus 전환 → 해당 종목 즉시 재스코어링
+        try:
+            from pipeline.rescore import rescore_ticker_by_signal
+            rescore_ticker_by_signal(ticker, ctx.market, signal_type)
+            logger.info(f"Consensus rescore done: {ticker} {signal_type}")
+        except Exception as e:
+            logger.warning(f"Consensus rescore failed for {ticker}: {e}")
+
     def stop(self):
         """Gracefully stop the monitor."""
         self._running = False

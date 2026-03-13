@@ -52,23 +52,35 @@ def _run_intel_scan(scan_type: str = "pre_market"):
         scanner = MarketIntelScanner()
         result = scanner.scan(scan_type)
         logger.info(f"Intel scan result: {result}")
-        # 인텔 스캔 후 경량 재스코어링
-        _run_intel_rescore()
+        _run_rescore()  # 인텔 스캔 직후 전 종목 재스코어링
     except Exception as e:
         logger.error(f"Intel scan job failed: {e}", exc_info=True)
     finally:
         gc.collect()
 
 
-def _run_intel_rescore():
-    """인텔 점수 변경 반영: 오늘 scoring_results의 intel_score + composite_score 업데이트."""
+def _run_rescore():
+    """통합 재스코어링: 모든 지표 최신 캐시로 전 종목 재계산."""
     try:
-        from pipeline.intel_rescore import run_intel_rescore
-        updated = run_intel_rescore()
+        from pipeline.rescore import run_rescore
+        updated = run_rescore()
         if updated > 0:
-            logger.info(f"Intel rescore: {updated} tickers updated")
+            logger.info(f"Rescore: {updated} tickers updated")
     except Exception as e:
-        logger.error(f"Intel rescore failed: {e}")
+        logger.error(f"Rescore failed: {e}")
+    finally:
+        gc.collect()
+
+
+def _run_flow_and_rescore():
+    """장 마감 후 flow_cache 무효화 → 전 종목 재스코어링."""
+    try:
+        from scoring.data_collectors import _flow_cache
+        _flow_cache._store.clear()  # 강제 만료
+        logger.info("Flow cache cleared for post-market rescore")
+        _run_rescore()
+    except Exception as e:
+        logger.error(f"Flow rescore failed: {e}")
 
 
 def _run_intel_price_tracker():
@@ -126,49 +138,6 @@ def _stop_monitor():
         logger.error(f"Monitor auto-stop failed: {e}", exc_info=True)
 
 
-def _reset_dart_counter():
-    """Job: reset DART daily API call counter at midnight."""
-    try:
-        from scoring.dart_fundamental import reset_dart_counter
-        reset_dart_counter()
-    except Exception as e:
-        logger.error(f"DART counter reset failed: {e}")
-
-
-def _run_correlation_report():
-    """Job: weekly score-return correlation report (Sunday 09:00 KST)."""
-    try:
-        logger.info("=== Weekly Correlation Report Job Started ===")
-        from pipeline.correlation_report import CorrelationReport
-        result = CorrelationReport().run()
-        logger.info(f"Correlation report result: {result}")
-    except Exception as e:
-        logger.error(f"Correlation report job failed: {e}", exc_info=True)
-    finally:
-        gc.collect()
-
-
-def _run_weight_optimizer():
-    """Job: monthly weight optimization proposal (Discord 발송, 자동 적용 안 함)."""
-    try:
-        logger.info("=== Monthly Weight Optimizer Job Started ===")
-        from scripts.weight_optimizer import run_optimization
-        run_optimization(days=90)
-    except Exception as e:
-        logger.error(f"Weight optimizer job failed: {e}", exc_info=True)
-    finally:
-        gc.collect()
-
-
-def _run_dart_event_cache_refresh():
-    """Job: 매일 장 시작 전 DART 이벤트 캐시 프리워밍."""
-    try:
-        from scoring.dart_event_scorer import refresh_event_cache
-        refresh_event_cache()
-    except Exception as e:
-        logger.error(f"DART event cache refresh failed: {e}")
-
-
 def _run_research_refresh():
     """Job: weekly research refresh."""
     try:
@@ -180,6 +149,29 @@ def _run_research_refresh():
         logger.error(f"Research refresh job failed: {e}", exc_info=True)
     finally:
         gc.collect()
+
+
+def _reset_dart_counter():
+    """Job: DART daily counter reset at midnight."""
+    try:
+        from scoring.dart_fundamental import reset_dart_counter
+        reset_dart_counter()
+        logger.info("DART daily counter reset")
+    except Exception as e:
+        logger.error(f"DART counter reset failed: {e}")
+
+
+def _run_correlation_report():
+    """Job: weekly score-return correlation report."""
+    try:
+        logger.info("=== Weekly Correlation Report Job Started ===")
+        from pipeline.correlation_report import CorrelationReport
+        result = CorrelationReport().run()
+        logger.info(f"Correlation report result: {result}")
+    except Exception as e:
+        logger.error(f"Correlation report job failed: {e}", exc_info=True)
+    finally:
+        import gc; gc.collect()
 
 
 def start_scheduler():
@@ -333,23 +325,24 @@ def start_scheduler():
     )
     logger.info("Scheduled weekly correlation report: Sunday 09:00 KST")
 
-    # Monthly weight optimizer (매월 1일 09:00 KST)
-    scheduler.add_job(
-        _run_weight_optimizer,
-        CronTrigger(day="1", hour="9", minute="0", timezone=tz),
-        id="weight_optimizer",
-        name="Monthly Weight Optimizer",
-    )
-    logger.info("Scheduled weight optimizer: 1st of month 09:00 KST")
+    # 매크로 재스코어링 (09:30/11:30/13:30/15:30 KST, 평일)
+    for hour in ["9", "11", "13", "15"]:
+        scheduler.add_job(
+            _run_rescore,
+            CronTrigger(hour=hour, minute="30", day_of_week="mon-fri", timezone=tz),
+            id=f"rescore_{hour}30",
+            name=f"Rescore {hour}:30",
+        )
+    logger.info("Scheduled rescore: 09:30/11:30/13:30/15:30 KST (weekdays)")
 
-    # DART event cache refresh (평일 08:00 KST, 장 시작 30분 전)
+    # 수급 장 마감 재스코어링 (16:10 KST, flow_cache 무효화 후)
     scheduler.add_job(
-        _run_dart_event_cache_refresh,
-        CronTrigger(hour="8", minute="0", day_of_week="mon-fri", timezone=tz),
-        id="dart_event_refresh",
-        name="DART Event Cache Refresh",
+        _run_flow_and_rescore,
+        CronTrigger(hour="16", minute="10", day_of_week="mon-fri", timezone=tz),
+        id="flow_rescore",
+        name="Post-Market Flow Rescore",
     )
-    logger.info("Scheduled DART event refresh: 08:00 KST (weekdays)")
+    logger.info("Scheduled flow rescore: 16:10 KST (weekdays)")
 
     # On startup: if currently within market hours, auto-start monitor
     _auto_start_monitor_if_market_open()

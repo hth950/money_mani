@@ -10,14 +10,14 @@ KST = timezone(timedelta(hours=9))
 
 logger = logging.getLogger("money_mani.scoring.data_collectors")
 
+# Module-level TTL caches
+_fundamental_cache = TTLCache(ttl=4 * 3600, maxsize=256)
+_flow_cache = TTLCache(ttl=4 * 3600, maxsize=256)
+_macro_cache = TTLCache(ttl=2 * 3600, maxsize=4)
+
 # Sector cache: refreshed once per day
 _sector_cache: dict = {}
 _sector_cache_date: str = ""
-
-# Module-level TTL caches — persist across scorer instances created per scan
-_fundamental_cache: TTLCache = TTLCache(default_ttl=4 * 3600, maxsize=256)   # 4 hours
-_flow_cache: TTLCache = TTLCache(default_ttl=4 * 3600, maxsize=256)           # 4 hours
-_macro_cache: TTLCache = TTLCache(default_ttl=24 * 3600, maxsize=4)           # 24 hours
 
 KRX_SECTOR_MAP = {
     "전기전자": "Technology",
@@ -71,7 +71,7 @@ def _get_sector_map() -> dict:
     except Exception as e:
         logger.warning(f"Failed to load sector map: {e}")
         _sector_cache = {}
-        _sector_cache_date = ""
+        _sector_cache_date = today
     return _sector_cache
 
 
@@ -79,7 +79,7 @@ class FundamentalCollector:
     """Fundamental data collection and scoring (0~1)."""
 
     def __init__(self):
-        pass  # Uses module-level _fundamental_cache
+        pass
 
     def _load_benchmarks_config(self) -> dict:
         """Load sector_benchmarks section from config/scoring.yaml."""
@@ -131,51 +131,31 @@ class FundamentalCollector:
             return neutral
 
     def _score_krx(self, ticker: str, neutral: dict) -> dict:
-        # Primary: DART Open API (works on OCI; pykrx is IP-blocked by KRX)
-        from scoring.dart_fundamental import DARTFundamentalClient
-        dart = DARTFundamentalClient()
-        fund_data = dart.get_fundamentals(ticker) if dart.enabled else None
+        from market_data.krx_fetcher import KRXFetcher
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        start = (datetime.now(KST) - timedelta(days=5)).strftime("%Y-%m-%d")
+        try:
+            df = KRXFetcher().get_fundamentals(ticker, start, today)
+        except Exception as e:
+            logger.warning(f"KRX get_fundamentals failed for {ticker}: {e}")
+            return neutral
 
-        yf_sector: str | None = None
-        if fund_data:
-            ticker_per = float(fund_data.get("PER") or 0)
-            ticker_pbr = float(fund_data.get("PBR") or 0)
-            ticker_div = float(fund_data.get("DIV") or 0)
-            # Get sector from yfinance (works on OCI; fdr.StockListing is blocked)
-            try:
-                import yfinance as yf
-                yf_sector = yf.Ticker(f"{ticker}.KS").info.get("sector") or None
-            except Exception:
-                pass
-        else:
-            # Fallback: pykrx (may be blocked on cloud servers)
-            from market_data.krx_fetcher import KRXFetcher
-            today = datetime.now(KST).strftime("%Y-%m-%d")
-            start = (datetime.now(KST) - timedelta(days=5)).strftime("%Y-%m-%d")
-            try:
-                df = KRXFetcher().get_fundamentals(ticker, start, today)
-            except Exception as e:
-                logger.warning(f"KRX get_fundamentals failed for {ticker}: {e}")
-                return neutral
-            if df is None or df.empty:
-                return neutral
-            row = df.iloc[-1]
-            ticker_per = float(row.get("PER", 0) or 0)
-            ticker_pbr = float(row.get("PBR", 0) or 0)
-            ticker_div = float(row.get("DIV", 0) or 0)
+        if df is None or df.empty:
+            return neutral
+
+        # Use the latest row
+        row = df.iloc[-1]
+        ticker_per = float(row.get("PER", 0) or 0)
+        ticker_pbr = float(row.get("PBR", 0) or 0)
+        ticker_div = float(row.get("DIV", 0) or 0)
 
         # Sector-aware benchmarks from config/scoring.yaml
-        # yf_sector is English (e.g. "Technology"); fall back to KRX listing map
-        if yf_sector:
-            eng_sector = yf_sector
-            raw_sector = eng_sector
-        else:
-            sector_map = _get_sector_map()
-            raw_sector = sector_map.get(ticker, "Unknown")
-            eng_sector = KRX_SECTOR_MAP.get(raw_sector, None)
-            if eng_sector is None and raw_sector != "Unknown":
-                logger.warning(f"Unmapped KRX sector: '{raw_sector}' for {ticker}")
-                eng_sector = "Unknown"
+        sector_map = _get_sector_map()
+        raw_sector = sector_map.get(ticker, "Unknown")
+        eng_sector = KRX_SECTOR_MAP.get(raw_sector, None)
+        if eng_sector is None and raw_sector != "Unknown":
+            logger.warning(f"Unmapped KRX sector: '{raw_sector}' for {ticker}")
+            eng_sector = "Unknown"
         benchmarks = self._get_sector_benchmarks(eng_sector or "Unknown")
         sector_avg_per = benchmarks["per"]
         sector_avg_pbr = benchmarks.get("pbr", 1.5)
@@ -260,7 +240,7 @@ class FlowCollector:
     """Investor flow data collection and scoring (0~1) - KRX only."""
 
     def __init__(self):
-        pass  # Uses module-level _flow_cache
+        pass
 
     def _get_amount_scale(self, ticker: str) -> float:
         """Get normalization scale based on market cap tier."""
@@ -435,7 +415,7 @@ class FlowCollector:
 
 
 class MacroCollector:
-    """Macro environment score based on VIX (piecewise-linear interpolation)."""
+    """Macro environment score based on VIX."""
 
     def __init__(self):
         self._config = self._load_config()
@@ -453,36 +433,6 @@ class MacroCollector:
             pass
         return {}
 
-    def _vix_to_score(self, vix: float, anchors: list[list]) -> tuple[float, str]:
-        """Piecewise-linear interpolation over VIX anchor points.
-
-        Args:
-            vix: Current VIX value.
-            anchors: Sorted list of [vix_level, score] pairs, e.g.
-                     [[15, 0.80], [20, 0.70], [25, 0.50], [35, 0.15]]
-
-        Returns:
-            (score, regime_label)
-        """
-        # Clamp to boundaries
-        if vix <= anchors[0][0]:
-            return anchors[0][1], "calm"
-        if vix >= anchors[-1][0]:
-            return anchors[-1][1], "fear"
-
-        # Determine regime label and interpolate
-        regimes = ["calm", "caution", "elevated", "fear"]
-        for i in range(len(anchors) - 1):
-            x0, y0 = anchors[i]
-            x1, y1 = anchors[i + 1]
-            if x0 <= vix <= x1:
-                ratio = (vix - x0) / (x1 - x0)
-                score = y0 + ratio * (y1 - y0)
-                regime = regimes[min(i + 1, len(regimes) - 1)]
-                return round(score, 4), regime
-
-        return anchors[-1][1], "fear"
-
     def score(self) -> dict:
         """Return macro environment score based on VIX.
 
@@ -492,8 +442,8 @@ class MacroCollector:
         if not self._config.get("enabled", False):
             return {"score": 0.5, "details": {"note": "macro disabled"}}
 
-        cache_key = "macro"
-        hit, cached = _macro_cache.get(cache_key)
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        hit, cached = _macro_cache.get(today)
         if hit:
             return cached
 
@@ -506,10 +456,16 @@ class MacroCollector:
         if vix is None:
             return {"score": 0.5, "details": {"note": "VIX unavailable"}}
 
-        vix_cfg = self._config.get("vix", {})
-        anchors = vix_cfg.get("anchors", [[20, 0.70], [30, 0.20]])
-        macro_score, regime = self._vix_to_score(float(vix), anchors)
+        thresholds = self._config.get("vix_thresholds", {"low": 20, "high": 30})
+        scores_cfg = self._config.get("scores", {"low": 0.7, "medium": 0.5, "high": 0.2})
+
+        if vix < thresholds["low"]:
+            macro_score, regime = scores_cfg["low"], "calm"
+        elif vix > thresholds["high"]:
+            macro_score, regime = scores_cfg["high"], "fear"
+        else:
+            macro_score, regime = scores_cfg["medium"], "normal"
 
         result = {"score": macro_score, "details": {"vix": round(vix, 2), "regime": regime}}
-        _macro_cache.set(cache_key, result)
+        _macro_cache.set(today, result)
         return result
