@@ -398,7 +398,12 @@ def load_vix_history(start: str) -> pd.DataFrame:
         import yfinance as yf
         vix = yf.download("^VIX", start=start, progress=False, auto_adjust=True)
         if not vix.empty:
-            df = vix[["Close"]].rename(columns={"Close": "close"})
+            # Flatten MultiIndex columns (yfinance returns ('Close', '^VIX') format)
+            if hasattr(vix.columns, "levels"):
+                vix.columns = [c[0].lower() if isinstance(c, tuple) else str(c).lower() for c in vix.columns]
+            else:
+                vix.columns = [str(c).lower() for c in vix.columns]
+            df = vix[["close"]]
             df.index = pd.to_datetime(df.index)
             logger.info(f"VIX history loaded: {len(df)} rows")
             return df
