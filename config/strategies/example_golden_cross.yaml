@@ -30,3 +30,4 @@ parameters:
   position_size: 1.0
   stop_loss: null
   take_profit: null
+timeframe: "1d"

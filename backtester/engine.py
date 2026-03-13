@@ -61,6 +61,7 @@ class BacktestEngine:
         df: pd.DataFrame,
         strategy: Strategy,
         ticker: str = "UNKNOWN",
+        market: str = "KRX",
     ) -> BacktestResult:
         """Run backtest and return BacktestResult."""
         # Compute indicators + signals
@@ -69,6 +70,14 @@ class BacktestEngine:
         signals = sig_gen.generate_signals(df_ind)
 
         position_size = float(strategy.parameters.get("position_size", 1.0))
+
+        # Market-aware commission
+        try:
+            from utils.config_loader import load_config
+            _cfg = load_config()
+            commission = _cfg["backtest"].get(f"commission_{market.lower()}", self.commission)
+        except Exception:
+            commission = self.commission
 
         # backtesting.py requires OHLCV with capital letters
         bt_df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
@@ -80,7 +89,7 @@ class BacktestEngine:
             bt_df,
             bt_strategy_cls,
             cash=self.initial_capital,
-            commission=self.commission,
+            commission=commission,
             spread=self.slippage,
             trade_on_close=False,
             exclusive_orders=True,
