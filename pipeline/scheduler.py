@@ -303,6 +303,9 @@ def start_scheduler():
     # On startup: if currently within market hours, auto-start monitor
     _auto_start_monitor_if_market_open()
 
+    # On startup: pre-load today's sent signals to avoid re-sending after restart
+    _preload_sent_signals()
+
     logger.info("Starting scheduler... (Ctrl+C to stop)")
     try:
         scheduler.start()
@@ -339,3 +342,31 @@ def _auto_start_monitor_if_market_open():
         import threading
         threading.Timer(5.0, _start_monitor).start()
         logger.info("Monitor auto-start scheduled in 5 seconds")
+
+
+def _preload_sent_signals():
+    """On restart, load today's signals from DB to prevent re-sending."""
+    from datetime import datetime, timedelta, timezone
+    from pipeline.daily_scan import _sent_signals_today
+    from web.db.connection import get_db
+
+    KST = timezone(timedelta(hours=9))
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT strategy_name, ticker, signal_type FROM signals WHERE DATE(detected_at) = ?",
+                (today,),
+            ).fetchall()
+        _sent_signals_today[today] = set()
+        for row in rows:
+            key = f"{row['strategy_name']}|{row['ticker']}|{row['signal_type']}"
+            _sent_signals_today[today].add(key)
+        count = len(_sent_signals_today[today])
+        logger.info(f"Pre-loaded {count} sent signals for {today}")
+        from alerts.discord_webhook import DiscordNotifier
+        DiscordNotifier().send(
+            content=f"🔄 Money Mani 스케줄러 재시작 ({today}) - 오늘 신호 {count}건 중복 발송 차단"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to preload sent signals: {e}")
