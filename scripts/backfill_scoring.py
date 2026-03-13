@@ -157,13 +157,56 @@ def _technical_score(ticker: str, hist: pd.DataFrame) -> dict:
 
 
 def _fundamental_score_at(ticker: str, market: str, year: int) -> dict:
-    """Get fundamental score. Uses cached DART/yfinance data for the given year."""
+    """Get fundamental score using year-appropriate data.
+
+    KRX: DART 연도별 재무제표 (해당 연도에는 전년도 공시 데이터 적용).
+    US: yfinance 기반 FundamentalCollector (연도 무관).
+    """
+    if market == "KRX":
+        try:
+            from scoring.dart_fundamental import DARTFundamentalFetcher
+            fetcher = DARTFundamentalFetcher()
+            bsns_year = str(year - 1)  # 2024년 → 2023년 결산 공시 사용
+            data = fetcher.get_financial_data(ticker, bsns_year=bsns_year)
+            if data:
+                per = data.get("per", 0)
+                pbr = data.get("pbr", 0)
+                div_yield = data.get("div_yield", 0)
+                per_score = max(0.0, 1.0 - (per / 20.0)) if per > 0 else 0.5
+                pbr_score = max(0.0, 1.0 - (pbr / 1.5)) if pbr > 0 else 0.5
+                div_score = min(1.0, div_yield / 0.05) if div_yield > 0 else 0.0
+                fund_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
+                return {
+                    "score": round(fund_score, 4),
+                    "details": {"per": per, "pbr": pbr, "div": div_yield * 100, "year": bsns_year},
+                }
+        except Exception as e:
+            logger.debug(f"DART fundamental error {ticker} year={year}: {e}")
+    else:
+        try:
+            from scoring.data_collectors import FundamentalCollector
+            return FundamentalCollector().score(ticker, market)
+        except Exception as e:
+            logger.debug(f"Fundamental score error {ticker}: {e}")
+    return {"score": 0.5, "details": {}}
+
+
+def _flow_score_at(ticker: str, market: str, date: pd.Timestamp) -> dict:
+    """Get investor flow score for a historical date (KRX only via Naver)."""
+    if market != "KRX":
+        return {"score": 0.5, "details": {}}
     try:
-        from scoring.data_collectors import FundamentalCollector
-        result = FundamentalCollector().score(ticker, market)
-        return result
+        from market_data.naver_flow_fetcher import NaverFlowFetcher
+        start = (date - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+        end = date.strftime("%Y-%m-%d")
+        df = NaverFlowFetcher().get_investor_flows(ticker, start=start, end=end)
+        if df is not None and not df.empty:
+            net = float(df["외국인합계"].sum() + df["기관합계"].sum())
+            # 1조원 순매수 → +0.4, 1조원 순매도 → -0.4, 클램프 0.1~0.9
+            score = 0.5 + min(0.4, max(-0.4, net / 1e12))
+            return {"score": round(score, 4), "details": {"net_flow_krw": round(net, 0)}}
     except Exception as e:
-        logger.debug(f"Fundamental score error {ticker}: {e}")
+        logger.debug(f"Naver flow error {ticker} {date.date()}: {e}")
     return {"score": 0.5, "details": {}}
 
 
@@ -310,8 +353,9 @@ def backfill_ticker(
             # 2. Fundamental (use live data — DART annual report doesn't change intraday)
             fund = _fundamental_score_at(ticker, market, date.year)
 
-            # 3. Flow = 0.5 (Naver historical flow is rate-limited; add if needed)
-            flow_score = 0.5
+            # 3. Flow (Naver historical investor flow, KRX only)
+            flow = _flow_score_at(ticker, market, date)
+            flow_score = flow["score"]
 
             # 4. Intel = 0.5 (no historical news data)
             intel_score = 0.5
