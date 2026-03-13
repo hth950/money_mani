@@ -181,19 +181,64 @@ def validate_strategy(
 
 
 def get_krx_tickers(n: int) -> list[str]:
+    """Get KOSPI top-N tickers. Tries pykrx (with delay/retry) → FinanceDataReader → parquet cache."""
+    import time
+
     cache_path = CACHE_DIR / "krx_tickers.json"
     if cache_path.exists():
-        return json.loads(cache_path.read_text())[:n]
+        try:
+            tickers = json.loads(cache_path.read_text())
+            if tickers:
+                return tickers[:n]
+        except Exception:
+            pass
+
+    # 1) pykrx — rate-limit 회피를 위해 딜레이 후 재시도 (최대 3회)
+    for attempt in range(1, 4):
+        try:
+            import pykrx.stock as krx
+            time.sleep(3 * attempt)  # 3s → 6s → 9s
+            tickers = krx.get_market_ticker_list(market="KOSPI")
+            tickers = [str(t).zfill(6) for t in tickers if t]
+            if tickers:
+                CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps(tickers))
+                logger.info(f"Loaded {len(tickers)} KOSPI tickers via pykrx (attempt {attempt})")
+                return tickers[:n]
+        except Exception as e:
+            logger.warning(f"pykrx attempt {attempt} failed: {e}")
+
+    # 2) FinanceDataReader
     try:
-        import pykrx.stock as krx
-        tickers = krx.get_market_ticker_list(market="KOSPI")[:n]
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(tickers))
-        return tickers
-    except Exception:
-        # Fallback: use tickers from prefetched cache files
-        cached = [p.stem.split("_")[1] for p in CACHE_DIR.glob("KRX_*.parquet")]
-        return cached[:n] if cached else []
+        import FinanceDataReader as fdr
+        df = fdr.StockListing("KOSPI")
+        cap_col = next((c for c in df.columns if "Mkt" in c or "Cap" in c or "시가총액" in c), None)
+        if cap_col:
+            df = df.sort_values(cap_col, ascending=False)
+        tickers = df["Code"].dropna().astype(str).str.zfill(6).tolist()[:n]
+        if tickers:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(tickers))
+            logger.info(f"Loaded {len(tickers)} KOSPI tickers via FinanceDataReader")
+            return tickers
+    except Exception as e:
+        logger.warning(f"FinanceDataReader failed: {e}")
+
+    # 3) Fallback: prefetched parquet cache
+    cached = sorted({p.stem.split("_")[1] for p in CACHE_DIR.glob("KRX_*.parquet")})
+    if cached:
+        logger.info(f"Using {len(cached)} tickers from parquet cache")
+        return cached[:n]
+
+    # 4) Static config file (config/krx_revalidation_tickers.json)
+    static_path = Path(__file__).parent.parent / "config" / "krx_revalidation_tickers.json"
+    if static_path.exists():
+        tickers = json.loads(static_path.read_text())
+        logger.info(f"Using {len(tickers)} tickers from config/krx_revalidation_tickers.json")
+        return tickers[:n]
+
+    logger.error("Could not load KRX tickers — no data source available")
+    return []
 
 
 def main():
