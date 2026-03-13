@@ -77,6 +77,7 @@ class SignalTracker:
             self._last_alert.clear()
 
 
+
     def preload_states(self, days: int = 3) -> int:
         """Load last known signal states from DB to prevent re-alerting on restart.
 
@@ -107,5 +108,112 @@ class SignalTracker:
             return len(rows)
         except Exception as e:
             logger.warning(f"Failed to preload signal states: {e}")
+            return 0
+
+
+class TickerConsensusTracker:
+    """Track per-ticker consensus direction across all strategies.
+
+    Fires an event only when the ticker's net consensus direction changes
+    (majority of strategies flip from BUY to SELL or vice versa).
+    Includes a minimum hold time between direction flips to prevent rapid oscillation.
+    Urgent override: if consensus ratio >= urgent_threshold, bypass the cooldown.
+    """
+
+    def __init__(
+        self,
+        threshold: float = 0.55,
+        hold_threshold: float = 0.50,
+        min_hold_minutes: int = 60,
+        urgent_threshold: float = 0.80,
+    ):
+        self._strategy_signals: dict[str, dict[str, int]] = {}
+        self._ticker_direction: dict[str, int] = {}
+        self._last_flip: dict[str, datetime] = {}
+        self._threshold = threshold
+        self._hold_threshold = hold_threshold
+        self._min_hold = timedelta(minutes=min_hold_minutes)
+        self._urgent_threshold = urgent_threshold
+
+    def update(
+        self, ticker: str, strategy_name: str, signal: int, is_holding: bool = False
+    ) -> dict | None:
+        """Update strategy signal for ticker. Returns consensus event dict if direction changed.
+
+        Returns dict with keys: ticker, signal_type, buy_count, sell_count,
+        total_strategies, consensus_ratio, prev_direction, urgent (bool).
+        Returns None if no direction change or conditions not met.
+        """
+        signals_map = self._strategy_signals.setdefault(ticker, {})
+        signals_map[strategy_name] = signal
+
+        active = [s for s in signals_map.values() if s != 0]
+        if len(active) < 3:
+            return None
+
+        buy_count = sum(1 for s in active if s == 1)
+        sell_count = sum(1 for s in active if s == -1)
+        total = len(active)
+        threshold = self._hold_threshold if is_holding else self._threshold
+
+        if buy_count / total >= threshold:
+            new_dir = 1
+            consensus_ratio = buy_count / total
+        elif sell_count / total >= threshold:
+            new_dir = -1
+            consensus_ratio = sell_count / total
+        else:
+            return None
+
+        prev_dir = self._ticker_direction.get(ticker, 0)
+        if new_dir == prev_dir:
+            return None
+
+        last_flip = self._last_flip.get(ticker)
+        is_urgent = consensus_ratio >= self._urgent_threshold
+        in_cooldown = last_flip and (datetime.now(KST) - last_flip) < self._min_hold
+
+        if in_cooldown and not is_urgent:
+            return None
+
+        self._ticker_direction[ticker] = new_dir
+        self._last_flip[ticker] = datetime.now(KST)
+
+        return {
+            "ticker": ticker,
+            "signal_type": "BUY" if new_dir == 1 else "SELL",
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "total_strategies": total,
+            "consensus_ratio": consensus_ratio,
+            "prev_direction": prev_dir,
+            "urgent": is_urgent and bool(in_cooldown),
+        }
+
+    def preload_directions(self, days: int = 3) -> int:
+        """Load last known consensus direction from DB on restart."""
+        try:
+            from web.db.connection import get_db
+            with get_db() as conn:
+                rows = conn.execute(
+                    """SELECT ticker, signal_type
+                       FROM signals
+                       WHERE source = 'realtime_consensus'
+                         AND detected_at = (
+                             SELECT MAX(s2.detected_at) FROM signals s2
+                             WHERE s2.ticker = signals.ticker
+                               AND s2.source = 'realtime_consensus'
+                         )
+                         AND DATE(detected_at) >= DATE('now', ?)""",
+                    (f"-{days} days",),
+                ).fetchall()
+            for row in rows:
+                self._ticker_direction[row["ticker"]] = (
+                    1 if row["signal_type"] == "BUY" else -1
+                )
+            logger.info(f"Preloaded {len(rows)} consensus directions from DB")
+            return len(rows)
+        except Exception as e:
+            logger.warning(f"Failed to preload consensus directions: {e}")
             return 0
 

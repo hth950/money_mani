@@ -76,3 +76,5 @@ from web.routers.risk import router as risk_router
 app.include_router(risk_router)
 from web.routers.scoring import router as scoring_router
 app.include_router(scoring_router)
+from web.routers.guide import router as guide_router
+app.include_router(guide_router)
