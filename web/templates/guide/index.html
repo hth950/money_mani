@@ -1,0 +1,531 @@
+{% extends "base.html" %}
+{% block title %}매매 가이드 — Money Mani{% endblock %}
+
+{% block content %}
+<style>
+  .guide-section { margin-bottom: 3rem; }
+  .guide-section h2 { border-bottom: 2px solid var(--primary); padding-bottom: 0.4rem; }
+  .guide-section h3 { margin-top: 1.5rem; }
+  .score-bar-wrap { display: flex; align-items: center; gap: 0.8rem; margin: 0.3rem 0; }
+  .score-bar { height: 14px; border-radius: 6px; min-width: 4px; }
+  .axis-table td:first-child { font-weight: bold; white-space: nowrap; }
+  .callout { background: var(--card-background-color); border-left: 4px solid var(--primary); padding: 1rem 1.2rem; border-radius: 4px; margin: 1rem 0; }
+  .callout.warn { border-left-color: #f39c12; }
+  .callout.success { border-left-color: #27ae60; }
+  .callout.danger { border-left-color: #e74c3c; }
+  .timeline-table td { vertical-align: top; }
+  .badge { display: inline-block; padding: 0.15em 0.55em; border-radius: 9999px; font-size: 0.78em; font-weight: 600; }
+  .badge-buy { background: #d4edda; color: #155724; }
+  .badge-watch { background: #fff3cd; color: #856404; }
+  .badge-sell { background: #f8d7da; color: #721c24; }
+  .badge-info { background: #d1ecf1; color: #0c5460; }
+  summary { cursor: pointer; font-weight: 600; }
+</style>
+
+<h1>📖 Money Mani 매매 가이드</h1>
+<p>처음 보는 분도 이 페이지만 읽으면 시스템을 이해할 수 있도록 작성했습니다.</p>
+
+<nav aria-label="목차">
+  <details>
+    <summary>목차 보기</summary>
+    <ol>
+      <li><a href="#overview">시스템 개요</a></li>
+      <li><a href="#scoring">5축 복합 스코어링</a></li>
+      <li><a href="#signals">매수 · 매도 기준</a></li>
+      <li><a href="#realtime">실시간 모니터</a></li>
+      <li><a href="#intel">인텔리전스 스코어</a></li>
+      <li><a href="#schedule">자동 스케줄</a></li>
+      <li><a href="#rescore">재스코어링</a></li>
+      <li><a href="#paper">Paper Trading & 성과 검증</a></li>
+      <li><a href="#pages">대시보드 페이지 안내</a></li>
+    </ol>
+  </details>
+</nav>
+
+<!-- 1. 시스템 개요 -->
+<section class="guide-section" id="overview">
+  <h2>1. 시스템 개요</h2>
+  <p>
+    Money Mani는 한국(KRX)과 미국(US) 주식을 자동으로 평가해 매매 신호를 Discord로 알려주는 시스템입니다.<br>
+    단순한 이동평균 하나가 아니라 <strong>5가지 관점(기술적 · 펀더멘탈 · 수급 · 인텔리전스 · 매크로)</strong>을 종합해 점수를 냅니다.
+  </p>
+
+  <div class="callout">
+    <strong>핵심 흐름</strong><br>
+    매일 08:00 스캔 → 5축 점수 계산 → 대시보드 표시<br>
+    장중 08:50~15:35 실시간 모니터 → 60초마다 기술적 신호 감시 → 합의 전환 시 Discord 알림<br>
+    매시 AI 뉴스 분석 → Intel Score 갱신 → 자동 재스코어링
+  </div>
+
+  <figure>
+    <pre>
+[08:00 일일 스캔]
+    ↓ 기술적 전략 합의 계산
+[5축 복합 점수]  ←──────────────────────────────────┐
+  Technical  30%                                      │
+  Fundamental 25%                                     │
+  Flow        20%                           [재스코어링]
+  Intel       15%                        (09:30/11:30/13:30/15:30)
+  Macro       10%                                     │
+    ↓                                                 │
+[scoring_results DB]   ←───── [인텔 스캔 매시] ────────┘
+    ↓
+[/signals 대시보드]   [Discord 알림]
+
+[08:50 실시간 모니터 시작]
+  60초마다 현재가 조회 → 전략 합의 계산
+  합의 전환(BUY↔SELL) → 즉시 Discord 알림 + 즉시 재스코어링
+[15:35 자동 종료]
+    </pre>
+  </figure>
+</section>
+
+<!-- 2. 5축 복합 스코어링 -->
+<section class="guide-section" id="scoring">
+  <h2>2. 5축 복합 스코어링</h2>
+  <p>모든 종목은 아래 5개 축에서 각각 0~1 사이의 점수를 받고, 가중 합산하여 <strong>복합 점수(0~1)</strong>가 됩니다.</p>
+
+  <h3>가중치 (config/scoring.yaml)</h3>
+  <div class="overflow-auto">
+  <table class="axis-table">
+    <thead>
+      <tr><th>축</th><th>KRX (한국)</th><th>US (미국)</th><th>의미</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Technical</td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:90px;background:#3498db;"></div> 30%
+          </div>
+        </td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:135px;background:#3498db;"></div> 45%
+          </div>
+        </td>
+        <td>기술적 전략 합의 비율</td>
+      </tr>
+      <tr>
+        <td>Fundamental</td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:75px;background:#27ae60;"></div> 25%
+          </div>
+        </td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:60px;background:#27ae60;"></div> 20%
+          </div>
+        </td>
+        <td>재무 건전성 (PER/PBR/ROE/배당)</td>
+      </tr>
+      <tr>
+        <td>Flow</td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:60px;background:#9b59b6;"></div> 20%
+          </div>
+        </td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:4px;background:#ccc;"></div> 0% (없음)
+          </div>
+        </td>
+        <td>외국인·기관 수급 (KRX 전용)</td>
+      </tr>
+      <tr>
+        <td>Intel</td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:45px;background:#e67e22;"></div> 15%
+          </div>
+        </td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:75px;background:#e67e22;"></div> 25%
+          </div>
+        </td>
+        <td>AI 뉴스·공시 감성 분석</td>
+      </tr>
+      <tr>
+        <td>Macro</td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:30px;background:#e74c3c;"></div> 10%
+          </div>
+        </td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar" style="width:30px;background:#e74c3c;"></div> 10%
+          </div>
+        </td>
+        <td>VIX 시장 공포지수</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>각 축 상세 설명</h3>
+
+  <details open>
+    <summary>📈 Technical Score — 기술적 전략 합의</summary>
+    <div style="padding: 0.5rem 0 0.5rem 1rem;">
+      <p><strong>계산식</strong>: BUY 신호를 낸 전략 수 ÷ 전체 검증 전략 수</p>
+      <p><strong>예시</strong>: 검증된 전략 8개 중 6개가 BUY → Technical Score = 6/8 = <strong>0.75</strong></p>
+      <ul>
+        <li>골든크로스 (MA20 > MA60)</li>
+        <li>RSI 30 반등</li>
+        <li>MACD 시그널 상향돌파</li>
+        <li>볼린저밴드 하단 반등</li>
+        <li>등 <code>config/strategies/</code> 폴더의 YAML 전략들</li>
+      </ul>
+      <p>일일 스캔의 스냅샷 값이지만, 실시간 모니터가 합의 전환을 감지하면 즉시 갱신됩니다.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>📊 Fundamental Score — 재무 건전성</summary>
+    <div style="padding: 0.5rem 0 0.5rem 1rem;">
+      <p><strong>데이터 소스</strong></p>
+      <ul>
+        <li>한국: <strong>DART 전자공시 API</strong> — 연결재무제표(CFS) 우선, 별도재무제표 폴백</li>
+        <li>미국: <strong>yfinance</strong></li>
+      </ul>
+      <p><strong>평가 항목</strong>: PER, PBR, ROE, 배당수익률</p>
+      <p><strong>섹터 상대 평가</strong>: 업종 평균 대비 상대적 우열 판단 (Technology PER 기준 35배, 금융업 12배 등)</p>
+      <p>캐시: <span class="badge badge-info">4시간 TTL</span></p>
+    </div>
+  </details>
+
+  <details>
+    <summary>💸 Flow Score — 외국인·기관 수급 (KRX 전용)</summary>
+    <div style="padding: 0.5rem 0 0.5rem 1rem;">
+      <p><strong>데이터 소스</strong>: 네이버 금융 스크래퍼 (pykrx가 OCI 클라우드에서 차단될 경우 자동 대체)</p>
+      <table>
+        <thead><tr><th>구성 요소</th><th>가중치</th><th>의미</th></tr></thead>
+        <tbody>
+          <tr><td>Streak</td><td>20%</td><td>연속 순매수 일수</td></tr>
+          <tr><td>Amount</td><td>35%</td><td>순매수 금액 절대값</td></tr>
+          <tr><td>Ratio</td><td>25%</td><td>외국인+기관 합산 비율</td></tr>
+          <tr><td>Synergy</td><td>20%</td><td>외국인·기관 동반 매수 시너지</td></tr>
+        </tbody>
+      </table>
+      <p>조회 기간: 14일 / 캐시: <span class="badge badge-info">4시간 TTL</span> (장 마감 후 16:10에 강제 초기화)</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>🧠 Intel Score — AI 인텔리전스 (→ 5장에서 상세 설명)</summary>
+    <div style="padding: 0.5rem 0 0.5rem 1rem;">
+      <p>AI(LLM)가 뉴스·공시를 분석해 종목별 감성 점수를 자동 산출합니다.</p>
+      <p>캐시: <span class="badge badge-info">1시간 TTL</span></p>
+      <p>→ <a href="#intel">5장 인텔리전스 스코어 상세 설명</a></p>
+    </div>
+  </details>
+
+  <details>
+    <summary>🌍 Macro Score — VIX 시장 공포지수</summary>
+    <div style="padding: 0.5rem 0 0.5rem 1rem;">
+      <p><strong>데이터</strong>: CBOE VIX 지수 (yfinance, ^VIX)</p>
+      <p>급격한 점프 없이 연속적으로 변화하도록 구간별 선형 보간(piecewise-linear) 적용</p>
+      <table>
+        <thead><tr><th>VIX</th><th>점수</th><th>상태</th></tr></thead>
+        <tbody>
+          <tr><td>≤ 15</td><td>0.80</td><td>🟢 Calm (안정)</td></tr>
+          <tr><td>20</td><td>0.70</td><td>🟡 Caution (주의)</td></tr>
+          <tr><td>25</td><td>0.50</td><td>🟠 Elevated (경계)</td></tr>
+          <tr><td>≥ 35</td><td>0.15</td><td>🔴 Fear (공포)</td></tr>
+        </tbody>
+      </table>
+      <p>전 종목 공통값 / 캐시: <span class="badge badge-info">2시간 TTL</span></p>
+    </div>
+  </details>
+
+  <h3>복합 점수 계산식 (KRX 예시)</h3>
+  <div class="callout">
+    <code>
+      composite = Technical×0.30 + Fundamental×0.25 + Flow×0.20 + Intel×0.15 + Macro×0.10
+    </code>
+    <br><br>
+    예시: Tech=0.75, Fund=0.60, Flow=0.70, Intel=0.55, Macro=0.70<br>
+    → 0.75×0.30 + 0.60×0.25 + 0.70×0.20 + 0.55×0.15 + 0.70×0.10<br>
+    → 0.225 + 0.150 + 0.140 + 0.083 + 0.070 = <strong>0.668</strong> → 매수 추천 ✅
+  </div>
+</section>
+
+<!-- 3. 매수·매도 기준 -->
+<section class="guide-section" id="signals">
+  <h2>3. 매수 · 매도 판단 기준</h2>
+
+  <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1.5rem;">
+    <div class="callout success" style="flex:1; min-width:200px;">
+      <strong>🟢 매수 추천 (BUY)</strong><br>
+      복합 점수 <strong>≥ 0.65</strong> (65% 이상)<br>
+      + 포트폴리오 리스크 한도 내
+    </div>
+    <div class="callout warn" style="flex:1; min-width:200px;">
+      <strong>🟡 관망 (WATCH)</strong><br>
+      복합 점수 <strong>0.40 ~ 0.65</strong><br>
+      조건을 기다리는 후보군
+    </div>
+    <div class="callout danger" style="flex:1; min-width:200px;">
+      <strong>🔴 매도 추천 (SELL)</strong><br>
+      복합 점수 <strong>≤ 0.40</strong> (40% 이하)<br>
+      또는 Exit Score 기준 이하
+    </div>
+  </div>
+
+  <h3>포트폴리오 리스크 한도 (config/risk.yaml)</h3>
+  <table>
+    <tbody>
+      <tr><td>최대 보유 종목 수</td><td>20종목</td></tr>
+      <tr><td>단일 종목 최대 비중</td><td>20%</td></tr>
+      <tr><td>단일 섹터 최대 비중</td><td>30%</td></tr>
+      <tr><td>일일 최대 손실 한도</td><td>-3%</td></tr>
+    </tbody>
+  </table>
+
+  <h3>매도 타이밍 스코어 (Exit Scorer)</h3>
+  <p>보유 종목에 대해 별도로 매도 적정성을 평가합니다. 복합 점수와 별개입니다.</p>
+  <table>
+    <thead><tr><th>구성 요소</th><th>가중치</th></tr></thead>
+    <tbody>
+      <tr><td>추세 (Trend)</td><td>35%</td></tr>
+      <tr><td>모멘텀 (Momentum)</td><td>30%</td></tr>
+      <tr><td>트레일링 스탑</td><td>35%</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>Exit Score ≤ 0.25 → 매도 실행 신호</li>
+    <li>Exit Score 0.25~0.40 → 매도 경고</li>
+    <li>손절 기준: <strong>-5%</strong></li>
+    <li>목표 수익: <strong>+15%</strong></li>
+    <li>최소 보유일: 2일</li>
+  </ul>
+</section>
+
+<!-- 4. 실시간 모니터 -->
+<section class="guide-section" id="realtime">
+  <h2>4. 실시간 모니터 (Realtime Monitor)</h2>
+
+  <p>
+    일일 스캔이 "아침에 찍어둔 스냅샷"이라면,<br>
+    실시간 모니터는 <strong>장중 연속 감시자</strong>입니다.
+  </p>
+
+  <h3>운영 시간 (자동 시작/종료)</h3>
+  <table>
+    <thead><tr><th>시장</th><th>시작</th><th>종료</th></tr></thead>
+    <tbody>
+      <tr><td>KRX (한국)</td><td>평일 08:50 KST</td><td>평일 15:35 KST</td></tr>
+      <tr><td>US (미국)</td><td>평일 22:50 KST</td><td>익일 06:05 KST</td></tr>
+    </tbody>
+  </table>
+
+  <h3>동작 방식</h3>
+  <ol>
+    <li>KIS API로 현재가 수집 (실패 시 yfinance 대체)</li>
+    <li>RollingBuffer에 OHLCV 추가 (최대 200봉 유지)</li>
+    <li>검증된 기술적 전략 N개 각각 시그널 계산</li>
+    <li><strong>합의 전환(Consensus Flip) 감지</strong>: BUY→SELL 또는 SELL→BUY</li>
+    <li>합의 전환 시 Discord 알림 전송 + 즉시 재스코어링</li>
+  </ol>
+
+  <h3>합의(Consensus)란?</h3>
+  <div class="callout">
+    예: 검증된 전략 8개 중 6개 이상이 BUY 신호 → <span class="badge badge-buy">BUY 합의</span><br>
+    → 이후 5개 이하로 떨어지면 → <strong>합의 전환(Flip)</strong> 발생 → Discord 알림<br><br>
+    합의 전환 시 Technical Score를 근사값으로 즉시 갱신:
+    <ul>
+      <li>BUY 합의 → Technical Score = 0.75</li>
+      <li>SELL 합의 → Technical Score = 0.25</li>
+    </ul>
+  </div>
+
+  <p><strong>쿨다운</strong>: 동일 종목 30분 내 중복 알림 억제</p>
+
+  <p>수동 제어: <a href="/monitor">/monitor 페이지</a>에서 ON/OFF 가능</p>
+</section>
+
+<!-- 5. 인텔리전스 -->
+<section class="guide-section" id="intel">
+  <h2>5. 인텔리전스 스코어 (Intel Score)</h2>
+
+  <h3>인텔리전스란?</h3>
+  <p>
+    AI(LLM, Gemini)가 뉴스·공시 텍스트를 읽고 <strong>"이 뉴스가 해당 종목에 호재냐 악재냐"</strong>를
+    자동으로 판단해 점수를 내는 기능입니다.<br>
+    인간이 뉴스를 읽는 과정을 자동화한 것입니다.
+  </p>
+
+  <h3>인텔 스캔 주기</h3>
+  <table>
+    <thead><tr><th>시장</th><th>스캔 시간</th><th>횟수</th></tr></thead>
+    <tbody>
+      <tr><td>KRX</td><td>평일 09:00~15:00 매시 정각</td><td>하루 7회</td></tr>
+      <tr><td>US</td><td>평일 23:00~익일 06:00 매시 정각</td><td>하루 8회</td></tr>
+    </tbody>
+  </table>
+  <p>매 스캔 완료 직후 <strong>전 종목 자동 재스코어링</strong>이 실행됩니다.</p>
+
+  <h3>스캔 → 스코어 흐름</h3>
+  <ol>
+    <li>네이버 검색 API로 감시 종목 관련 최신 뉴스 수집</li>
+    <li>LLM이 각 뉴스 분석:
+      <ul>
+        <li>관련 종목 추출</li>
+        <li>감성 판단 (POSITIVE / NEGATIVE / NEUTRAL)</li>
+        <li>impact_score (0~1), confidence (0~1)</li>
+        <li>category (earnings / regulation / macro / technical 등)</li>
+      </ul>
+    </li>
+    <li>DB(<code>market_intel_issues</code>) 저장 → <a href="/intel">시장 인텔 페이지</a>에서 확인 가능</li>
+    <li><strong>IntelScorer</strong>가 종목별 점수 산출:
+      <ul>
+        <li>최근 7일 이슈 조회</li>
+        <li>시간 감쇠 적용: 0.85^(경과일수) — 오래된 뉴스는 가중치 자동 감소</li>
+        <li>카테고리별 과거 정확도 보정 — 틀린 카테고리는 신뢰도 낮춤</li>
+      </ul>
+    </li>
+  </ol>
+
+  <h3>정확도 피드백 루프</h3>
+  <div class="callout">
+    <strong>시스템이 스스로 학습합니다</strong><br><br>
+    매일 16:00 → IntelPriceTracker가 시그널 발생 종목의 당일 종가 기록<br>
+    예측 방향과 실제 가격 변동 비교 → <code>accuracy_score</code> DB 저장<br>
+    IntelScorer가 카테고리별 과거 정확도를 조회해 신뢰도 낮은 카테고리 가중치 자동 감소<br><br>
+    매주 일요일 09:00 → CorrelationReport가 스코어-수익률 Spearman 상관분석 결과를 Discord로 전송
+  </div>
+</section>
+
+<!-- 6. 자동 스케줄 -->
+<section class="guide-section" id="schedule">
+  <h2>6. 자동 스케줄 (전체 타임라인)</h2>
+
+  <h3>평일 타임라인</h3>
+  <table class="timeline-table">
+    <thead><tr><th>시간 (KST)</th><th>작업</th><th>설명</th></tr></thead>
+    <tbody>
+      <tr><td>00:05</td><td>DART 카운터 초기화</td><td>DART 일일 API 한도(10,000건) 리셋</td></tr>
+      <tr><td>06:00</td><td>DART 이벤트 캐시 갱신</td><td>실적 발표 일정 등 사전 캐시</td></tr>
+      <tr><td><strong>08:00</strong></td><td><strong>일일 스캔</strong></td><td>전 감시 종목 기술적 전략 합의 평가 + 5축 스코어 계산 → DB 저장</td></tr>
+      <tr><td>08:50</td><td>실시간 모니터 시작</td><td>KRX 장 시작 10분 전 자동 시작</td></tr>
+      <tr><td>09:00~15:00 (매시)</td><td><strong>인텔 스캔</strong></td><td>KRX 뉴스·공시 AI 분석 → Intel Score 갱신 → 전 종목 재스코어링</td></tr>
+      <tr><td>09:30</td><td>재스코어링</td><td>최신 캐시로 전 종목 복합 점수 재계산</td></tr>
+      <tr><td>11:30</td><td>재스코어링</td><td></td></tr>
+      <tr><td>13:30</td><td>재스코어링</td><td></td></tr>
+      <tr><td>15:30</td><td>재스코어링</td><td></td></tr>
+      <tr><td>15:35</td><td>실시간 모니터 종료</td><td>KRX 장 마감 후 자동 종료</td></tr>
+      <tr><td>16:00</td><td>인텔 가격 추적</td><td>시그널 발생 종목의 당일 종가 기록 → accuracy_score 계산</td></tr>
+      <tr><td><strong>16:10</strong></td><td><strong>수급 재스코어링</strong></td><td>Flow 캐시 강제 만료 → 당일 수급 데이터로 재계산</td></tr>
+      <tr><td>18:00</td><td>상관관계 로깅</td><td>인텔 시그널 vs 수익률 상관계수 DB 기록</td></tr>
+      <tr><td>19:00</td><td>저녁 성과 리포트</td><td>P&amp;L, 포지션 현황 Discord 전송</td></tr>
+      <tr><td>22:50</td><td>US 실시간 모니터 시작</td><td>미국 장 전 자동 시작</td></tr>
+      <tr><td>23:00~익일 06:00 (매시)</td><td><strong>US 인텔 스캔</strong></td><td>미국 뉴스 AI 분석 → Intel Score 갱신 → 재스코어링</td></tr>
+      <tr><td>익일 06:05</td><td>US 실시간 모니터 종료</td><td></td></tr>
+    </tbody>
+  </table>
+
+  <h3>주간 / 월간</h3>
+  <table>
+    <tbody>
+      <tr><td>매주 일요일 09:00</td><td>스코어-수익률 상관분석 리포트 → Discord</td></tr>
+      <tr><td>매주 일요일 22:00</td><td>YouTube 리서치 갱신 (신규 전략 발굴)</td></tr>
+      <tr><td>매월 1일 09:00</td><td>가중치 자동 최적화 (성과 기반)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 7. 재스코어링 -->
+<section class="guide-section" id="rescore">
+  <h2>7. 재스코어링 (Rescore) 시스템</h2>
+
+  <div class="callout">
+    <strong>왜 필요한가?</strong><br>
+    일일 스캔은 아침에 한 번만 실행됩니다. 하지만 수급·뉴스·VIX는 장중에도 계속 바뀝니다.<br>
+    재스코어링은 최신 캐시 데이터를 이용해 <strong>Technical을 제외한 4개 축(Fundamental/Flow/Intel/Macro)을 재계산</strong>하고
+    복합 점수를 갱신합니다.
+  </div>
+
+  <h3>재스코어링이 발생하는 4가지 경우</h3>
+  <table>
+    <thead><tr><th>트리거</th><th>시점</th><th>대상</th></tr></thead>
+    <tbody>
+      <tr><td>스케줄 재스코어링</td><td>09:30 / 11:30 / 13:30 / 15:30</td><td>오늘 스캔된 전 종목</td></tr>
+      <tr><td>인텔 스캔 완료 후</td><td>매시 인텔 스캔 직후</td><td>전 종목</td></tr>
+      <tr><td>수급 재스코어링</td><td>16:10 (Flow 캐시 강제 만료 후)</td><td>전 종목</td></tr>
+      <tr><td><strong>합의 전환 즉시</strong></td><td>실시간 모니터에서 Consensus Flip 감지 즉시</td><td><strong>해당 종목만</strong></td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    합의 전환 즉시 재스코어링은 장중 가장 빠른 업데이트입니다.<br>
+    실시간 모니터 → 전략 합의 BUY→SELL 전환 감지 → 해당 종목만 즉시 재계산 → 대시보드 반영
+  </p>
+</section>
+
+<!-- 8. Paper Trading -->
+<section class="guide-section" id="paper">
+  <h2>8. Paper Trading &amp; 성과 검증</h2>
+
+  <h3>Paper Trading이란?</h3>
+  <p>
+    실제 돈을 쓰지 않고 <strong>가상 매매를 시뮬레이션</strong>하는 기능입니다.<br>
+    시스템이 BUY 신호를 내면 가상으로 매수 기록하고, SELL 신호에 가상 매도합니다.
+  </p>
+  <div class="callout warn">
+    <strong>참고</strong>: <a href="/portfolio">포트폴리오</a>·<a href="/signals">신호 대시보드</a>에 "보유중"으로 표시되는 종목은
+    실제 계좌가 아닌 <strong>DB의 가상 포지션</strong>입니다. KIS API 실계좌 연동 시에만 실제 매매가 발생합니다.
+  </div>
+
+  <h3>성과 검증 흐름</h3>
+  <ol>
+    <li>BUY 신호 발생 → <code>signal_price</code> 기록 (시그널 당시 가격)</li>
+    <li>매일 16:00 <code>IntelPriceTracker</code> → 당일 종가 vs signal_price 비교 → <code>pnl_pct</code> 계산</li>
+    <li><code>scoring_results</code> ↔ <code>signal_performance</code> JOIN → 각 축별 Spearman 순위상관계수 계산</li>
+    <li>매주 일요일 → 주간 상관분석 리포트 Discord 전송</li>
+  </ol>
+
+  <h3>상관계수 해석</h3>
+  <table>
+    <thead><tr><th>Spearman r</th><th>의미</th></tr></thead>
+    <tbody>
+      <tr><td>0.3 이상</td><td>✅ 해당 축이 수익률과 양의 상관 → 가중치 유지 또는 확대</td></tr>
+      <tr><td>0.1 ~ 0.3</td><td>⚠️ 약한 상관 → 모니터링 필요</td></tr>
+      <tr><td>0.1 미만</td><td>❌ 상관 없음 → 가중치 축소 검토</td></tr>
+      <tr><td>음수</td><td>🚨 역효과 → 즉시 검토</td></tr>
+    </tbody>
+  </table>
+
+  <p>→ <a href="/performance">성과 분석 페이지</a>에서 실시간 확인 가능</p>
+</section>
+
+<!-- 9. 페이지 안내 -->
+<section class="guide-section" id="pages">
+  <h2>9. 대시보드 페이지 안내</h2>
+
+  <table>
+    <thead><tr><th>경로</th><th>페이지</th><th>주요 내용</th></tr></thead>
+    <tbody>
+      <tr><td><a href="/">/</a></td><td>홈</td><td>시스템 상태 요약</td></tr>
+      <tr><td><a href="/scoring">/scoring</a></td><td>스코어링 현황</td><td>전 종목 5축 점수 + 복합 점수 테이블</td></tr>
+      <tr><td><a href="/signals">/signals</a></td><td>매매 대시보드</td><td>매수 추천 / 관망 / 매도 추천 종목 목록</td></tr>
+      <tr><td><a href="/monitor">/monitor</a></td><td>실시간 모니터</td><td>모니터 ON/OFF, 실시간 시그널 스트림</td></tr>
+      <tr><td><a href="/intel">/intel</a></td><td>인텔리전스</td><td>AI 분석 뉴스 이슈 목록, 종목별 감성</td></tr>
+      <tr><td><a href="/performance">/performance</a></td><td>성과 분석</td><td>Paper Trading P&amp;L, Spearman 상관계수</td></tr>
+      <tr><td><a href="/portfolio">/portfolio</a></td><td>포트폴리오</td><td>가상 보유 포지션 현황</td></tr>
+      <tr><td><a href="/backtest">/backtest</a></td><td>백테스트</td><td>전략별 과거 수익률 검증</td></tr>
+      <tr><td><a href="/strategies">/strategies</a></td><td>전략 목록</td><td>기술적 전략 관리 (YAML 기반)</td></tr>
+      <tr><td><a href="/scanner">/scanner</a></td><td>일일 스캔</td><td>당일 스캔 결과 확인</td></tr>
+      <tr><td><a href="/discovery">/discovery</a></td><td>종목 발굴</td><td>신규 유망 종목 스캔 결과</td></tr>
+      <tr><td><a href="/guide">/guide</a></td><td>매매 가이드</td><td>이 페이지</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<hr>
+<p><small>⚠️ 이 시스템의 매매 신호는 <strong>투자 참고용</strong>입니다. 실제 투자 결정은 본인 판단으로 하세요. 과거 성과가 미래 수익을 보장하지 않습니다.</small></p>
+
+{% endblock %}

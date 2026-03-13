@@ -52,10 +52,35 @@ def _run_intel_scan(scan_type: str = "pre_market"):
         scanner = MarketIntelScanner()
         result = scanner.scan(scan_type)
         logger.info(f"Intel scan result: {result}")
+        _run_rescore()  # 인텔 스캔 직후 전 종목 재스코어링
     except Exception as e:
         logger.error(f"Intel scan job failed: {e}", exc_info=True)
     finally:
         gc.collect()
+
+
+def _run_rescore():
+    """통합 재스코어링: 모든 지표 최신 캐시로 전 종목 재계산."""
+    try:
+        from pipeline.rescore import run_rescore
+        updated = run_rescore()
+        if updated > 0:
+            logger.info(f"Rescore: {updated} tickers updated")
+    except Exception as e:
+        logger.error(f"Rescore failed: {e}")
+    finally:
+        gc.collect()
+
+
+def _run_flow_and_rescore():
+    """장 마감 후 flow_cache 무효화 → 전 종목 재스코어링."""
+    try:
+        from scoring.data_collectors import _flow_cache
+        _flow_cache._store.clear()  # 강제 만료
+        logger.info("Flow cache cleared for post-market rescore")
+        _run_rescore()
+    except Exception as e:
+        logger.error(f"Flow rescore failed: {e}")
 
 
 def _run_intel_price_tracker():
@@ -299,6 +324,25 @@ def start_scheduler():
         name="Weekly Score-Return Correlation Report",
     )
     logger.info("Scheduled weekly correlation report: Sunday 09:00 KST")
+
+    # 매크로 재스코어링 (09:30/11:30/13:30/15:30 KST, 평일)
+    for hour in ["9", "11", "13", "15"]:
+        scheduler.add_job(
+            _run_rescore,
+            CronTrigger(hour=hour, minute="30", day_of_week="mon-fri", timezone=tz),
+            id=f"rescore_{hour}30",
+            name=f"Rescore {hour}:30",
+        )
+    logger.info("Scheduled rescore: 09:30/11:30/13:30/15:30 KST (weekdays)")
+
+    # 수급 장 마감 재스코어링 (16:10 KST, flow_cache 무효화 후)
+    scheduler.add_job(
+        _run_flow_and_rescore,
+        CronTrigger(hour="16", minute="10", day_of_week="mon-fri", timezone=tz),
+        id="flow_rescore",
+        name="Post-Market Flow Rescore",
+    )
+    logger.info("Scheduled flow rescore: 16:10 KST (weekdays)")
 
     # On startup: if currently within market hours, auto-start monitor
     _auto_start_monitor_if_market_open()

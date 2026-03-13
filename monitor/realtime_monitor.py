@@ -24,6 +24,10 @@ logger = logging.getLogger("money_mani.monitor")
 
 KST = ZoneInfo("Asia/Seoul")
 
+_NYSE_TICKERS = {"BRK.B", "JNJ", "V", "WMT", "JPM", "PG", "UNH", "HD",
+                 "BAC", "DIS", "KO", "PFE", "MRK", "VZ", "T", "ABBV",
+                 "CVX", "XOM", "BA", "GE", "IBM", "CAT", "MMM", "GS"}
+
 
 @dataclass
 class TickerContext:
@@ -105,6 +109,7 @@ class RealtimeMonitor:
             return
 
         self._seed_buffers()
+        self.tracker.preload_states()
         self._send_startup_notification()
         self._run_loop()
 
@@ -127,15 +132,10 @@ class RealtimeMonitor:
             self.ticker_map[ticker] = TickerContext(
                 ticker=ticker, name=ticker, market="KRX", mode="WATCH")
 
-        # Common NYSE-listed tickers for exchange resolution
-        nyse_tickers = {"BRK.B", "JNJ", "V", "WMT", "JPM", "PG", "UNH", "HD",
-                        "BAC", "DIS", "KO", "PFE", "MRK", "VZ", "T", "ABBV",
-                        "CVX", "XOM", "BA", "GE", "IBM", "CAT", "MMM", "GS"}
-
         for ticker in us_watch:
             if self.market_filter and self.market_filter != "US":
                 continue
-            exchange = "NYSE" if ticker in nyse_tickers else "NASDAQ"
+            exchange = "NYSE" if ticker in _NYSE_TICKERS else "NASDAQ"
             self.ticker_map[ticker] = TickerContext(
                 ticker=ticker, name=ticker, market="US", mode="WATCH",
                 exchange=exchange)
@@ -171,13 +171,10 @@ class RealtimeMonitor:
                         market="KRX", mode="WATCH")
                     added += 1
 
-            nyse_tickers_set = {"BRK.B", "JNJ", "V", "WMT", "JPM", "PG", "UNH", "HD",
-                                "BAC", "DIS", "KO", "PFE", "MRK", "VZ", "T", "ABBV",
-                                "CVX", "XOM", "BA", "GE", "IBM", "CAT", "MMM", "GS"}
             for ticker_info in intel_tickers.get("US", []):
                 ticker = ticker_info["ticker"]
                 if ticker not in self.ticker_map and (not self.market_filter or self.market_filter == "US"):
-                    exchange = "NYSE" if ticker in nyse_tickers_set else "NASDAQ"
+                    exchange = "NYSE" if ticker in _NYSE_TICKERS else "NASDAQ"
                     self.ticker_map[ticker] = TickerContext(
                         ticker=ticker, name=ticker_info["name"],
                         market="US", mode="WATCH", exchange=exchange)
@@ -290,7 +287,7 @@ class RealtimeMonitor:
 
         to_remove = []
 
-        for ticker, ctx in self.ticker_map.items():
+        for ticker, ctx in list(self.ticker_map.items()):
             if ctx.market not in active_markets:
                 continue
 
@@ -402,6 +399,14 @@ class RealtimeMonitor:
         hold_tag = " [HOLD]" if ctx.mode == "HOLD" else ""
         logger.info(f"ALERT: {action} {ctx.name}({ticker}) @ {last_row['Close']:,.0f}{currency} "
                     f"[{strategy.name}]{hold_tag}")
+
+        # consensus 전환 → 해당 종목 즉시 재스코어링
+        try:
+            from pipeline.rescore import rescore_ticker_by_signal
+            rescore_ticker_by_signal(ticker, ctx.market, signal_type)
+            logger.info(f"Consensus rescore done: {ticker} {signal_type}")
+        except Exception as e:
+            logger.warning(f"Consensus rescore failed for {ticker}: {e}")
 
     def stop(self):
         """Gracefully stop the monitor."""

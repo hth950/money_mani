@@ -13,7 +13,7 @@ logger = logging.getLogger("money_mani.scoring.data_collectors")
 # Module-level TTL caches
 _fundamental_cache = TTLCache(ttl=4 * 3600, maxsize=256)
 _flow_cache = TTLCache(ttl=4 * 3600, maxsize=256)
-_macro_cache = TTLCache(ttl=24 * 3600, maxsize=4)
+_macro_cache = TTLCache(ttl=2 * 3600, maxsize=4)
 
 # Sector cache: refreshed once per day
 _sector_cache: dict = {}

@@ -1,487 +1,565 @@
-# Money Mani - 주식 투자 리서치 & 자동 알림 파이프라인
+# Money Mani — 주식 자동 스코어링 & 매매 신호 시스템
 
-YouTube에서 주식 투자 전략 영상을 검색하고, AI로 분석하여 구체적인 매매 전략을 추출한 뒤, 과거 데이터로 백테스트하고, 매일 아침 매매 시그널을 Discord로 알려주는 자동화 파이프라인입니다.
-
-## 목표
-
-1. **전략 발굴 자동화** - YouTube의 투자 전략 영상을 자동 검색하고 AI(NotebookLM + OpenRouter LLM)로 분석하여 코드화 가능한 매매 전략을 추출
-2. **백테스트 검증** - 추출된 전략을 과거 주가 데이터로 백테스트하여 실제 수익성을 검증
-3. **일일 시그널 알림** - 검증된 전략을 기반으로 매일 아침 한국/미국 주식의 매매 시그널을 Discord로 자동 전송
-
-## 전체 흐름
-
-```
-[YouTube 검색] → [LLM 영상 필터링] → [NotebookLM 분석] → [LLM 전략 추출/검증]
-                                           ↓ 실패 시
-                                      [자막 직접 추출]
-                                           ↓
-                                  [Strategy YAML 저장]
-                                           ↓
-                            [과거 데이터 조회 (pykrx/yfinance)]
-                                           ↓
-                              [pandas_ta 지표 + 시그널 생성]
-                                           ↓
-                            [backtesting.py 백테스트 실행]
-                                           ↓
-                              [LLM 한국어 결과 해석]
-                                           ↓
-                        [Discord 알림] + [Email 백업] + [콘솔 출력]
-```
+OCI 클라우드에 상시 운영 중인 한국/미국 주식 자동화 파이프라인입니다.
+5축 복합 스코어로 종목을 평가하고, 실시간 모니터가 매매 신호를 Discord로 알림합니다.
 
 ---
 
-## 설치 방법
+## 목차
 
-### 사전 요구사항
+1. [시스템 개요](#1-시스템-개요)
+2. [5축 복합 스코어링](#2-5축-복합-스코어링)
+3. [매수 · 매도 판단 기준](#3-매수--매도-판단-기준)
+4. [실시간 모니터 (Realtime Monitor)](#4-실시간-모니터-realtime-monitor)
+5. [인텔리전스 스코어 (Intel Score)](#5-인텔리전스-스코어-intel-score)
+6. [자동 스케줄 (전체 타임라인)](#6-자동-스케줄-전체-타임라인)
+7. [재스코어링 (Rescore) 시스템](#7-재스코어링-rescore-시스템)
+8. [웹 대시보드 페이지 안내](#8-웹-대시보드-페이지-안내)
+9. [Paper Trading & 성과 검증](#9-paper-trading--성과-검증)
+10. [데이터 소스 & 캐시 전략](#10-데이터-소스--캐시-전략)
+11. [프로젝트 구조](#11-프로젝트-구조)
+12. [서버 배포 & 운영](#12-서버-배포--운영)
+13. [설정 커스터마이징](#13-설정-커스터마이징)
+14. [주의사항](#14-주의사항)
 
-- Python 3.12
-- Python 3.14 (NotebookLM 연동용, 선택사항)
+---
 
-### 1. 가상환경 생성 및 패키지 설치
+## 1. 시스템 개요
 
-```bash
-py -3.12 -m venv .venv
-source .venv/Scripts/activate    # Windows Git Bash
-# 또는
-.venv\Scripts\activate           # Windows CMD
-
-pip install -r requirements.txt
+```
+[일일 스캔 08:00]          [실시간 모니터 08:50~15:35]
+    ↓                              ↓
+기술적 전략 합의             60초마다 가격 폴링
+(Multi-Strategy Consensus)   → 기술적 시그널 감지
+    ↓                              ↓
+[5축 복합 스코어 계산]       [합의 전환 시 즉시 재스코어링]
+ Technical  30%                    ↓
+ Fundamental 25%          [Discord 매수/매도 알림]
+ Flow        20%
+ Intel       15%          [인텔 스캔 09:00~15:00, 매시]
+ Macro       10%           AI가 뉴스/공시 분석 → Intel Score 갱신
+    ↓                              ↓
+[scoring_results DB 저장]   [재스코어링 09:30/11:30/13:30/15:30]
+    ↓
+[웹 대시보드 실시간 표시]
+http://168.107.42.41:8000
 ```
 
-> pykrx 설치 시 `pkg_resources` 에러가 나면:
-> ```bash
-> pip install "setuptools<80" --force-reinstall
-> ```
+**핵심 원칙**
+- 단일 전략이 아닌 **여러 전략의 합의(Consensus)** 를 기술적 점수로 환산
+- 펀더멘탈·수급·뉴스·매크로를 더해 **5개 축 가중 합산** → 복합 점수 0~1
+- 복합 점수가 **0.65 이상이면 매수 추천**, 0.40 이하면 매도 추천
+- 시장이 열려있는 동안 실시간 모니터가 **60초 주기**로 조건 체크
 
-### 2. 환경변수 설정
+---
 
-프로젝트 루트에 `.env` 파일을 생성합니다:
+## 2. 5축 복합 스코어링
 
-```env
-OPENROUTER_KEY=sk-or-v1-xxxxxxxxxxxx
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxx/xxxx
+### 가중치 (config/scoring.yaml)
+
+| 축 | KRX (한국) | US (미국) | 의미 |
+|----|-----------|----------|------|
+| **Technical** | 30% | 45% | 기술적 전략 합의 비율 |
+| **Fundamental** | 25% | 20% | 재무 건전성 (PER/PBR/ROE/배당) |
+| **Flow** | 20% | 0% | 외국인·기관 수급 |
+| **Intel** | 15% | 25% | AI 뉴스·공시 감성 분석 |
+| **Macro** | 10% | 10% | VIX 기반 시장 공포지수 |
+
+> US 주식은 수급(Flow) 데이터가 없어 Technical·Intel 비중이 높습니다.
+
+### 각 축 상세
+
+#### Technical Score (기술적 점수)
+- **계산**: 매수 신호를 낸 전략 수 ÷ 전체 전략 수
+- **예시**: 검증된 전략 8개 중 6개가 BUY 신호 → Technical Score = 0.75
+- **전략 종류**: 골든크로스, RSI 반등, MACD 상향돌파, 볼린저밴드 등 `config/strategies/` 하위 YAML 정의
+- **특징**: 일일 스캔 결과이므로 장중에는 실시간 모니터가 합의 전환 시 즉시 갱신
+
+#### Fundamental Score (펀더멘탈 점수)
+- **데이터 소스**:
+  - 한국: **DART 전자공시 API** (연결재무제표 우선, 별도재무제표 폴백)
+  - 미국: **yfinance** (P/E, P/B, ROE, 배당수익률)
+- **평가 항목**: PER, PBR, ROE, 배당수익률
+- **섹터 상대 평가**: 업종 평균 대비 우열 판단 (Technology PER 기준 35배, 금융 12배 등 섹터별 상이)
+- **캐시**: 4시간 TTL (API 호출 최소화)
+
+#### Flow Score (수급 점수, KRX 전용)
+- **데이터 소스**: 네이버 금융 스크래퍼 (pykrx가 OCI에서 차단될 경우 자동 fallback)
+- **평가 항목**:
+  - 연속 순매수 일수 (Streak): 20%
+  - 순매수 금액 절대값 (Amount): 35%
+  - 외국인/기관 합산 비율 (Ratio): 25%
+  - 외국인-기관 동반 매수 시너지 (Synergy): 20%
+- **조회 기간**: 14일
+- **캐시**: 4시간 TTL (장 마감 후 16:10에 강제 무효화)
+
+#### Intel Score (인텔리전스 점수)
+- **역할**: AI가 뉴스·공시를 읽고 감성 점수 산출 → 스코어링에 반영
+- **자세한 내용**: [5장 인텔리전스 스코어](#5-인텔리전스-스코어-intel-score) 참고
+- **캐시**: 1시간 TTL
+
+#### Macro Score (매크로 점수)
+- **데이터**: **VIX** (미국 변동성 지수, CBOE Volatility Index)
+- **계산 방식**: Piecewise-linear 보간 (급격한 점프 없이 연속적으로 변화)
+
+| VIX 수준 | 점수 | 상태 |
+|---------|------|------|
+| ≤ 15 | 0.80 | Calm (안정) |
+| 20 | 0.70 | Caution (주의) |
+| 25 | 0.50 | Elevated (경계) |
+| ≥ 35 | 0.15 | Fear (공포) |
+
+- **캐시**: 2시간 TTL (전 종목 공통값)
+
+### 복합 점수 계산
+
+```
+composite_score = Technical × 0.30
+               + Fundamental × 0.25
+               + Flow × 0.20
+               + Intel × 0.15
+               + Macro × 0.10
 ```
 
-| 변수 | 설명 | 필수 |
+결과는 0.0 ~ 1.0 사이 값으로 DB(`scoring_results`)에 저장됩니다.
+
+---
+
+## 3. 매수 · 매도 판단 기준
+
+### 매수 추천 (BUY)
+- 복합 점수 **≥ 0.65** (65% 이상)
+- 포트폴리오 리스크 한도 내 (최대 20 종목, 단일 종목 20%, 섹터 30%)
+
+### 관망 (WATCH)
+- 복합 점수 0.40 ~ 0.65 사이
+- 조건을 기다리는 후보군
+
+### 매도 추천 (SELL)
+- 복합 점수 **≤ 0.40** (40% 이하)
+- 또는 매도 타이밍 스코어가 기준 이하일 때
+
+### 매도 타이밍 스코어 (Exit Scorer)
+보유 종목에 대해 별도로 매도 적정성을 평가합니다.
+
+| 구성 요소 | 가중치 |
+|----------|--------|
+| 추세 (Trend) | 35% |
+| 모멘텀 (Momentum) | 30% |
+| 트레일링 스탑 | 35% |
+
+- 매도 신호: Exit Score ≤ 0.25
+- 매도 경고: Exit Score 0.25 ~ 0.40
+- 손절 기준: -5% (stop_loss_pct)
+- 목표 수익: +15% (take_profit_pct)
+- 최소 보유일: 2일
+
+---
+
+## 4. 실시간 모니터 (Realtime Monitor)
+
+### 역할
+일일 스캔이 "아침에 찍어둔 스냅샷"이라면, 실시간 모니터는 **장중 연속 감시자**입니다.
+여러 기술적 전략을 60초마다 평가해 합의(Consensus)가 전환되면 즉시 Discord 알림을 보냅니다.
+
+### 운영 시간 (자동 시작/종료)
+
+| 시장 | 시작 | 종료 |
 |------|------|------|
-| `OPENROUTER_KEY` | [OpenRouter](https://openrouter.ai/) API 키 | O |
-| `DISCORD_WEBHOOK_URL` | Discord 채널 Webhook URL | O |
-| `EMAIL_SENDER` | Gmail 발신 주소 | X |
-| `EMAIL_APP_PASSWORD` | Gmail 앱 비밀번호 | X |
+| KRX (한국) | 평일 **08:50 KST** | 평일 **15:35 KST** |
+| US (미국) | 평일 **22:50 KST** | 익일 **06:05 KST** |
 
-### 3. NotebookLM 설정 (선택사항)
+스케줄러가 자동으로 시작/종료합니다. 수동으로 조작하려면:
 
-NotebookLM 분석 기능을 사용하려면 Python 3.14에 `notebooklm-py`를 설치해야 합니다:
-
-```bash
-py -3.14 -m pip install notebooklm-py
-py -3.14 -m notebooklm login
+```
+POST http://168.107.42.41:8000/api/monitor/start
+POST http://168.107.42.41:8000/api/monitor/stop
 ```
 
-NotebookLM이 설정되지 않으면 자막 직접 추출 + LLM 분석으로 자동 fallback됩니다.
+### 동작 흐름
+
+```
+[60초마다]
+  현재가 수집 (KIS API → yfinance fallback)
+      ↓
+  RollingBuffer에 OHLCV 추가 (최대 200봉)
+      ↓
+  검증된 전략 N개 각각 시그널 계산
+      ↓
+  합의 비율 변화 감지
+      ↓ (합의 전환: SELL→BUY, BUY→SELL, 임계값 돌파)
+  Discord 알림 전송
+  + 즉시 재스코어링 (composite_score 갱신)
+```
+
+### 합의(Consensus)란?
+- 8개 전략 중 6개 이상 BUY 신호 → **BUY 합의**
+- BUY 합의에서 5개 이하로 떨어지면 → **합의 전환(Flip)** 발생, 알림 발송
+- 합의 전환 시 `technical_score`를 BUY=0.75, SELL=0.25로 근사하여 즉시 재스코어링
+
+### 쿨다운
+동일 종목에 대해 **30분** 내 중복 알림 억제 (SignalTracker)
 
 ---
 
-## 실행 방법
+## 5. 인텔리전스 스코어 (Intel Score)
 
-가상환경 활성화 후 실행합니다:
+### 인텔리전스란?
+AI(LLM)가 뉴스·공시·시황 텍스트를 분석하여 **종목별 감성 점수**를 자동 산출하는 기능입니다.
+인간이 뉴스를 읽고 "이 재료가 호재냐 악재냐"를 판단하는 과정을 자동화합니다.
 
-```bash
-source .venv/Scripts/activate
-```
+### 인텔 스캔 주기
 
-### 전략 목록 확인
+| 시장 | 스캔 시간 | 횟수 |
+|------|----------|------|
+| KRX | 평일 09:00~15:00 매시 정각 | 하루 7회 |
+| US | 평일 23:00~익일 06:00 매시 정각 | 하루 8회 |
 
-```bash
-python main.py strategies
-```
+매 스캔 후 **전 종목 재스코어링**이 자동 실행됩니다.
 
-저장된 전략 목록을 출력합니다. 기본으로 `Golden Cross MA(20,60)` 전략이 포함되어 있습니다.
-
-```
-Strategies (1):
-  [V] Golden Cross MA(20,60) (crossover) - validated
-```
-
-상태 아이콘: `V`=검증됨, `~`=테스트중, `o`=초안, `X`=폐기
-
-### 백테스트 실행
-
-특정 전략을 과거 데이터로 백테스트합니다.
-
-```bash
-# 삼성전자 (005930)에 골든크로스 전략 백테스트
-python main.py backtest -s example_golden_cross -t 005930
-
-# 여러 종목 동시 백테스트
-python main.py backtest -s example_golden_cross -t 005930,000660,035420
-
-# 미국 주식 백테스트
-python main.py backtest -s example_golden_cross -t AAPL -m US
-```
-
-출력 예시:
+### 스캔 → 스코어 흐름
 
 ```
-==================================================
-[백테스트 결과] Golden Cross MA(20,60)
-종목: 005930   기간: 2020-01-02~2026-03-07
-==================================================
-  총 수익률    : +1.34%
-  샤프 비율    : 0.84
-  최대 낙폭    : -15.23%
-  승률         : 41.67%
-  거래 횟수    : 12회
-  유효성 검증  : 통과
-==================================================
+[MarketIntelScanner 실행]
+    ↓
+Naver 검색 API로 최신 뉴스 수집
+    ↓
+LLM(Gemini)이 각 뉴스를 읽고:
+  - 관련 종목 추출
+  - 감성 판단 (POSITIVE/NEGATIVE/NEUTRAL)
+  - impact_score (0~1), confidence (0~1)
+  - category (earnings / regulation / macro / technical ...)
+    ↓
+DB(market_intel_issues) 저장
+    ↓
+[IntelScorer.score(ticker)]
+  최근 7일 해당 종목 이슈 조회
+  시간 감쇠 적용: 0.85^(경과일수)  ← 오래된 뉴스는 가중치 감소
+  카테고리별 과거 정확도 보정
+    ↓
+  Intel Score 0.0~1.0 반환
 ```
 
-### YouTube 리서치
-
-YouTube에서 주식 전략 영상을 검색합니다.
-
-```bash
-# 특정 키워드로 검색
-python main.py research -q "주식 골든크로스 전략"
-
-# 최대 영상 수 지정
-python main.py research -q "주식 단타 매매법" -n 20
-
-# 기본 검색어 사용 (config/search_queries.yaml에 정의된 쿼리)
-python main.py research
-```
-
-LLM이 영상의 품질을 1~10점으로 채점하고, 어그로/클릭베이트를 자동 필터링합니다.
-
-### NotebookLM 분석
-
-검색된 영상을 NotebookLM으로 심층 분석합니다.
-
-```bash
-python main.py analyze -q "주식 이동평균선 전략"
-```
-
-NotebookLM에 영상 URL을 소스로 추가하고, AI가 투자 전략을 요약/추출합니다. NotebookLM 연결 실패 시 자막을 직접 추출하여 LLM으로 분석합니다.
-
-### 일일 스캔
-
-검증된 전략을 기반으로 오늘의 매매 시그널을 확인합니다.
-
-```bash
-python main.py scan
-```
-
-동작 순서:
-1. 오늘이 거래일인지 확인 (KRX: 월~금 + 공휴일 제외, NYSE: 동일)
-2. `validated` 상태인 전략만 로드
-3. 설정된 감시 종목의 최신 데이터로 시그널 계산
-4. 시그널 발생 시 Discord로 알림 전송
-
-### 스케줄러 (자동 실행)
-
-매일 자동으로 스캔을 실행합니다.
-
-```bash
-python main.py schedule
-```
-
-| 작업 | 실행 시간 | 설명 |
-|------|-----------|------|
-| 일일 스캔 | 월~금 08:00 KST | 장 시작 전 매매 시그널 체크 |
-| 리서치 갱신 | 매주 일 22:00 KST | 새 YouTube 영상 검색 + 전략 추출 |
-
-`Ctrl+C`로 종료합니다. 서버에서 백그라운드로 실행하려면:
-
-```bash
-nohup python main.py schedule > output/logs/scheduler.log 2>&1 &
-```
-
-### 전체 파이프라인
-
-리서치 → 분석 → 전략 추출 → 백테스트를 한 번에 실행합니다.
-
-```bash
-# 특정 검색어로 전체 파이프라인
-python main.py full -q "주식 단타 매매 전략"
-
-# 기본 검색어로 전체 파이프라인
-python main.py full
-```
+### 정확도 피드백 루프
+- 인텔 시그널 후 실제 주가 변동을 `IntelPriceTracker`가 추적 (매일 16:00)
+- 예측 방향 일치 여부를 `accuracy_score`로 DB에 기록
+- IntelScorer가 카테고리별 과거 정확도를 조회해 신뢰도 낮은 카테고리 가중치 감소
+- 매주 일요일 09:00 `CorrelationReport`가 스코어-수익률 Spearman 상관분석 결과를 Discord로 전송
 
 ---
 
-## 프로젝트 구조
+## 6. 자동 스케줄 (전체 타임라인)
+
+### 평일 (한국 장 기준)
+
+| 시간 (KST) | 작업 | 설명 |
+|-----------|------|------|
+| 00:05 | DART 카운터 초기화 | DART 일일 API 한도(10,000건) 카운터 리셋 |
+| 06:00 | DART 이벤트 캐시 갱신 | 실적 발표 일정 등 사전 캐시 |
+| 08:00 | **일일 스캔** | 전 감시 종목 기술적 전략 합의 평가 + 5축 스코어 계산 |
+| 08:50 | 실시간 모니터 시작 | KRX 장 시작 10분 전 자동 시작 |
+| 09:00~15:00 | **인텔 스캔** (매시) | KRX 뉴스·공시 AI 분석 → Intel Score 갱신 |
+| 09:30 | 재스코어링 | 최신 캐시로 전 종목 복합 점수 재계산 |
+| 11:30 | 재스코어링 | |
+| 13:30 | 재스코어링 | |
+| 15:30 | 재스코어링 | |
+| 15:35 | 실시간 모니터 종료 | KRX 장 마감 후 자동 종료 |
+| 16:00 | 인텔 가격 추적 | 시그널 발생 종목의 당일 종가 기록 |
+| 16:10 | **수급 재스코어링** | Flow 캐시 강제 만료 → 당일 수급 데이터로 재계산 |
+| 18:00 | 상관관계 로깅 | 인텔 시그널 vs 수익률 상관계수 기록 |
+| 19:00 | **저녁 성과 리포트** | P&L, 포지션 현황, 분석 결과 Discord 전송 |
+| 22:50 | US 실시간 모니터 시작 | 미국 장 전 자동 시작 |
+| 23:00~익일 06:00 | **US 인텔 스캔** (매시) | 미국 뉴스 AI 분석 |
+
+### 익일 새벽 (미국 장)
+
+| 시간 (KST) | 작업 |
+|-----------|------|
+| 00:00~06:00 | US 인텔 스캔 계속 |
+| 06:05 | US 실시간 모니터 종료 |
+
+### 주간/월간
+
+| 주기 | 시간 | 작업 |
+|------|------|------|
+| 매주 일요일 09:00 | | 스코어-수익률 상관분석 리포트 → Discord |
+| 매주 일요일 22:00 | | YouTube 리서치 갱신 (신규 전략 발굴) |
+| 매월 1일 09:00 | | 가중치 자동 최적화 (성과 기반) |
+
+---
+
+## 7. 재스코어링 (Rescore) 시스템
+
+### 왜 필요한가?
+일일 스캔은 아침에 한 번만 실행됩니다. 하지만 수급·뉴스·VIX는 장중에도 바뀝니다.
+재스코어링은 최신 캐시 데이터를 이용해 **Technical을 제외한 4개 축**을 재계산하고 복합 점수를 갱신합니다.
+
+### 트리거 종류
+
+| 트리거 | 시점 | 대상 |
+|--------|------|------|
+| 스케줄 재스코어링 | 09:30 / 11:30 / 13:30 / 15:30 | 오늘 스캔된 전 종목 |
+| 인텔 스캔 후 | 매시 인텔 스캔 완료 직후 | 전 종목 |
+| 수급 재스코어링 | 16:10 (Flow 캐시 만료 후) | 전 종목 |
+| 합의 전환 시 | 실시간 모니터에서 Consensus Flip 감지 즉시 | 해당 종목만 |
+
+### 합의 전환 시 재스코어링 특이사항
+실시간 모니터가 BUY ↔ SELL 합의 전환을 감지하면 `rescore_ticker_by_signal()`이 호출됩니다.
+- Technical Score: BUY 신호 → 0.75, SELL → 0.25, HOLD → 0.50 (근사값 사용)
+- 나머지 4축: 최신 캐시에서 즉시 재계산
+
+---
+
+## 8. 웹 대시보드 페이지 안내
+
+서버 주소: **http://168.107.42.41:8000**
+
+| 경로 | 페이지 | 내용 |
+|------|--------|------|
+| `/` | 홈 | 시스템 상태 요약 |
+| `/scoring` | **스코어링 현황** | 전 종목 5축 점수 + 복합 점수 테이블 |
+| `/signals` | **매매 대시보드** | 매수 추천 / 관망 / 매도 추천 종목 목록 |
+| `/monitor` | **실시간 모니터** | 모니터 ON/OFF, 실시간 시그널 스트림 |
+| `/market-intel` | **인텔리전스** | AI 분석 뉴스 이슈 목록, 종목별 감성 |
+| `/performance` | **성과 분석** | Paper Trading P&L, Spearman 상관계수 |
+| `/portfolio` | **포트폴리오** | 가상 보유 포지션 |
+| `/backtest` | **백테스트** | 전략별 과거 수익률 검증 |
+| `/strategies` | **전략 목록** | 등록된 기술적 전략 관리 |
+| `/risk` | **리스크 관리** | 포트폴리오 한도 설정 현황 |
+| `/discovery` | **종목 발굴** | 신규 유망 종목 스캔 결과 |
+
+---
+
+## 9. Paper Trading & 성과 검증
+
+### Paper Trading이란?
+실제 돈을 쓰지 않고 **가상 매매**를 시뮬레이션하는 기능입니다.
+시스템이 BUY 신호를 내면 가상으로 매수하고, SELL 신호에 가상 매도합니다.
+
+- 보유 종목이 `/portfolio` 및 `/signals` 페이지에 "보유중"으로 표시됩니다
+- 실제 계좌 잔고가 아니며, DB의 `paper_positions` 테이블에 기록됩니다
+- KIS API를 연결하면 실제 계좌 연동도 가능 (현재는 Paper Trading 모드)
+
+### 성과 검증 흐름
+
+```
+[BUY 신호 발생]
+    ↓
+signal_price 기록 (시그널 당시 가격)
+    ↓
+[16:00 IntelPriceTracker 실행]
+    ↓
+당일 종가 vs signal_price 비교 → pnl_pct 계산
+    ↓
+[scoring_results ↔ signal_performance JOIN]
+    ↓
+[일요일 09:00 CorrelationReport]
+각 축별 Spearman 순위상관계수 계산
+→ |r| < 0.1이면 가중치 재조정 필요 경고
+→ Discord로 주간 리포트 전송
+```
+
+### 상관계수 해석
+
+| Spearman r | 의미 |
+|-----------|------|
+| 0.3 이상 | 해당 축이 수익률과 양의 상관 (가중치 유지 또는 확대) |
+| 0.1 ~ 0.3 | 약한 상관 (모니터링 필요) |
+| 0.1 미만 | 상관 없음 (가중치 축소 검토) |
+| 음수 | 역효과 (즉시 검토) |
+
+---
+
+## 10. 데이터 소스 & 캐시 전략
+
+### 데이터 소스
+
+| 데이터 | 소스 | 비고 |
+|--------|------|------|
+| 한국 주가 (OHLCV) | KIS API → yfinance fallback | 실시간 |
+| 한국 재무제표 | **DART 전자공시 API** | 연결재무제표 우선 |
+| 한국 수급 (외국인/기관) | **네이버 금융 스크래퍼** → pykrx fallback | 14일 |
+| 미국 주가·재무 | yfinance | 실시간/분기 |
+| VIX (매크로) | yfinance (`^VIX`) | 일별 |
+| 뉴스 (인텔) | **네이버 검색 API** | 매시 |
+
+> OCI 클라우드에서 pykrx가 KRX 서버 IP 차단을 당하는 문제를 우회하기 위해
+> DART API(재무)와 네이버 스크래퍼(수급)를 primary 소스로 사용합니다.
+
+### TTL 캐시 전략
+
+| 캐시 | TTL | 비고 |
+|------|-----|------|
+| Fundamental | 4시간 | DART API 호출 최소화 |
+| Flow (수급) | 4시간 | 장 마감 후 16:10에 강제 만료 |
+| Macro (VIX) | 2시간 | 전 종목 공통값 |
+| Intel | 1시간 | DB 조회 캐시 |
+| 섹터 맵 | 1일 | FDR 전체 종목 리스트 |
+| DART corp_code | 24시간 | corpCode.xml 매핑 |
+
+캐시는 module-level `TTLCache` 인스턴스로 관리되어 스케줄러가 인스턴스를 재생성해도 캐시가 유지됩니다.
+
+---
+
+## 11. 프로젝트 구조
 
 ```
 money_mani/
-├── main.py                          # CLI 진입점 (7개 서브커맨드)
-├── requirements.txt                 # Python 패키지 목록
-├── .env                             # 환경변수 (API 키, Webhook URL)
-│
 ├── config/
-│   ├── settings.yaml                # 마스터 설정 파일
-│   ├── search_queries.yaml          # YouTube 검색 쿼리 목록
-│   └── strategies/
-│       └── example_golden_cross.yaml  # 전략 정의 파일 (YAML)
+│   ├── scoring.yaml          # 5축 가중치, 매수/매도 임계값, 섹터 벤치마크
+│   ├── risk.yaml             # 최대 포지션 수, 섹터 한도, 일일 손실 한도
+│   ├── settings.yaml         # 전체 시스템 설정 (스케줄, LLM, 알림 등)
+│   └── strategies/           # 기술적 전략 YAML 파일들
 │
-├── youtube_scraper/                 # YouTube 검색 & 자막 추출
-│   ├── scraper.py                   #   yt-dlp 기반 영상 검색
-│   ├── subtitles.py                 #   자막 다운로드 & 텍스트 추출
-│   ├── downloader.py                #   영상 다운로드
-│   └── exporter.py                  #   결과 내보내기
+├── scoring/
+│   ├── multi_layer_scorer.py # 5축 복합 스코어 계산 메인 클래스
+│   ├── data_collectors.py    # FundamentalCollector, FlowCollector, MacroCollector
+│   ├── intel_scorer.py       # IntelScorer (DB에서 감성 점수 집계)
+│   ├── exit_scorer.py        # 매도 타이밍 스코어
+│   ├── risk_manager.py       # 포트폴리오 리스크 한도 체크
+│   ├── diversity_scorer.py   # 앙상블 다양성 평가
+│   ├── dart_fundamental.py   # DART API 재무데이터 수집
+│   └── dart_event_scorer.py  # DART 공시 이벤트 스코어링
 │
-├── market_data/                     # 주식 시세 데이터 수집
-│   ├── krx_fetcher.py               #   한국 주식 (pykrx)
-│   ├── us_fetcher.py                #   미국 주식 (yfinance)
-│   ├── fdr_fetcher.py               #   종목 목록, 지수, 환율 (FinanceDataReader)
-│   ├── calendar.py                  #   KRX/NYSE 거래일 판별
-│   └── cache.py                     #   CSV 파일 기반 데이터 캐시
+├── pipeline/
+│   ├── scheduler.py          # APScheduler 전체 스케줄 등록
+│   ├── daily_scan.py         # 일일 스캔 (08:00 실행)
+│   ├── rescore.py            # 재스코어링 함수 (run_rescore, rescore_ticker_by_signal)
+│   ├── market_intel.py       # MarketIntelScanner (뉴스 수집 + LLM 분석)
+│   ├── intel_price_tracker.py# 인텔 시그널 가격 추적
+│   ├── correlation_logger.py # 스코어-수익률 상관계수 기록
+│   ├── correlation_report.py # 주간 상관분석 리포트
+│   ├── evening_report.py     # 저녁 성과 리포트 (19:00)
+│   └── nightly.py            # 야간 오케스트레이터
 │
-├── strategy/                        # 전략 관리
-│   ├── models.py                    #   Strategy 데이터 모델
-│   ├── registry.py                  #   YAML 전략 저장/로드/목록
-│   └── extractor.py                 #   분석 텍스트 → Strategy 변환
+├── monitor/
+│   ├── realtime_monitor.py   # 실시간 모니터 메인 (60초 루프)
+│   ├── rolling_buffer.py     # OHLCV 롤링 버퍼 (최대 200봉)
+│   ├── signal_tracker.py     # 알림 쿨다운 관리 (30분)
+│   └── market_session.py     # 장 운영 시간 판별
 │
-├── llm/                             # LLM (OpenRouter) 연동
-│   ├── client.py                    #   OpenRouter API 클라이언트
-│   ├── prompts.py                   #   프롬프트 템플릿 4종
-│   ├── video_filter.py              #   영상 품질 필터 (LLM 채점)
-│   ├── strategy_refiner.py          #   전략 정제 & 코드화 검증
-│   └── backtest_interpreter.py      #   백테스트 결과 한국어 해석
+├── market_data/
+│   ├── krx_fetcher.py        # KRX 주가 (pykrx + KIS API)
+│   ├── us_fetcher.py         # 미국 주가 (yfinance)
+│   ├── naver_flow_fetcher.py # 네이버 금융 수급 스크래퍼
+│   └── fdr_fetcher.py        # 전체 상장 종목 목록
 │
-├── backtester/                      # 백테스트 엔진
-│   ├── engine.py                    #   backtesting.py 래퍼
-│   ├── signals.py                   #   기술 지표 계산 & 시그널 생성
-│   ├── metrics.py                   #   BacktestResult 데이터 모델
-│   └── report.py                    #   한국어 결과 보고서
+├── web/
+│   ├── app.py                # FastAPI 애플리케이션
+│   ├── routers/              # 페이지별 라우터
+│   ├── services/             # 비즈니스 로직 (scoring_service, signal_service 등)
+│   └── db/                   # SQLite 연결, 마이그레이션
 │
-├── notebooklm_analyzer/             # NotebookLM 연동
-│   ├── client.py                    #   Python 3.14 서브프로세스 브릿지
-│   ├── analyzer.py                  #   노트북 생성/분석/전략 추출
-│   └── prompts.py                   #   NotebookLM 전용 프롬프트
+├── broker/
+│   ├── kis_client.py         # 한국투자증권 KIS API 클라이언트
+│   └── portfolio.py          # 포트폴리오 관리
 │
-├── alerts/                          # 알림 시스템
-│   ├── discord_webhook.py           #   Discord Webhook 전송
-│   ├── email_sender.py              #   Gmail SMTP 전송
-│   └── formatter.py                 #   Discord Embed 포맷터 (한국어)
+├── utils/
+│   ├── cache.py              # TTLCache (thread-safe, monotonic clock)
+│   └── config_loader.py      # YAML 설정 + 환경변수 로드
 │
-├── pipeline/                        # 파이프라인 오케스트레이션
-│   ├── runner.py                    #   4단계 전체 파이프라인 실행기
-│   ├── daily_scan.py                #   일일 시그널 스캔 + 알림
-│   └── scheduler.py                 #   APScheduler 자동 실행
-│
-└── utils/                           # 공통 유틸리티
-    ├── config_loader.py             #   YAML 설정 로드 + 환경변수 치환
-    └── logging_config.py            #   로깅 설정 (파일 + 콘솔)
+└── scripts/
+    ├── verify_flow_scale.py  # 수급 Amount Scale 검증
+    └── correlation_analysis.py # 스코어-수익률 수동 분석
 ```
 
 ---
 
-## 모듈별 상세 설명
+## 12. 서버 배포 & 운영
 
-### 1. YouTube 검색 (`youtube_scraper/`)
+### 서버 정보
+- **주소**: `168.107.42.41` (OCI 클라우드, Ubuntu)
+- **SSH 접속**: `ssh money-mani`
+- **경로**: `/home/ubuntu/money_mani`
+- **Python**: `/home/ubuntu/money_mani/.venv/bin/python`
 
-yt-dlp를 사용하여 YouTube에서 주식 전략 영상을 검색합니다. 영상의 제목, 설명, 조회수, URL 등 메타데이터를 수집하고, 필요 시 한국어 자막을 텍스트로 추출합니다.
+### systemd 서비스
 
-### 2. 시세 데이터 수집 (`market_data/`)
+| 서비스 | 역할 |
+|--------|------|
+| `money-mani` | FastAPI 웹 서버 (포트 8000) |
+| `money-mani-scheduler` | APScheduler 스케줄러 |
 
-| 클래스 | 라이브러리 | 대상 | 주요 기능 |
-|--------|-----------|------|----------|
-| `KRXFetcher` | pykrx | 한국 주식 | OHLCV, 재무제표, 투자자별 매매동향, 시총 상위 종목 |
-| `USFetcher` | yfinance | 미국 주식 | OHLCV, 종목 정보 |
-| `FDRFetcher` | FinanceDataReader | 한국+미국 | 전체 상장 종목, 지수, 환율 |
+```bash
+# 서비스 상태 확인
+ssh money-mani "systemctl status money-mani money-mani-scheduler"
 
-- `KRXCalendar` / `NYSECalendar`: 공휴일 + 주말을 고려한 거래일 판별
-- `DataCache`: 동일 데이터 반복 조회 방지를 위한 CSV 파일 캐시
+# 서비스 재시작
+ssh money-mani "sudo systemctl restart money-mani money-mani-scheduler"
 
-### 3. 전략 관리 (`strategy/`)
-
-전략은 YAML 파일로 정의됩니다. 각 전략에는 사용할 기술적 지표(indicators)와 매수/매도 규칙(rules)이 포함됩니다.
-
-**전략 상태 흐름:**
-```
-draft → testing → validated → retired
-(초안)   (테스트)   (검증됨)    (폐기)
-```
-
-`validated` 상태인 전략만 일일 스캔에서 사용됩니다.
-
-**전략 정의 예시** (`config/strategies/example_golden_cross.yaml`):
-
-```yaml
-name: "Golden Cross MA(20,60)"
-description: "MA20이 MA60을 상향 돌파하면 매수, 하향 돌파하면 매도"
-status: "validated"
-
-indicators:
-  - type: "sma"
-    period: 20
-    column: "close"
-    output_name: "SMA_20"
-  - type: "sma"
-    period: 60
-    column: "close"
-    output_name: "SMA_60"
-
-rules:
-  entry:
-    - condition: "crossover"
-      indicator_a: "SMA_20"
-      indicator_b: "SMA_60"
-      direction: "above"
-  exit:
-    - condition: "crossover"
-      indicator_a: "SMA_20"
-      indicator_b: "SMA_60"
-      direction: "below"
+# 로그 확인
+ssh money-mani "journalctl -u money-mani-scheduler -n 50 --no-pager"
 ```
 
-**지원 지표:** SMA, EMA, RSI, MACD, Bollinger Bands, Stochastic
+### 코드 배포
+git을 사용하지 않고 rsync로 배포합니다.
 
-**지원 조건:**
-- `crossover`: 지표 A가 지표 B를 위/아래로 돌파
-- `threshold`: 지표값이 특정 수치 이상/이하 (예: RSI > 70)
-- `band`: 지표값이 밴드 안/밖
+```bash
+# 단일 파일 배포
+rsync -av scoring/data_collectors.py money-mani:/home/ubuntu/money_mani/scoring/
 
-### 4. LLM 연동 (`llm/`)
-
-[OpenRouter](https://openrouter.ai/) API를 통해 4곳에서 LLM을 활용합니다:
-
-| 단계 | 프롬프트 | 모델 | 역할 |
-|------|----------|------|------|
-| 영상 필터링 | `VIDEO_FILTER_PROMPT` | fast (Haiku) | 영상 품질 1~10점 채점, 클릭베이트 판별 |
-| 전략 추출 | `STRATEGY_REFINE_PROMPT` | default (Sonnet) | 분석 텍스트를 구조화된 JSON 전략으로 변환 |
-| 전략 검증 | `STRATEGY_VALIDATE_PROMPT` | default (Sonnet) | pandas-ta로 코드화 가능한지 검증 |
-| 결과 해석 | `BACKTEST_INTERPRET_PROMPT` | fast (Haiku) | 백테스트 수치를 한국어 인사이트로 변환 |
-
-### 5. 백테스트 엔진 (`backtester/`)
-
-`backtesting.py` 라이브러리를 래핑하여, YAML로 정의된 전략을 자동으로 실행합니다.
-
-**실행 흐름:**
-```
-Strategy YAML → 지표 계산 (pandas_ta) → 시그널 생성 (1/0/-1)
-    → backtesting.py Strategy 클래스 동적 생성 → 백테스트 실행
-    → BacktestResult (수익률, 샤프, MDD, 승률, 거래내역)
+# 전체 소스 배포 (캐시·DB 제외)
+rsync -av --exclude='.git' --exclude='__pycache__' --exclude='*.db' \
+  . money-mani:/home/ubuntu/money_mani/
 ```
 
-**유효성 판정 기준:**
-- 거래 횟수 5회 이상
-- 총 수익률 > 0%
-- 샤프 비율 >= 0.5
-- 최대 낙폭(MDD) >= -30%
+### 환경변수 (.env)
 
-### 6. NotebookLM 분석 (`notebooklm_analyzer/`)
-
-Google NotebookLM을 무료 RAG 시스템으로 활용합니다. YouTube 영상 URL을 소스로 추가하면 NotebookLM이 내용을 분석하고, 투자 전략을 추출해줍니다.
-
-**Python 버전 브릿지:** notebooklm-py는 Python 3.14 전용이므로, `py -3.14 -c` 서브프로세스로 호출합니다. NotebookLM 연결 실패 시 자막 직접 추출 + LLM 분석으로 자동 fallback됩니다.
-
-### 7. 알림 시스템 (`alerts/`)
-
-- **Discord**: Webhook으로 매수/매도 시그널 알림, 일일 요약, 백테스트 결과 전송. 한국어 embed 포맷 (매수=녹색, 매도=빨간색)
-- **Email**: Gmail SMTP 백업 (선택사항, 기본 비활성화)
-
-### 8. 파이프라인 (`pipeline/`)
-
-- **PipelineRunner**: 리서치→분석→추출→백테스트 4단계를 순서대로 실행
-- **DailyScan**: 매일 아침 검증된 전략으로 감시 종목 스캔, 시그널 발생 시 알림
-- **Scheduler**: APScheduler로 일일 스캔(평일 08:00)과 리서치 갱신(일요일 22:00)을 자동 실행
-
----
-
-## 설정 커스터마이징
-
-### 감시 종목 변경
-
-`config/settings.yaml`에서 수정:
-
-```yaml
-pipeline:
-  targets:
-    custom_tickers: ["005930", "000660", "035420"]  # 한국 주식
-  us_targets:
-    custom_tickers: ["AAPL", "MSFT", "NVDA"]       # 미국 주식
-```
-
-### 스케줄 변경
-
-```yaml
-schedule:
-  daily_scan:
-    cron: "0 8 * * 1-5"      # 분 시 일 월 요일 (월~금 08:00)
-    timezone: "Asia/Seoul"
-  research_refresh:
-    cron: "0 22 * * 0"        # 매주 일요일 22:00
-```
-
-### 새 전략 추가
-
-`config/strategies/` 폴더에 YAML 파일을 추가합니다:
-
-```yaml
-name: "RSI Oversold Bounce"
-description: "RSI가 30 이하로 떨어졌다가 반등하면 매수"
-source: "manual"
-category: "momentum"
-status: "validated"
-
-indicators:
-  - type: "rsi"
-    period: 14
-    column: "close"
-    output_name: "RSI_14"
-
-rules:
-  entry:
-    - condition: "crossover"
-      indicator_a: "RSI_14"
-      indicator_b: "30"
-      direction: "above"
-  exit:
-    - condition: "threshold"
-      indicator: "RSI_14"
-      value: 70
-      direction: "above"
-
-parameters:
-  position_size: 1.0
-  stop_loss: null
-  take_profit: null
-```
-
-### LLM 모델 변경
-
-```yaml
-llm:
-  fast_model: "anthropic/claude-3-haiku"       # 빠른 작업 (필터링, 해석)
-  default_model: "anthropic/claude-3.5-sonnet"  # 일반 작업 (전략 추출)
-  deep_model: "anthropic/claude-3.5-sonnet"     # 심층 분석
+```env
+OPENROUTER_KEY=sk-or-v1-xxxx       # LLM (OpenRouter / Gemini)
+DISCORD_WEBHOOK_URL=https://...     # Discord 알림
+DART_API_KEY=xxxx                   # DART 전자공시 API
+NAVER_CLIENT_ID=xxxx                # 네이버 검색 API
+NAVER_CLIENT_SECRET=xxxx
+KIS_API_KEY=xxxx                    # 한국투자증권 KIS (선택)
+KIS_API_SECRET=xxxx
+KIS_ACCOUNT_NUMBER=xxxx
 ```
 
 ---
 
-## 사용 라이브러리
+## 13. 설정 커스터마이징
 
-| 라이브러리 | 용도 |
-|-----------|------|
-| yt-dlp | YouTube 검색 및 자막 추출 |
-| pykrx | 한국 주식 시세 (KRX) |
-| yfinance | 미국 주식 시세 (Yahoo Finance) |
-| FinanceDataReader | 종목 목록, 지수, 환율 |
-| pandas-ta | 150+ 기술적 지표 계산 |
-| backtesting.py | 전략 백테스트 엔진 |
-| requests | OpenRouter API, Discord Webhook HTTP 호출 |
-| APScheduler | 스케줄러 (크론 기반 자동 실행) |
-| PyYAML | 전략/설정 YAML 파싱 |
-| python-dotenv | .env 환경변수 로드 |
-| notebooklm-py | NotebookLM 비공식 API (Python 3.14 전용) |
+### 가중치 변경 (config/scoring.yaml)
+
+```yaml
+weights:
+  KRX:
+    technical: 0.30    # 기술적 전략 합의
+    fundamental: 0.25  # 재무 건전성
+    flow: 0.20         # 수급
+    intel: 0.15        # AI 뉴스 분석
+    macro: 0.10        # VIX 매크로
+```
+
+### 매수 임계값 변경
+
+`web/services/signal_service.py` 에서 `if score >= 0.65` 값을 수정합니다.
+
+### 포트폴리오 한도 변경 (config/risk.yaml)
+
+```yaml
+max_positions: 20        # 최대 보유 종목 수
+max_single_weight: 0.20  # 단일 종목 최대 비중 20%
+max_sector_weight: 0.30  # 단일 섹터 최대 비중 30%
+max_daily_loss: -0.03    # 일일 최대 손실 -3%
+```
+
+### 감시 종목 변경 (config/settings.yaml)
+
+```yaml
+realtime:
+  watchlist:
+    krx: ["005930", "000660", "035420"]  # 삼성전자, SK하이닉스, NAVER
+    us: ["AAPL", "MSFT", "NVDA"]
+```
 
 ---
 
-## 주의사항
+## 14. 주의사항
 
-- 이 프로그램은 **투자 참고용**이며, 매매 시그널은 투자 결정의 보조 수단으로만 사용하세요
-- 과거 백테스트 성과가 미래 수익을 보장하지 않습니다
-- `market_data/calendar.py`의 공휴일 목록은 2026년 기준이므로 매년 업데이트가 필요합니다
-- OpenRouter API 사용 시 요금이 발생할 수 있습니다
+- 이 시스템의 매매 신호는 **투자 참고용**입니다. 실제 투자 결정은 본인 판단으로 하세요.
+- 과거 백테스트 성과가 미래 수익을 보장하지 않습니다.
+- 네이버 금융 스크래퍼는 HTML 구조 변경 시 파싱 실패할 수 있습니다. 로그를 모니터링하세요.
+- DART API 무료 티어는 일 10,000건 제한입니다. 대량 스캔 시 한도에 주의하세요.
+- KIS API 연결 없이는 Paper Trading 모드로만 동작합니다 (실제 매매 없음).

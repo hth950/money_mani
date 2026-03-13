@@ -46,7 +46,7 @@ class CorrelationLogger:
         # Build signal map: ticker -> (signal_id, signal_type)
         signal_map = {}
         for sig in signal_rows:
-            signal_map[sig["ticker"]] = (sig["id"], sig["signal_type"])
+            signal_map.setdefault(sig["ticker"], (sig["id"], sig["signal_type"]))
 
         # Build intel map: ticker -> [(issue_id, direction, confidence)]
         intel_map = {}
@@ -116,7 +116,7 @@ class CorrelationLogger:
             with get_db() as conn:
                 for c in correlations:
                     conn.execute(
-                        """INSERT INTO intel_signal_correlation
+                        """INSERT OR IGNORE INTO intel_signal_correlation
                            (date, ticker, intel_issue_id, signal_id,
                             ensemble_signal, intel_direction, intel_confidence, matched)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
