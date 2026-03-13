@@ -265,7 +265,7 @@ class DARTFundamentalFetcher:
             if key and key not in result:
                 try:
                     val = int(thstrm_amount.replace(",", ""))
-                    result[key] = val * 1_000_000  # 단위: 백만원 → 원
+                    result[key] = val  # 단위: 원 (DART fnlttSinglAcntAll은 이미 원 단위 반환)
                 except (ValueError, AttributeError):
                     pass
 
