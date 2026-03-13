@@ -83,34 +83,31 @@ class SignalService:
             return dict(row) if row else None
 
     def get_actions(self, days: int = 7) -> list[dict]:
-        """Return latest consensus buy/sell actions per ticker for the trading dashboard.
+        """Return latest scoring-based actions per ticker for the trading dashboard.
 
-        Joins scoring_results with signals to get composite_score + signal_type.
-        Excludes realtime individual signals (source='realtime').
+        Queries scoring_results directly (no signal_id JOIN required).
+        signal_id is NULL for BLOCKED decisions, so we derive action from composite_score.
         Returns one entry per ticker (latest by scan_date).
         """
+        import json as _json
         since = f"-{days} days"
         with get_db() as db:
             rows = db.execute(
                 """
                 SELECT
                     sr.ticker,
-                    sig.ticker_name,
-                    sig.market,
+                    sr.ticker_name,
+                    sr.market,
                     sr.composite_score,
                     sr.decision,
-                    sig.signal_type,
-                    sig.price       AS signal_price,
-                    sig.detected_at AS last_signal_date,
-                    sig.indicators_json,
-                    p.status        AS position_status,
+                    sr.scan_date,
+                    sr.score_breakdown_json,
+                    p.status  AS position_status,
                     p.pnl_pct
                 FROM scoring_results sr
-                JOIN signals sig ON sr.signal_id = sig.id
                 LEFT JOIN positions p
                     ON sr.ticker = p.ticker AND p.status = 'open'
                 WHERE sr.scan_date >= DATE('now', ?)
-                  AND sig.source NOT IN ('realtime', 'realtime_consensus')
                 ORDER BY sr.scan_date DESC, sr.composite_score DESC
                 """,
                 (since,),
@@ -132,19 +129,16 @@ class SignalService:
             else:
                 conviction = "LOW"
 
-            # Determine action
-            signal_type = row["signal_type"] or ""
-            decision = row["decision"] or ""
-            if signal_type == "BUY" and decision in ("EXECUTE", "WATCH", "FALLBACK", ""):
+            # Derive action from score (signal_id may be NULL for BLOCKED decisions)
+            if score >= 0.60:
                 action = "BUY"
-            elif signal_type == "SELL":
+            elif score <= 0.40:
                 action = "SELL"
             else:
                 action = "WATCH"
 
-            import json as _json
             try:
-                breakdown = _json.loads(row["indicators_json"] or "{}")
+                breakdown = _json.loads(row["score_breakdown_json"] or "{}")
             except Exception:
                 breakdown = {}
 
@@ -156,8 +150,8 @@ class SignalService:
                 "conviction": conviction,
                 "composite_score": score,
                 "score_breakdown": breakdown,
-                "signal_price": row["signal_price"],
-                "last_signal_date": str(row["last_signal_date"] or "")[:10],
+                "signal_price": None,
+                "last_signal_date": str(row["scan_date"] or "")[:10],
                 "is_holding": row["position_status"] == "open",
                 "pnl_pct": row["pnl_pct"],
             })
