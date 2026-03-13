@@ -113,6 +113,28 @@ def _stop_monitor():
         logger.error(f"Monitor auto-stop failed: {e}", exc_info=True)
 
 
+def _reset_dart_counter():
+    """Job: reset DART daily API call counter at midnight."""
+    try:
+        from scoring.dart_fundamental import reset_dart_counter
+        reset_dart_counter()
+    except Exception as e:
+        logger.error(f"DART counter reset failed: {e}")
+
+
+def _run_correlation_report():
+    """Job: weekly score-return correlation report (Sunday 09:00 KST)."""
+    try:
+        logger.info("=== Weekly Correlation Report Job Started ===")
+        from pipeline.correlation_report import CorrelationReport
+        result = CorrelationReport().run()
+        logger.info(f"Correlation report result: {result}")
+    except Exception as e:
+        logger.error(f"Correlation report job failed: {e}", exc_info=True)
+    finally:
+        gc.collect()
+
+
 def _run_research_refresh():
     """Job: weekly research refresh."""
     try:
@@ -258,6 +280,24 @@ def start_scheduler():
             name="Intel-Signal Correlation Logger",
         )
         logger.info("Scheduled correlation logger: 18:00 KST (weekdays)")
+
+    # DART counter reset (매일 00:05 KST)
+    scheduler.add_job(
+        _reset_dart_counter,
+        CronTrigger(minute="5", hour="0", timezone=tz),
+        id="dart_counter_reset",
+        name="DART Daily Counter Reset",
+    )
+    logger.info("Scheduled DART counter reset: 00:05 KST (daily)")
+
+    # Weekly correlation report (매주 일요일 09:00 KST)
+    scheduler.add_job(
+        _run_correlation_report,
+        CronTrigger(day_of_week="sun", hour="9", minute="0", timezone=tz),
+        id="weekly_correlation_report",
+        name="Weekly Score-Return Correlation Report",
+    )
+    logger.info("Scheduled weekly correlation report: Sunday 09:00 KST")
 
     # On startup: if currently within market hours, auto-start monitor
     _auto_start_monitor_if_market_open()

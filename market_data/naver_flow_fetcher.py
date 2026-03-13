@@ -15,15 +15,68 @@ Usage:
 
 import logging
 import re
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from typing import Optional
 
 import requests
 
 logger = logging.getLogger("money_mani.market_data.naver_flow_fetcher")
 
 KST = timezone(timedelta(hours=9))
+
+# ── 파싱 실패 Alert 상태 ─────────────────────────────────────────────
+_fail_lock = threading.Lock()
+_consecutive_fail_count: int = 0
+_last_alert_sent: Optional[float] = None
+_FAIL_THRESHOLD: int = 3
+_ALERT_COOLDOWN: float = 4 * 3600  # 4시간 쿨다운
+
+
+def _on_naver_success():
+    global _consecutive_fail_count
+    with _fail_lock:
+        _consecutive_fail_count = 0
+
+
+def _on_naver_failure(reason: str):
+    global _consecutive_fail_count, _last_alert_sent
+    should_alert = False
+    with _fail_lock:
+        _consecutive_fail_count += 1
+        count = _consecutive_fail_count
+        now = time.monotonic()
+        if (count >= _FAIL_THRESHOLD
+                and (_last_alert_sent is None
+                     or (now - _last_alert_sent) > _ALERT_COOLDOWN)):
+            _last_alert_sent = now
+            should_alert = True
+    logger.warning(f"Naver scraper failure ({count}/{_FAIL_THRESHOLD}): {reason}")
+    if should_alert:
+        _send_naver_alert(count, reason)
+
+
+def _send_naver_alert(count: int, reason: str):
+    try:
+        from alerts.discord_webhook import DiscordNotifier
+        embed = {
+            "title": "🚨 Naver 수급 스크래퍼 파싱 실패",
+            "description": (
+                f"연속 **{count}회** 파싱 실패가 발생했습니다.\n"
+                "Naver Finance HTML 구조가 변경되었을 수 있습니다."
+            ),
+            "color": 0xFF0000,
+            "fields": [
+                {"name": "마지막 오류", "value": str(reason)[:200], "inline": False},
+            ],
+            "timestamp": datetime.now(KST).isoformat(),
+        }
+        DiscordNotifier().send(embed=embed)
+        logger.info("Sent Naver scraper failure alert to Discord")
+    except Exception as e:
+        logger.error(f"Failed to send Naver alert: {e}")
 _BASE_URL = "https://finance.naver.com/item/frgn.naver"
 _HEADERS = {
     "User-Agent": (
@@ -103,6 +156,7 @@ class NaverFlowFetcher:
 
         if not rows:
             logger.debug(f"No flow data from Naver for {ticker}")
+            _on_naver_failure(f"No rows parsed for {ticker}")
             return None
 
         df = pd.DataFrame(rows, columns=["date", "외국인합계", "기관합계"])
@@ -111,8 +165,10 @@ class NaverFlowFetcher:
         df = df[mask]
 
         if df.empty:
+            _on_naver_failure(f"Empty DataFrame after date filter for {ticker}")
             return None
 
+        _on_naver_success()
         logger.debug(f"NaverFlowFetcher {ticker}: {len(df)} rows ({start} ~ {end})")
         return df
 

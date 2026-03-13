@@ -21,6 +21,8 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import threading
+
 import requests
 
 from utils.cache import TTLCache
@@ -34,6 +36,66 @@ DART_BASE = "https://opendart.fss.or.kr/api"
 # Module-level caches
 _corp_code_cache: TTLCache = TTLCache(default_ttl=24 * 3600, maxsize=4)   # mapping: daily
 _financial_cache: TTLCache = TTLCache(default_ttl=4 * 3600, maxsize=512)  # per ticker: 4h
+
+# ── Rate limit 모니터링 ────────────────────────────────────────────────
+_dart_counter_lock = threading.Lock()
+_dart_daily_counter: int = 0
+_dart_counter_date: str = ""
+_DART_DAILY_LIMIT: int = 40_000
+_DART_WARN_THRESHOLD: float = 0.80  # 32,000건 도달 시 Discord 경고
+_dart_warned_today: bool = False
+
+
+def _track_dart_call() -> int:
+    """DART API 호출 카운터 증가. 날짜 변경 시 자동 리셋. 임계값 초과 시 Discord 경고."""
+    global _dart_daily_counter, _dart_counter_date, _dart_warned_today
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    with _dart_counter_lock:
+        if _dart_counter_date != today:
+            _dart_daily_counter = 0
+            _dart_counter_date = today
+            _dart_warned_today = False
+        _dart_daily_counter += 1
+        count = _dart_daily_counter
+        warn_at = int(_DART_DAILY_LIMIT * _DART_WARN_THRESHOLD)
+        should_warn = count >= warn_at and not _dart_warned_today
+        if should_warn:
+            _dart_warned_today = True
+    if should_warn:
+        _send_dart_limit_warning(count)
+    return count
+
+
+def reset_dart_counter():
+    """스케줄러에서 매일 00:05 KST에 호출."""
+    global _dart_daily_counter, _dart_counter_date, _dart_warned_today
+    with _dart_counter_lock:
+        _dart_daily_counter = 0
+        _dart_counter_date = datetime.now(KST).strftime("%Y-%m-%d")
+        _dart_warned_today = False
+    logger.info("DART daily counter reset")
+
+
+def _send_dart_limit_warning(count: int):
+    """Discord로 DART rate limit 경고 발송."""
+    try:
+        from alerts.discord_webhook import DiscordNotifier
+        embed = {
+            "title": "⚠️ DART API 일일 한도 경고",
+            "description": (
+                f"오늘 DART API 호출이 **{count:,}건**에 달했습니다.\n"
+                f"일일 한도: {_DART_DAILY_LIMIT:,}건 / 경고 기준: {int(_DART_DAILY_LIMIT * _DART_WARN_THRESHOLD):,}건"
+            ),
+            "color": 0xF39C12,
+            "fields": [
+                {"name": "사용량", "value": f"{count:,} / {_DART_DAILY_LIMIT:,}", "inline": True},
+                {"name": "사용률", "value": f"{count / _DART_DAILY_LIMIT * 100:.1f}%", "inline": True},
+            ],
+            "timestamp": datetime.now(KST).isoformat(),
+        }
+        DiscordNotifier().send(embed=embed)
+    except Exception as e:
+        logger.error(f"Failed to send DART limit warning: {e}")
 
 
 class DARTFundamentalClient:
@@ -105,6 +167,7 @@ class DARTFundamentalClient:
 
         try:
             url = f"{DART_BASE}/corpCode.xml"
+            _track_dart_call()
             r = requests.get(url, params={"crtfc_key": self._api_key}, timeout=30)
             r.raise_for_status()
             with zipfile.ZipFile(io.BytesIO(r.content)) as z:
@@ -137,12 +200,14 @@ class DARTFundamentalClient:
                 "reprt_code": "11011",  # 사업보고서 (annual)
                 "fs_div": "CFS",        # 연결재무제표
             }
+            _track_dart_call()
             r = requests.get(url, params=params, timeout=15)
             data = r.json()
 
             if data.get("status") != "000":
                 # Fallback to OFS (별도재무제표) if CFS not available
                 params["fs_div"] = "OFS"
+                _track_dart_call()
                 r = requests.get(url, params=params, timeout=15)
                 data = r.json()
 
@@ -196,6 +261,7 @@ class DARTFundamentalClient:
                 "bsns_year": str(year),
                 "reprt_code": "11011",
             }
+            _track_dart_call()
             r = requests.get(url, params=params, timeout=10)
             data = r.json()
             if data.get("status") == "000" and data.get("list"):
@@ -276,6 +342,8 @@ class DARTFundamentalClient:
                 "bsns_year": str(year),
                 "reprt_code": "11011",
             }
+            _track_dart_call()
+            _track_dart_call()
             r = requests.get(url, params=params, timeout=10)
             data = r.json()
             if data.get("status") == "000" and data.get("list"):
