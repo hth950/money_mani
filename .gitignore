@@ -28,3 +28,4 @@ market_data_cache/
 # OS
 Thumbs.db
 Desktop.ini
+.claude/
