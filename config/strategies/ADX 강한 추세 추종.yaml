@@ -26,4 +26,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.08
+timeframe: "1d"
 backtest_results: {}

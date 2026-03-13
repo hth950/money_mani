@@ -6,11 +6,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-# Thresholds for is_valid
-_MIN_TRADES = 5
-_MIN_RETURN = 0.0        # total return > 0%
-_MIN_SHARPE = 0.5
-_MAX_DRAWDOWN = -0.30    # max drawdown must be better than -30%
+def _load_thresholds() -> dict:
+    """Load validation thresholds from config/settings.yaml."""
+    try:
+        from utils.config_loader import load_config
+        cfg = load_config()
+        return cfg.get("backtest", {}).get("validation_thresholds", {})
+    except Exception:
+        return {}
 
 
 @dataclass
@@ -24,14 +27,28 @@ class BacktestResult:
     win_rate: float
     num_trades: int
     trades: list[dict]
+    avg_holding_days: float = 0.0
+    annual_trade_rate: float = 0.0
     is_valid: bool = field(init=False)
 
     def __post_init__(self):
+        th = _load_thresholds()
+        min_trades = th.get("min_trades", 10)
+        min_return = th.get("min_return", 0.0)
+        min_sharpe = th.get("min_sharpe", 0.7)
+        max_dd = th.get("max_drawdown", 0.25)
+        min_win_rate = th.get("min_win_rate", 0.40)
+        min_annual_trades = th.get("min_annual_trades", 4)
+        min_avg_holding = th.get("min_avg_holding_days", 5)
+
         self.is_valid = (
-            self.num_trades >= _MIN_TRADES
-            and self.total_return > _MIN_RETURN
-            and self.sharpe_ratio >= _MIN_SHARPE
-            and self.max_drawdown >= _MAX_DRAWDOWN
+            self.num_trades >= min_trades
+            and self.total_return > min_return
+            and self.sharpe_ratio >= min_sharpe
+            and self.max_drawdown >= -max_dd
+            and self.win_rate >= min_win_rate
+            and self.annual_trade_rate >= min_annual_trades
+            and self.avg_holding_days >= min_avg_holding
         )
 
     @classmethod
@@ -52,17 +69,41 @@ class BacktestResult:
 
         trades_df = stats._trades
         trades = []
+        avg_holding_days = 0.0
         if trades_df is not None and not trades_df.empty:
+            holding_days_list = []
             for _, row in trades_df.iterrows():
+                entry = row["EntryTime"]
+                exit_ = row["ExitTime"]
+                try:
+                    days = (exit_ - entry).days
+                    holding_days_list.append(max(days, 1))
+                except Exception:
+                    holding_days_list.append(1)
                 trades.append({
-                    "entry_time": str(row["EntryTime"]),
-                    "exit_time": str(row["ExitTime"]),
+                    "entry_time": str(entry),
+                    "exit_time": str(exit_),
                     "entry_price": float(row["EntryPrice"]),
                     "exit_price": float(row["ExitPrice"]),
                     "size": float(row["Size"]),
                     "pnl": float(row["PnL"]),
                     "return_pct": float(row["ReturnPct"]),
                 })
+            if holding_days_list:
+                avg_holding_days = sum(holding_days_list) / len(holding_days_list)
+
+        # Calculate annual trade rate from period string "YYYY-MM-DD~YYYY-MM-DD"
+        annual_trade_rate = 0.0
+        try:
+            parts = period.split("~")
+            if len(parts) == 2:
+                from datetime import datetime
+                start = datetime.strptime(parts[0].strip(), "%Y-%m-%d")
+                end = datetime.strptime(parts[1].strip(), "%Y-%m-%d")
+                years = max((end - start).days / 365.25, 0.1)
+                annual_trade_rate = num_trades / years
+        except Exception:
+            annual_trade_rate = num_trades / 5.0  # fallback: assume 5 years
 
         return cls(
             strategy_name=strategy_name,
@@ -74,4 +115,6 @@ class BacktestResult:
             win_rate=win_rate,
             num_trades=num_trades,
             trades=trades,
+            avg_holding_days=avg_holding_days,
+            annual_trade_rate=annual_trade_rate,
         )

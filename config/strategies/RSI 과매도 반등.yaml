@@ -23,4 +23,5 @@ parameters:
   position_size: 1.0
   stop_loss: 0.05
   take_profit: 0.15
+timeframe: "1d"
 backtest_results: {}

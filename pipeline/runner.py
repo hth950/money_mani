@@ -107,7 +107,7 @@ class PipelineRunner:
         cfg = self.config["pipeline"]["backtest"]
         start_date = cfg.get("default_period", "2020-01-01")
         capital = cfg.get("initial_capital", 10_000_000)
-        commission = cfg.get("commission", 0.00015)
+        commission = cfg.get("commission_krx", cfg.get("commission", 0.00105))
 
         # Load strategies
         if strategy_name:

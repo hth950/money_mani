@@ -1,5 +1,24 @@
 python_cmd: "py -3.14"
 
+backtest:
+  default_period: "2013-01-01"
+  initial_capital: 10000000
+  commission_krx: 0.00105
+  commission_us: 0.0
+  slippage: 0.001
+  validation_thresholds:
+    min_sharpe: 0.7
+    max_drawdown: 0.25
+    min_win_rate: 0.40
+    min_trades: 10
+    min_return: 0.0
+    min_annual_trades: 6
+    min_avg_holding_days: 5
+    min_ticker_pass_rate: 0.50
+  revalidation_tickers:
+    krx_top: 100
+    us_top: 50
+
 pipeline:
   research:
     max_videos_per_query: 15
@@ -7,15 +26,23 @@ pipeline:
     subtitle_language: "ko"
     notebook_prefix: "StockResearch"
   backtest:
-    default_period: "2020-01-01"
+    default_period: "2013-01-01"
     initial_capital: 10000000
-    commission: 0.00015
+    commission_krx: 0.00105
+    commission_us: 0.0
     slippage: 0.001
     validation_thresholds:
-      min_sharpe: 1.0
-      max_drawdown: 0.20
-      min_win_rate: 0.45
-      min_trades: 20
+      min_sharpe: 0.7
+      max_drawdown: 0.25
+      min_win_rate: 0.40
+      min_trades: 10
+      min_return: 0.0
+      min_annual_trades: 6
+      min_avg_holding_days: 5
+      min_ticker_pass_rate: 0.50
+    revalidation_tickers:
+      krx_top: 100
+      us_top: 50
   targets:
     kospi_top: 30
     custom_tickers: ["005930", "000660", "035420", "035720", "051910"]

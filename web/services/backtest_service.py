@@ -37,14 +37,19 @@ class BacktestService:
         fetcher = KRXFetcher(delay=0.5) if market == "KRX" else USFetcher()
         engine = BacktestEngine(
             initial_capital=10_000_000 if market == "KRX" else 100_000,
-            commission=0.00015,
+            commission=0.00105 if market == "KRX" else 0.0,
         )
 
         results = []
         for ticker in tickers:
             try:
                 logger.info(f"Backtesting {strat.name} on {ticker} ({market})")
-                df = fetcher.get_ohlcv(ticker, "2020-01-01")
+                try:
+                    from utils.config_loader import load_config
+                    _period = load_config().get("backtest", {}).get("default_period", "2013-01-01")
+                except Exception:
+                    _period = "2013-01-01"
+                df = fetcher.get_ohlcv(ticker, _period)
                 if df.empty or len(df) < 100:
                     logger.warning(f"Insufficient data for {ticker}")
                     continue
