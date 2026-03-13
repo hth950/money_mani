@@ -250,9 +250,7 @@ class SignalGenerator:
                     df[output_name] = result
         elif itype == "highest":
             high = df.get("High", df.get("high", series))
-            result = ta.sma(high, length=1)  # Use rolling max instead
-            if result is not None:
-                df[output_name] = high.rolling(window=period).max()
+            df[output_name] = high.rolling(window=period).max()
         else:
             logger.warning(f"Unknown indicator type: {itype}")
 
