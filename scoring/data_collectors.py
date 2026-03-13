@@ -368,7 +368,7 @@ class FlowCollector:
                         "mode": "streak_only",
                     },
                 }
-                self._cache[cache_key] = result
+                _flow_cache.set(cache_key, result)
                 return result
 
             # === Enhanced 4-component scoring ===

@@ -126,8 +126,8 @@ class DartEventScorer:
         new_cache: dict[str, list[dict]] = {}
 
         try:
-            from scoring.dart_fundamental import DARTFundamentalFetcher
-            fetcher = DARTFundamentalFetcher()
+            from scoring.dart_fundamental import DARTFundamentalClient
+            fetcher = DARTFundamentalClient()
 
             # majorRport: 주요사항보고서 조회
             data = fetcher._get("list.json", {

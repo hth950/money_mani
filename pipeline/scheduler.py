@@ -135,6 +135,27 @@ def _run_correlation_report():
         gc.collect()
 
 
+def _run_weight_optimizer():
+    """Job: monthly weight optimization proposal (Discord 발송, 자동 적용 안 함)."""
+    try:
+        logger.info("=== Monthly Weight Optimizer Job Started ===")
+        from scripts.weight_optimizer import run_optimization
+        run_optimization(days=90)
+    except Exception as e:
+        logger.error(f"Weight optimizer job failed: {e}", exc_info=True)
+    finally:
+        gc.collect()
+
+
+def _run_dart_event_cache_refresh():
+    """Job: 매일 장 시작 전 DART 이벤트 캐시 프리워밍."""
+    try:
+        from scoring.dart_event_scorer import refresh_event_cache
+        refresh_event_cache()
+    except Exception as e:
+        logger.error(f"DART event cache refresh failed: {e}")
+
+
 def _run_research_refresh():
     """Job: weekly research refresh."""
     try:
@@ -298,6 +319,24 @@ def start_scheduler():
         name="Weekly Score-Return Correlation Report",
     )
     logger.info("Scheduled weekly correlation report: Sunday 09:00 KST")
+
+    # Monthly weight optimizer (매월 1일 09:00 KST)
+    scheduler.add_job(
+        _run_weight_optimizer,
+        CronTrigger(day="1", hour="9", minute="0", timezone=tz),
+        id="weight_optimizer",
+        name="Monthly Weight Optimizer",
+    )
+    logger.info("Scheduled weight optimizer: 1st of month 09:00 KST")
+
+    # DART event cache refresh (평일 08:00 KST, 장 시작 30분 전)
+    scheduler.add_job(
+        _run_dart_event_cache_refresh,
+        CronTrigger(hour="8", minute="0", day_of_week="mon-fri", timezone=tz),
+        id="dart_event_refresh",
+        name="DART Event Cache Refresh",
+    )
+    logger.info("Scheduled DART event refresh: 08:00 KST (weekdays)")
 
     # On startup: if currently within market hours, auto-start monitor
     _auto_start_monitor_if_market_open()
