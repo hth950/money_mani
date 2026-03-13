@@ -1,4 +1,5 @@
 """FastAPI application for money_mani web UI."""
+import html
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -8,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
 from web.db.connection import init_db
-from web.db.migrate import migrate_yaml_strategies
+from web.db.migrate import migrate_yaml_strategies, run_schema_migrations
 
 logger = logging.getLogger("money_mani.web")
 
@@ -22,6 +23,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Initializing database...")
     init_db()
+    run_schema_migrations()
     migrate_yaml_strategies()
     logger.info("Web app ready.")
     yield
@@ -41,7 +43,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled error: {exc}", exc_info=True)
     if request.headers.get("HX-Request"):
         return HTMLResponse(
-            f'<div class="error">오류가 발생했습니다: {str(exc)}</div>',
+            f'<div class="error">오류가 발생했습니다: {html.escape(str(exc))}</div>',
             status_code=500,
         )
     return JSONResponse(

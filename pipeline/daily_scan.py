@@ -50,6 +50,8 @@ class DailyScan:
         self.perf_service = PerformanceService()
         self.position_service = PositionService()
         self.conflict_resolver = ConflictResolver()
+        self._last_krx_ohlcv: dict = {}
+        self._last_us_ohlcv: dict = {}
 
         # DiversityScorer for ensemble filter
         try:
@@ -360,10 +362,13 @@ class DailyScan:
                         _compute_one, strat, ticker, df, ticker_names.get(ticker, ticker)
                     ))
             for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    signals.append(result)
-                    logger.info(f"Signal: {result['signal_type']} {result['ticker']} ({result['strategy_name']})")
+                try:
+                    result = future.result()
+                    if result:
+                        signals.append(result)
+                        logger.info(f"Signal: {result['signal_type']} {result['ticker']} ({result['strategy_name']})")
+                except Exception as e:
+                    logger.error(f"Compute future failed: {e}")
 
         compute_time = time.time() - compute_start
         total_time = time.time() - scan_start

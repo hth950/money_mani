@@ -127,3 +127,6 @@ flow_scoring:
     amount: 0.35
     ratio: 0.25
     synergy: 0.20
+
+dart_events:
+  enabled: false   # 안전 롤아웃: 준비되면 true로 변경

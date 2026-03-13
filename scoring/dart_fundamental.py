@@ -132,6 +132,23 @@ class DARTFundamentalClient:
             _financial_cache.set(cache_key, result)
         return result
 
+    def _get(self, endpoint: str, params: dict) -> dict:
+        """DART API 범용 호출 (dart_event_scorer에서 사용)."""
+        url = f"https://opendart.fss.or.kr/api/{endpoint}"
+        params = {**params, "crtfc_key": self._api_key}
+        _track_dart_call()
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            logger.warning(f"DART API _get({endpoint}) failed: {e}")
+            return {}
+
+    def get_corp_code_map(self) -> dict:
+        """ticker -> corp_code 매핑 반환 (dart_event_scorer에서 사용)."""
+        return self._load_corp_code_mapping()
+
     # ------------------------------------------------------------------ #
     # Internal                                                             #
     # ------------------------------------------------------------------ #
@@ -342,7 +359,6 @@ class DARTFundamentalClient:
                 "bsns_year": str(year),
                 "reprt_code": "11011",
             }
-            _track_dart_call()
             _track_dart_call()
             r = requests.get(url, params=params, timeout=10)
             data = r.json()

@@ -24,7 +24,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 KST = timezone(timedelta(hours=9))
@@ -132,6 +131,16 @@ def analyze(rows: list[dict]) -> dict:
     return results
 
 
+def run_analysis(days: int = 90) -> dict:
+    """weight_optimizer와 correlation_report에서 호출하는 통합 진입점."""
+    data = load_data(days=days)
+    if not data:
+        return {"sample_count": 0, "correlations": {}}
+    result = analyze(data)
+    result["sample_count"] = len(data)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description="Composite score vs pnl_pct correlation")
     parser.add_argument("--days", type=int, default=30, help="Lookback window in days")
@@ -195,4 +204,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     main()

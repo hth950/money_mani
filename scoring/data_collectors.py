@@ -71,7 +71,7 @@ def _get_sector_map() -> dict:
     except Exception as e:
         logger.warning(f"Failed to load sector map: {e}")
         _sector_cache = {}
-        _sector_cache_date = today
+        _sector_cache_date = ""
     return _sector_cache
 
 

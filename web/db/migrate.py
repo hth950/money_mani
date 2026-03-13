@@ -20,8 +20,9 @@ def run_schema_migrations():
             try:
                 db.execute(sql)
                 logger.info(f"Migration applied: {name}")
-            except Exception:
-                pass  # Column already exists
+            except Exception as e:
+                if "duplicate column" not in str(e).lower() and "already exists" not in str(e).lower():
+                    logger.error(f"Migration failed: {e}")
 
 def migrate_yaml_strategies():
     """Import strategies from config/strategies/*.yaml into SQLite if not already present."""

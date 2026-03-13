@@ -11,7 +11,7 @@ from broker.kis_client import KISClient
 from broker.portfolio import PortfolioManager, HoldingInfo
 from monitor.market_session import MarketSession
 from monitor.rolling_buffer import RollingBuffer
-from monitor.signal_tracker import SignalTracker, TickerConsensusTracker
+from monitor.signal_tracker import SignalTracker
 from strategy.registry import StrategyRegistry
 from strategy.models import Strategy
 from backtester.signals import SignalGenerator
@@ -23,6 +23,10 @@ from utils.config_loader import load_config, get_env
 logger = logging.getLogger("money_mani.monitor")
 
 KST = ZoneInfo("Asia/Seoul")
+
+_NYSE_TICKERS = {"BRK.B", "JNJ", "V", "WMT", "JPM", "PG", "UNH", "HD",
+                 "BAC", "DIS", "KO", "PFE", "MRK", "VZ", "T", "ABBV",
+                 "CVX", "XOM", "BA", "GE", "IBM", "CAT", "MMM", "GS"}
 
 
 @dataclass
@@ -58,17 +62,6 @@ class RealtimeMonitor:
         self.discord = DiscordNotifier()
         self.registry = StrategyRegistry()
         self.tracker = SignalTracker(cooldown_minutes=cooldown)
-
-        consensus_cfg = rt_cfg.get("consensus", {})
-        self.consensus_tracker = TickerConsensusTracker(
-            threshold=consensus_cfg.get("threshold", 0.55),
-            hold_threshold=consensus_cfg.get("hold_threshold", 0.50),
-            min_hold_minutes=consensus_cfg.get("min_hold_minutes", 60),
-            urgent_threshold=consensus_cfg.get("urgent_threshold", 0.80),
-        )
-
-        from web.services.signal_service import SignalService
-        self.signal_service = SignalService()
 
         self.buffers: dict[str, RollingBuffer] = {}
         self.strategies: list[Strategy] = []
@@ -117,7 +110,6 @@ class RealtimeMonitor:
 
         self._seed_buffers()
         self.tracker.preload_states()
-        self.consensus_tracker.preload_directions()
         self._send_startup_notification()
         self._run_loop()
 
@@ -140,15 +132,10 @@ class RealtimeMonitor:
             self.ticker_map[ticker] = TickerContext(
                 ticker=ticker, name=ticker, market="KRX", mode="WATCH")
 
-        # Common NYSE-listed tickers for exchange resolution
-        nyse_tickers = {"BRK.B", "JNJ", "V", "WMT", "JPM", "PG", "UNH", "HD",
-                        "BAC", "DIS", "KO", "PFE", "MRK", "VZ", "T", "ABBV",
-                        "CVX", "XOM", "BA", "GE", "IBM", "CAT", "MMM", "GS"}
-
         for ticker in us_watch:
             if self.market_filter and self.market_filter != "US":
                 continue
-            exchange = "NYSE" if ticker in nyse_tickers else "NASDAQ"
+            exchange = "NYSE" if ticker in _NYSE_TICKERS else "NASDAQ"
             self.ticker_map[ticker] = TickerContext(
                 ticker=ticker, name=ticker, market="US", mode="WATCH",
                 exchange=exchange)
@@ -184,13 +171,10 @@ class RealtimeMonitor:
                         market="KRX", mode="WATCH")
                     added += 1
 
-            nyse_tickers_set = {"BRK.B", "JNJ", "V", "WMT", "JPM", "PG", "UNH", "HD",
-                                "BAC", "DIS", "KO", "PFE", "MRK", "VZ", "T", "ABBV",
-                                "CVX", "XOM", "BA", "GE", "IBM", "CAT", "MMM", "GS"}
             for ticker_info in intel_tickers.get("US", []):
                 ticker = ticker_info["ticker"]
                 if ticker not in self.ticker_map and (not self.market_filter or self.market_filter == "US"):
-                    exchange = "NYSE" if ticker in nyse_tickers_set else "NASDAQ"
+                    exchange = "NYSE" if ticker in _NYSE_TICKERS else "NASDAQ"
                     self.ticker_map[ticker] = TickerContext(
                         ticker=ticker, name=ticker_info["name"],
                         market="US", mode="WATCH", exchange=exchange)
@@ -303,7 +287,7 @@ class RealtimeMonitor:
 
         to_remove = []
 
-        for ticker, ctx in self.ticker_map.items():
+        for ticker, ctx in list(self.ticker_map.items()):
             if ctx.market not in active_markets:
                 continue
 
@@ -335,13 +319,9 @@ class RealtimeMonitor:
                     signals = sig_gen.generate_signals(df_ind)
                     last_signal = int(signals.iloc[-1])
 
-                    self.tracker.update(ticker, strategy.name, last_signal)
-                    self._save_realtime_signal_to_db(ticker, strategy.name, last_signal, ctx, float(df_ind.iloc[-1]["Close"]))
-                    consensus_event = self.consensus_tracker.update(
-                        ticker, strategy.name, last_signal, is_holding=(ctx.mode == "HOLD")
-                    )
-                    if consensus_event is not None:
-                        self._handle_consensus_signal(ticker, consensus_event, ctx, float(df_ind.iloc[-1]["Close"]))
+                    event = self.tracker.update(ticker, strategy.name, last_signal)
+                    if event is not None:
+                        self._handle_signal(ticker, strategy, df_ind, event, ctx)
                 except Exception as e:
                     logger.debug(f"Signal error {ticker}/{strategy.name}: {e}")
 
@@ -358,67 +338,6 @@ class RealtimeMonitor:
         else:
             exchange = ctx.exchange or "NASDAQ"
             return self.kis.get_overseas_price(ticker, market=exchange)
-
-    def _save_realtime_signal_to_db(
-        self, ticker: str, strategy_name: str, signal: int, ctx: TickerContext, price: float
-    ) -> None:
-        """Save individual realtime signal to DB (no Discord)."""
-        if signal == 0:
-            return
-        signal_type = "BUY" if signal == 1 else "SELL"
-        try:
-            self.signal_service.save_signal({
-                "strategy_name": strategy_name,
-                "ticker": ticker,
-                "ticker_name": ctx.name,
-                "market": ctx.market,
-                "signal_type": signal_type,
-                "price": price,
-                "indicators": {},
-                "source": "realtime",
-            })
-        except Exception as e:
-            logger.debug(f"Failed to save realtime signal to DB: {e}")
-
-    def _handle_consensus_signal(
-        self, ticker: str, event: dict, ctx: TickerContext, price: float
-    ) -> None:
-        """Send Discord alert for ticker-level consensus direction change."""
-        signal_type = event["signal_type"]
-        buy_count = event["buy_count"]
-        sell_count = event["sell_count"]
-        total = event["total_strategies"]
-        ratio = event["consensus_ratio"]
-        urgent = event.get("urgent", False)
-        prev = event["prev_direction"]
-        prev_label = "매수" if prev == 1 else ("매도" if prev == -1 else "중립")
-        curr_label = "매수" if signal_type == "BUY" else "매도"
-        currency = "원" if ctx.market == "KRX" else "$"
-        urgent_prefix = "⚠️ 긴급 " if urgent else ""
-
-        content = (
-            f"{'⬆️' if signal_type == 'BUY' else '⬇️'} "
-            f"**{urgent_prefix}{ctx.name}({ticker}) {curr_label} 합의 {'긴급 ' if urgent else ''}확정**\n"
-            f"전략 동의: {buy_count if signal_type == 'BUY' else sell_count}/{total} "
-            f"({ratio:.0%})  |  이전: {prev_label} → 현재: {curr_label}\n"
-            f"현재가: {price:,.0f}{currency}"
-        )
-        self.discord.send(content=content)
-
-        # Save consensus signal to DB
-        try:
-            self.signal_service.save_signal({
-                "strategy_name": f"합의({buy_count}매수/{sell_count}매도/{total}전략)",
-                "ticker": ticker,
-                "ticker_name": ctx.name,
-                "market": ctx.market,
-                "signal_type": signal_type,
-                "price": price,
-                "indicators": {"consensus_ratio": ratio, "urgent": urgent},
-                "source": "realtime_consensus",
-            })
-        except Exception as e:
-            logger.debug(f"Failed to save consensus signal: {e}")
 
     def _handle_signal(self, ticker: str, strategy: Strategy,
                        df_ind, event, ctx: TickerContext):

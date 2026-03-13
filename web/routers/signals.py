@@ -14,5 +14,5 @@ async def list_signals(ticker: str = None, signal_type: str = None,
 
 
 @router.get("/actions")
-async def get_actions(days: int = Query(7, le=30)):
+async def get_actions(days: int = Query(7, ge=1, le=30)):
     return service.get_actions(days=days)

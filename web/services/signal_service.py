@@ -130,7 +130,7 @@ class SignalService:
                 conviction = "LOW"
 
             # Derive action from score (signal_id may be NULL for BLOCKED decisions)
-            if score >= 0.60:
+            if score >= 0.65:
                 action = "BUY"
             elif score <= 0.40:
                 action = "SELL"

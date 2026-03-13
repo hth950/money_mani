@@ -96,9 +96,11 @@ class DartEventScorer:
     def _is_enabled(self) -> bool:
         """config/scoring.yaml의 dart_events.enabled 확인."""
         try:
-            from utils.config_loader import load_config
-            config = load_config()
-            return config.get("scoring", {}).get("dart_events", {}).get("enabled", False)
+            import os, yaml
+            cfg_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'scoring.yaml')
+            with open(cfg_path) as f:
+                cfg = yaml.safe_load(f)
+            return cfg.get('dart_events', {}).get('enabled', False)
         except Exception:
             return False
 

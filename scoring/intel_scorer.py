@@ -60,6 +60,7 @@ class IntelScorer:
 
             raw = 0.0
             total_weight = 0.0
+            used_count = 0
             today = datetime.now(KST).date()
             source_accuracy = self._get_source_accuracy()
 
@@ -74,6 +75,7 @@ class IntelScorer:
                 if accuracy is not None and accuracy < 0.5:
                     continue
 
+                used_count += 1
                 confidence = issue.get("confidence", 0.5)
                 category = issue.get("category", "unknown")
                 accuracy_weight = source_accuracy.get(category, 0.5)
@@ -97,7 +99,7 @@ class IntelScorer:
                 "details": {
                     "raw_score": round(intel_raw, 4),
                     "issue_count": len(issues),
-                    "used_issues": sum(1 for _ in issues),  # after filter
+                    "used_issues": used_count,
                     "total_weight": round(total_weight, 4),
                     "source_accuracy": source_accuracy,
                 }

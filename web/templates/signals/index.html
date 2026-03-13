@@ -46,24 +46,30 @@ function scoreBar(score) {
   </div><span style="font-size:0.8rem; color:${color};">${pct}%</span>`;
 }
 
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s || '');
+  return d.innerHTML;
+}
+
 function renderCard(item) {
   const holdBadge = item.is_holding
     ? `<span style="background:#3b82f6;color:#fff;padding:1px 6px;border-radius:4px;font-size:0.75rem;margin-left:4px;">보유중${item.pnl_pct != null ? ' ' + (item.pnl_pct >= 0 ? '+' : '') + item.pnl_pct.toFixed(1) + '%' : ''}</span>`
     : '';
-  const mktBadge = `<span style="font-size:0.75rem;color:#888;">${item.market}</span>`;
+  const mktBadge = `<span style="font-size:0.75rem;color:#888;">${esc(item.market)}</span>`;
   const scoreDisplay = scoreBar(item.composite_score);
   const conviction = item.conviction || '-';
   const convColor = convictionColor(conviction);
   const date = item.last_signal_date || '-';
   const price = item.signal_price ? item.signal_price.toLocaleString() : '-';
 
-  return `<div onclick="window.location='/scoring?ticker=${item.ticker}'"
+  return `<div onclick="window.location='/scoring?ticker=${esc(item.ticker)}'"
     style="border:1px solid #ddd; border-radius:8px; padding:0.75rem; margin-bottom:0.5rem; cursor:pointer; background:#fff; transition:box-shadow 0.2s;"
     onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'"
     onmouseout="this.style.boxShadow='none'">
     <div style="display:flex; justify-content:space-between; align-items:center;">
-      <span style="font-weight:600;">${item.ticker_name}</span>
-      <span style="font-size:0.8rem; color:#888;">${item.ticker}</span>
+      <span style="font-weight:600;">${esc(item.ticker_name)}</span>
+      <span style="font-size:0.8rem; color:#888;">${esc(item.ticker)}</span>
     </div>
     <div style="margin:2px 0;">${mktBadge}${holdBadge}</div>
     ${scoreDisplay}
@@ -76,27 +82,33 @@ function renderCard(item) {
 }
 
 async function loadActions() {
-  const res = await fetch('/api/signals/actions?days=7');
-  const data = await res.json();
+  try {
+    const res = await fetch('/api/signals/actions?days=7');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
 
-  const buy = data.filter(d => d.action === 'BUY');
-  const sell = data.filter(d => d.action === 'SELL');
-  const watch = data.filter(d => d.action === 'WATCH');
+    const buy = data.filter(d => d.action === 'BUY');
+    const sell = data.filter(d => d.action === 'SELL');
+    const watch = data.filter(d => d.action === 'WATCH');
 
-  document.getElementById('buy-list').innerHTML = buy.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
-  document.getElementById('sell-list').innerHTML = sell.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
-  document.getElementById('watch-list').innerHTML = watch.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
+    document.getElementById('buy-list').innerHTML = buy.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
+    document.getElementById('sell-list').innerHTML = sell.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
+    document.getElementById('watch-list').innerHTML = watch.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
 
-  if (data.length === 0) {
-    document.getElementById('no-data').style.display = 'block';
-    document.getElementById('action-columns').style.display = 'none';
-  } else {
-    document.getElementById('no-data').style.display = 'none';
-    document.getElementById('action-columns').style.display = 'grid';
+    if (data.length === 0) {
+      document.getElementById('no-data').style.display = 'block';
+      document.getElementById('action-columns').style.display = 'none';
+    } else {
+      document.getElementById('no-data').style.display = 'none';
+      document.getElementById('action-columns').style.display = 'grid';
+    }
+
+    const now = new Date().toLocaleTimeString('ko-KR');
+    document.getElementById('last-updated').textContent = `최근 업데이트: ${now}`;
+  } catch (err) {
+    document.getElementById('action-columns').innerHTML =
+      '<p style="color:var(--pico-del-color,red);text-align:center;">데이터 로딩 실패: ' + err.message + '</p>';
   }
-
-  const now = new Date().toLocaleTimeString('ko-KR');
-  document.getElementById('last-updated').textContent = `최근 업데이트: ${now}`;
 }
 
 loadActions();
