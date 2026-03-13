@@ -124,3 +124,7 @@ flow_scoring:
     amount: 0.35
     ratio: 0.25
     synergy: 0.20
+
+dart_events:
+  enabled: false   # 기본 비활성화, 안전 롤아웃
+  poll_hour: 6     # 매일 06:00 KST 폴링

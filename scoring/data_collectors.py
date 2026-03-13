@@ -4,9 +4,16 @@ import logging
 import math
 from datetime import datetime, timedelta, timezone
 
+from utils.cache import TTLCache
+
 KST = timezone(timedelta(hours=9))
 
 logger = logging.getLogger("money_mani.scoring.data_collectors")
+
+# Module-level TTL caches
+_fundamental_cache = TTLCache(ttl=4 * 3600, maxsize=256)
+_flow_cache = TTLCache(ttl=4 * 3600, maxsize=256)
+_macro_cache = TTLCache(ttl=24 * 3600, maxsize=4)
 
 # Sector cache: refreshed once per day
 _sector_cache: dict = {}
@@ -72,7 +79,7 @@ class FundamentalCollector:
     """Fundamental data collection and scoring (0~1)."""
 
     def __init__(self):
-        self._cache: dict[str, dict] = {}
+        pass
 
     def _load_benchmarks_config(self) -> dict:
         """Load sector_benchmarks section from config/scoring.yaml."""
@@ -108,17 +115,16 @@ class FundamentalCollector:
         neutral = {"score": 0.5, "details": {"per_score": 0.5, "pbr_score": 0.5, "div_score": 0.5}}
 
         cache_key = f"{market}:{ticker}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        hit, cached = _fundamental_cache.get(cache_key)
+        if hit:
+            return cached
 
         try:
             if market == "KRX":
                 result = self._score_krx(ticker, neutral)
             else:
                 result = self._score_us(ticker, neutral)
-            self._cache[cache_key] = result
-            if len(self._cache) > 50:
-                logger.warning(f"FundamentalCollector cache size: {len(self._cache)}")
+            _fundamental_cache.set(cache_key, result)
             return result
         except Exception as e:
             logger.warning(f"FundamentalCollector.score failed for {ticker}: {e}")
@@ -234,7 +240,7 @@ class FlowCollector:
     """Investor flow data collection and scoring (0~1) - KRX only."""
 
     def __init__(self):
-        self._cache: dict[str, dict] = {}
+        pass
 
     def _get_amount_scale(self, ticker: str) -> float:
         """Get normalization scale based on market cap tier."""
@@ -279,8 +285,9 @@ class FlowCollector:
             return neutral
 
         cache_key = f"{market}:{ticker}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        hit, cached = _flow_cache.get(cache_key)
+        if hit:
+            return cached
 
         try:
             from market_data.krx_fetcher import KRXFetcher
@@ -341,7 +348,7 @@ class FlowCollector:
                         "mode": "streak_only",
                     },
                 }
-                self._cache[cache_key] = result
+                _flow_cache.set(cache_key, result)
                 return result
 
             # === Enhanced 4-component scoring ===
@@ -400,9 +407,7 @@ class FlowCollector:
                     "mode": "enhanced",
                 },
             }
-            self._cache[cache_key] = result
-            if len(self._cache) > 50:
-                logger.warning(f"FlowCollector cache size: {len(self._cache)}")
+            _flow_cache.set(cache_key, result)
             return result
         except Exception as e:
             logger.warning(f"FlowCollector scoring failed for {ticker}: {e}")
@@ -413,7 +418,6 @@ class MacroCollector:
     """Macro environment score based on VIX."""
 
     def __init__(self):
-        self._cache: dict = {}
         self._config = self._load_config()
 
     def _load_config(self) -> dict:
@@ -439,8 +443,9 @@ class MacroCollector:
             return {"score": 0.5, "details": {"note": "macro disabled"}}
 
         today = datetime.now(KST).strftime("%Y-%m-%d")
-        if today in self._cache:
-            return self._cache[today]
+        hit, cached = _macro_cache.get(today)
+        if hit:
+            return cached
 
         try:
             from market_data.us_fetcher import USFetcher
@@ -462,5 +467,5 @@ class MacroCollector:
             macro_score, regime = scores_cfg["medium"], "normal"
 
         result = {"score": macro_score, "details": {"vix": round(vix, 2), "regime": regime}}
-        self._cache[today] = result
+        _macro_cache.set(today, result)
         return result
