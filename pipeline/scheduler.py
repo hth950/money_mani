@@ -52,10 +52,23 @@ def _run_intel_scan(scan_type: str = "pre_market"):
         scanner = MarketIntelScanner()
         result = scanner.scan(scan_type)
         logger.info(f"Intel scan result: {result}")
+        # 인텔 스캔 후 경량 재스코어링
+        _run_intel_rescore()
     except Exception as e:
         logger.error(f"Intel scan job failed: {e}", exc_info=True)
     finally:
         gc.collect()
+
+
+def _run_intel_rescore():
+    """인텔 점수 변경 반영: 오늘 scoring_results의 intel_score + composite_score 업데이트."""
+    try:
+        from pipeline.intel_rescore import run_intel_rescore
+        updated = run_intel_rescore()
+        if updated > 0:
+            logger.info(f"Intel rescore: {updated} tickers updated")
+    except Exception as e:
+        logger.error(f"Intel rescore failed: {e}")
 
 
 def _run_intel_price_tracker():
