@@ -105,6 +105,7 @@ class RealtimeMonitor:
             return
 
         self._seed_buffers()
+        self.tracker.preload_states()
         self._send_startup_notification()
         self._run_loop()
 

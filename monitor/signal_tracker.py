@@ -75,3 +75,37 @@ class SignalTracker:
         else:
             self._states.clear()
             self._last_alert.clear()
+
+
+    def preload_states(self, days: int = 3) -> int:
+        """Load last known signal states from DB to prevent re-alerting on restart.
+
+        Args:
+            days: Look back N days for most recent signal per (ticker, strategy).
+
+        Returns:
+            Number of states loaded.
+        """
+        try:
+            from web.db.connection import get_db
+            with get_db() as conn:
+                rows = conn.execute(
+                    """SELECT strategy_name, ticker, signal_type
+                       FROM signals
+                       WHERE detected_at = (
+                           SELECT MAX(s2.detected_at) FROM signals s2
+                           WHERE s2.strategy_name = signals.strategy_name
+                             AND s2.ticker = signals.ticker
+                       )
+                       AND DATE(detected_at) >= DATE('now', ?)""",
+                    (f"-{days} days",),
+                ).fetchall()
+            for row in rows:
+                sig_val = 1 if row["signal_type"] == "BUY" else -1
+                self._states[(row["ticker"], row["strategy_name"])] = sig_val
+            logger.info(f"Preloaded {len(rows)} signal states from DB (last {days} days)")
+            return len(rows)
+        except Exception as e:
+            logger.warning(f"Failed to preload signal states: {e}")
+            return 0
+
