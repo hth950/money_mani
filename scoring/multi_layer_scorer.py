@@ -52,19 +52,27 @@ class MultiLayerScorer:
             }
         return self._collectors
 
-    def score(self, ticker: str, market: str, consensus_count: int, total_strategies: int) -> dict:
-        """Calculate composite score from all 4 axes.
+    def score(
+        self,
+        ticker: str,
+        market: str,
+        consensus_count: int = 0,
+        total_strategies: int = 1,
+        ohlcv_df=None,
+    ) -> dict:
+        """Calculate composite score from all 5 axes.
 
         Args:
             ticker: Stock ticker
             market: "KRX" or "US"
-            consensus_count: Number of strategies agreeing
-            total_strategies: Total strategies evaluated
+            ohlcv_df: OHLCV DataFrame for indicator-based technical scoring (preferred)
+            consensus_count: Fallback if ohlcv_df not provided
+            total_strategies: Fallback if ohlcv_df not provided
 
         Returns: {
             "composite_score": 0.0~1.0,
             "decision": "EXECUTE" | "WATCH" | "SKIP",
-            "scores": {"technical": ..., "fundamental": ..., "flow": ..., "intel": ...},
+            "scores": {"technical": ..., "fundamental": ..., "flow": ..., "intel": ..., "macro": ...},
             "details": {axis: details_dict for each axis},
             "weights": {axis: weight for each axis},
         }
@@ -74,9 +82,20 @@ class MultiLayerScorer:
 
         collectors = self._get_collectors()
 
-        # 1. Technical score
-        technical_score = consensus_count / max(total_strategies, 1)
-        tech_details = {"consensus_count": consensus_count, "total_strategies": total_strategies}
+        # 1. Technical score — indicator-based (preferred) or consensus fallback
+        if ohlcv_df is not None and not ohlcv_df.empty:
+            from scoring.technical_scorer import TechnicalScorer
+            tech_result = TechnicalScorer().score(ticker, ohlcv_df)
+            technical_score = tech_result["score"]
+            tech_details = tech_result["details"]
+            tech_details["method"] = "indicator"
+        else:
+            technical_score = consensus_count / max(total_strategies, 1)
+            tech_details = {
+                "consensus_count": consensus_count,
+                "total_strategies": total_strategies,
+                "method": "consensus",
+            }
 
         # 2. Fundamental score
         fund_result = collectors["fundamental"].score(ticker, market)

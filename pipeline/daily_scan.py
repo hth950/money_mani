@@ -399,14 +399,21 @@ class DailyScan:
                 logger.info("Multi-layer scoring disabled, using consensus only")
                 return ensemble_signals
 
+            # Build combined OHLCV lookup {ticker: df} across both markets
+            all_ohlcv = {}
+            all_ohlcv.update(self._last_krx_ohlcv)
+            all_ohlcv.update(self._last_us_ohlcv)
+
             scored_signals = []
             for sig in ensemble_signals:
                 try:
+                    ohlcv_df = all_ohlcv.get(sig["ticker"])
                     result = scorer.score(
                         ticker=sig["ticker"],
                         market=sig.get("market", "KRX"),
                         consensus_count=sig.get("consensus_count", 1),
                         total_strategies=total_strategies,
+                        ohlcv_df=ohlcv_df,
                     )
 
                     # Attach scoring data to signal
