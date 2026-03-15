@@ -62,10 +62,10 @@
 [08:00 일일 스캔]
     ↓ 기술적 전략 합의 계산
 [5축 복합 점수]  ←──────────────────────────────────┐
-  Technical  30%                                      │
-  Fundamental 25%                                     │
+  Technical  50%                                      │
+  Fundamental 10%                                     │
   Flow        20%                           [재스코어링]
-  Intel       15%                        (09:30/11:30/13:30/15:30)
+  Intel       10%                        (09:30/11:30/13:30/15:30)
   Macro       10%                                     │
     ↓                                                 │
 [scoring_results DB]   ←───── [인텔 스캔 매시] ────────┘
@@ -96,26 +96,26 @@
         <td>Technical</td>
         <td>
           <div class="score-bar-wrap">
-            <div class="score-bar" style="width:90px;background:#3498db;"></div> 30%
+            <div class="score-bar" style="width:150px;background:#3498db;"></div> 50%
           </div>
         </td>
         <td>
           <div class="score-bar-wrap">
-            <div class="score-bar" style="width:135px;background:#3498db;"></div> 45%
+            <div class="score-bar" style="width:150px;background:#3498db;"></div> 50%
           </div>
         </td>
-        <td>기술적 전략 합의 비율</td>
+        <td>기술적 지표 직접 점수화 (RSI/MACD/MA/BB/거래량)</td>
       </tr>
       <tr>
         <td>Fundamental</td>
         <td>
           <div class="score-bar-wrap">
-            <div class="score-bar" style="width:75px;background:#27ae60;"></div> 25%
+            <div class="score-bar" style="width:30px;background:#27ae60;"></div> 10%
           </div>
         </td>
         <td>
           <div class="score-bar-wrap">
-            <div class="score-bar" style="width:60px;background:#27ae60;"></div> 20%
+            <div class="score-bar" style="width:30px;background:#27ae60;"></div> 10%
           </div>
         </td>
         <td>재무 건전성 (PER/PBR/ROE/배당)</td>
@@ -138,7 +138,7 @@
         <td>Intel</td>
         <td>
           <div class="score-bar-wrap">
-            <div class="score-bar" style="width:45px;background:#e67e22;"></div> 15%
+            <div class="score-bar" style="width:30px;background:#e67e22;"></div> 10%
           </div>
         </td>
         <td>
@@ -157,7 +157,7 @@
         </td>
         <td>
           <div class="score-bar-wrap">
-            <div class="score-bar" style="width:30px;background:#e74c3c;"></div> 10%
+            <div class="score-bar" style="width:45px;background:#e74c3c;"></div> 15%
           </div>
         </td>
         <td>VIX 시장 공포지수</td>
@@ -169,18 +169,22 @@
   <h3>각 축 상세 설명</h3>
 
   <details open>
-    <summary>📈 Technical Score — 기술적 전략 합의</summary>
+    <summary>📈 Technical Score — 기술적 지표 직접 점수화</summary>
     <div style="padding: 0.5rem 0 0.5rem 1rem;">
-      <p><strong>계산식</strong>: BUY 신호를 낸 전략 수 ÷ 전체 검증 전략 수</p>
-      <p><strong>예시</strong>: 검증된 전략 8개 중 6개가 BUY → Technical Score = 6/8 = <strong>0.75</strong></p>
-      <ul>
-        <li>골든크로스 (MA20 > MA60)</li>
-        <li>RSI 30 반등</li>
-        <li>MACD 시그널 상향돌파</li>
-        <li>볼린저밴드 하단 반등</li>
-        <li>등 <code>config/strategies/</code> 폴더의 YAML 전략들</li>
-      </ul>
-      <p>일일 스캔의 스냅샷 값이지만, 실시간 모니터가 합의 전환을 감지하면 즉시 갱신됩니다.</p>
+      <p><strong>계산식</strong>: 5개 기술적 지표를 각각 0~1로 점수화한 후 가중 합산</p>
+      <table>
+        <thead><tr><th>지표</th><th>가중치</th><th>기준</th></tr></thead>
+        <tbody>
+          <tr><td>RSI 포지션</td><td>25%</td><td>RSI 위치에 따라 과매도(높은 점수)~과매수(낮은 점수)</td></tr>
+          <tr><td>MACD 방향</td><td>25%</td><td>MACD > Signal이면 상승, 격차 클수록 높은 점수</td></tr>
+          <tr><td>이동평균 위치</td><td>25%</td><td>현재가가 MA20/60/200 위에 있을수록 높은 점수</td></tr>
+          <tr><td>볼린저밴드</td><td>15%</td><td>하단 근처 = 높은 점수 (반등 기대), 상단 근처 = 낮은 점수</td></tr>
+          <tr><td>거래량 추세</td><td>10%</td><td>최근 거래량이 20일 평균 대비 증가 시 높은 점수</td></tr>
+        </tbody>
+      </table>
+      <p><strong>예시</strong>: RSI=0.65, MACD=0.70, MA=0.80, BB=0.45, Vol=0.60<br>
+        → 0.65×0.25 + 0.70×0.25 + 0.80×0.25 + 0.45×0.15 + 0.60×0.10 = <strong>0.665</strong></p>
+      <p>상관관계 분석 결과, 5일 단기 수익률과 유일하게 양의 상관(r=+0.033)을 보이는 축입니다.</p>
     </div>
   </details>
 
@@ -245,12 +249,14 @@
   <h3>복합 점수 계산식 (KRX 예시)</h3>
   <div class="callout">
     <code>
-      composite = Technical×0.30 + Fundamental×0.25 + Flow×0.20 + Intel×0.15 + Macro×0.10
+      composite = Technical×0.50 + Fundamental×0.10 + Flow×0.20 + Intel×0.10 + Macro×0.10
     </code>
     <br><br>
     예시: Tech=0.75, Fund=0.60, Flow=0.70, Intel=0.55, Macro=0.70<br>
-    → 0.75×0.30 + 0.60×0.25 + 0.70×0.20 + 0.55×0.15 + 0.70×0.10<br>
-    → 0.225 + 0.150 + 0.140 + 0.083 + 0.070 = <strong>0.668</strong> → 매수 추천 ✅
+    → 0.75×0.50 + 0.60×0.10 + 0.70×0.20 + 0.55×0.10 + 0.70×0.10<br>
+    → 0.375 + 0.060 + 0.140 + 0.055 + 0.070 = <strong>0.700</strong> → 매수 추천 ✅
+    <br><br>
+    <small>※ 가중치는 8,069건 백필 데이터의 Spearman 상관분석 결과를 기반으로 최적화됨 (2026-03-15)</small>
   </div>
 </section>
 
