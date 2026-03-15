@@ -310,7 +310,14 @@ class DailyScan:
                         ticker, df = future.result()
                         if not df.empty and len(df) >= 60:
                             ohlcv_cache[ticker] = df
-                            ticker_names[ticker] = ticker
+                            # Try to get company name from yfinance
+                            try:
+                                import yfinance as yf
+                                info = yf.Ticker(ticker).info
+                                name = info.get("shortName") or info.get("longName") or ticker
+                                ticker_names[ticker] = name
+                            except Exception:
+                                ticker_names[ticker] = ticker
                     except Exception as e:
                         logger.warning(f"US fetch failed for {futures[future]}: {e}")
 
