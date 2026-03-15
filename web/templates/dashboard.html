@@ -51,7 +51,8 @@ fetch('/api/signals?limit=5').then(r=>r.json()).then(d => {
     let html = '';
     d.slice(0, 3).forEach(s => {
         const cls = s.signal_type === 'BUY' ? 'signal-buy' : 'signal-sell';
-        html += '<span class="' + cls + '">' + s.signal_type + '</span> ' + s.ticker + ' ';
+        const name = s.ticker_name ? ' (' + s.ticker_name + ')' : '';
+        html += '<span class="' + cls + '">' + s.signal_type + '</span> ' + s.ticker + name + ' ';
     });
     document.getElementById('stat-signals').innerHTML = html;
 }).catch(() => { document.getElementById('stat-signals').textContent = '-'; });

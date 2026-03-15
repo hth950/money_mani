@@ -21,8 +21,8 @@ def _load_scoring_config() -> dict:
         "enabled": True,
         "fallback_on_error": True,
         "weights": {
-            "KRX": {"technical": 0.30, "fundamental": 0.23, "flow": 0.22, "intel": 0.15, "macro": 0.10},
-            "US": {"technical": 0.45, "fundamental": 0.20, "flow": 0.0, "intel": 0.25, "macro": 0.10},
+            "KRX": {"technical": 0.50, "fundamental": 0.10, "flow": 0.20, "intel": 0.10, "macro": 0.10},
+            "US": {"technical": 0.50, "fundamental": 0.10, "flow": 0.0, "intel": 0.25, "macro": 0.15},
         },
         "thresholds": {"execute": 0.60, "watch": 0.40},
     }
