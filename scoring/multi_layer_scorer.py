@@ -12,7 +12,7 @@ def _load_scoring_config() -> dict:
         from pathlib import Path
         config_path = Path(__file__).parent.parent / "config" / "scoring.yaml"
         if config_path.exists():
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 return yaml.safe_load(f)
     except Exception as e:
         logger.warning(f"Failed to load scoring config: {e}")

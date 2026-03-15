@@ -182,6 +182,12 @@ class TechnicalScorer:
             return 0.5
 
     def _ma_score(self, close: pd.Series, details: dict) -> float:
+        """이동평균 기반 매수 기회 점수 (mean-reversion 관점).
+
+        가격이 MA 아래일수록 높은 점수 → 매수 진입 기회를 의미.
+        추세 추종이 아닌 역발상(mean-reversion) 매수 시그널용.
+        ExitScorer는 별도의 추세 기반 로직을 사용.
+        """
         """Price vs MA20/MA60/MA200. Slightly below MA = mean-reversion opportunity."""
         scores = []
         current = _safe_float(close.iloc[-1])

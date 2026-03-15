@@ -88,7 +88,7 @@ class FundamentalCollector:
             from pathlib import Path
             config_path = Path(__file__).parent.parent / "config" / "scoring.yaml"
             if config_path.exists():
-                with open(config_path) as f:
+                with open(config_path, encoding="utf-8") as f:
                     full_config = yaml.safe_load(f) or {}
                 return full_config.get("sector_benchmarks", {})
         except Exception as e:
@@ -265,7 +265,7 @@ class FlowCollector:
             from pathlib import Path
             config_path = Path(__file__).parent.parent / "config" / "scoring.yaml"
             if config_path.exists():
-                with open(config_path) as f:
+                with open(config_path, encoding="utf-8") as f:
                     return (yaml.safe_load(f) or {}).get("flow_scoring", {})
         except Exception:
             pass
@@ -427,7 +427,7 @@ class MacroCollector:
             from pathlib import Path
             config_path = Path(__file__).parent.parent / "config" / "scoring.yaml"
             if config_path.exists():
-                with open(config_path) as f:
+                with open(config_path, encoding="utf-8") as f:
                     return (yaml.safe_load(f) or {}).get("macro", {})
         except Exception:
             pass
@@ -456,16 +456,40 @@ class MacroCollector:
         if vix is None:
             return {"score": 0.5, "details": {"note": "VIX unavailable"}}
 
-        thresholds = self._config.get("vix_thresholds", {"low": 20, "high": 30})
-        scores_cfg = self._config.get("scores", {"low": 0.7, "medium": 0.5, "high": 0.2})
-
-        if vix < thresholds["low"]:
-            macro_score, regime = scores_cfg["low"], "calm"
-        elif vix > thresholds["high"]:
-            macro_score, regime = scores_cfg["high"], "fear"
+        # Piecewise-linear interpolation (preferred) or step function fallback
+        anchors = self._config.get("vix_anchors")
+        if anchors:
+            macro_score = self._piecewise_linear(vix, anchors)
+            if vix < 20:
+                regime = "calm"
+            elif vix > 30:
+                regime = "fear"
+            else:
+                regime = "normal"
         else:
-            macro_score, regime = scores_cfg["medium"], "normal"
+            thresholds = self._config.get("vix_thresholds", {"low": 20, "high": 30})
+            scores_cfg = self._config.get("scores", {"low": 0.7, "medium": 0.5, "high": 0.2})
+            if vix < thresholds["low"]:
+                macro_score, regime = scores_cfg["low"], "calm"
+            elif vix > thresholds["high"]:
+                macro_score, regime = scores_cfg["high"], "fear"
+            else:
+                macro_score, regime = scores_cfg["medium"], "normal"
 
-        result = {"score": macro_score, "details": {"vix": round(vix, 2), "regime": regime}}
+        result = {"score": round(macro_score, 4), "details": {"vix": round(vix, 2), "regime": regime}}
         _macro_cache.set(today, result)
         return result
+
+    def _piecewise_linear(self, vix: float, anchors: list[list]) -> float:
+        """Piecewise-linear interpolation: VIX → score."""
+        if vix <= anchors[0][0]:
+            return anchors[0][1]
+        if vix >= anchors[-1][0]:
+            return anchors[-1][1]
+        for i in range(len(anchors) - 1):
+            x0, y0 = anchors[i]
+            x1, y1 = anchors[i + 1]
+            if x0 <= vix <= x1:
+                ratio = (vix - x0) / (x1 - x0)
+                return y0 + ratio * (y1 - y0)
+        return 0.5

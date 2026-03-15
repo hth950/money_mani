@@ -115,6 +115,11 @@ macro:
     low: 0.7
     medium: 0.5
     high: 0.2
+  vix_anchors:  # piecewise-linear interpolation (fallback to step function if absent)
+    - [15, 0.80]
+    - [20, 0.70]
+    - [25, 0.50]
+    - [35, 0.15]
 
 flow_scoring:
   enabled: true

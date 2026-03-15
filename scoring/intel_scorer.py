@@ -9,7 +9,7 @@ KST = timezone(timedelta(hours=9))
 logger = logging.getLogger("money_mani.scoring.intel_scorer")
 
 # Module-level cache: persists across IntelScorer instances created per scan
-_intel_accuracy_cache: TTLCache = TTLCache(default_ttl=3600, maxsize=8)  # 1 hour
+_intel_accuracy_cache: TTLCache = TTLCache(ttl=3600, maxsize=8)  # 1 hour
 
 
 class IntelScorer:
