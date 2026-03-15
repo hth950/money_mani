@@ -187,8 +187,8 @@ class TechnicalScorer:
         가격이 MA 아래일수록 높은 점수 → 매수 진입 기회를 의미.
         추세 추종이 아닌 역발상(mean-reversion) 매수 시그널용.
         ExitScorer는 별도의 추세 기반 로직을 사용.
+        Price vs MA20/MA60/MA200. Slightly below MA = mean-reversion opportunity.
         """
-        """Price vs MA20/MA60/MA200. Slightly below MA = mean-reversion opportunity."""
         scores = []
         current = _safe_float(close.iloc[-1])
         if current is None or current == 0:
