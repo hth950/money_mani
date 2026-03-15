@@ -38,7 +38,7 @@ class ScoringService:
             logger.error(f"Failed to save scoring result: {e}")
 
     def get_today_results(self, scan_date=None):
-        """Get today's scoring results."""
+        """Get today's scoring results. Falls back to latest scan date if no data for today."""
         if not scan_date:
             from datetime import datetime, timedelta, timezone
             scan_date = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
@@ -46,8 +46,21 @@ class ScoringService:
             with get_db() as db:
                 rows = db.execute("""
                     SELECT * FROM scoring_results
-                    WHERE scan_date = ? ORDER BY composite_score DESC
+                    WHERE scan_date = ? AND source != 'backfill'
+                    ORDER BY composite_score DESC
                 """, (scan_date,)).fetchall()
+                # Fallback: if no data for today, use latest available scan date
+                if not rows:
+                    latest = db.execute("""
+                        SELECT MAX(scan_date) FROM scoring_results
+                        WHERE source != 'backfill'
+                    """).fetchone()
+                    if latest and latest[0]:
+                        rows = db.execute("""
+                            SELECT * FROM scoring_results
+                            WHERE scan_date = ? AND source != 'backfill'
+                            ORDER BY composite_score DESC
+                        """, (latest[0],)).fetchall()
             return [dict(r) for r in rows]
         except Exception as e:
             logger.warning(f"Failed to get today results: {e}")
