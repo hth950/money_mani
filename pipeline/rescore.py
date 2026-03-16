@@ -30,8 +30,22 @@ def run_rescore(tickers: list[str] | None = None) -> int:
             (today,),
         ).fetchall()
 
+        if not rows:
+            # No daily scan today (e.g., weekend): fall back to most recent scan date
+            recent = db.execute(
+                "SELECT MAX(scan_date) as latest FROM scoring_results"
+            ).fetchone()
+            latest_date = recent["latest"] if recent else None
+            if latest_date and latest_date != today:
+                logger.info(f"Rescore: no rows for today ({today}), using latest scan_date={latest_date}")
+                rows = db.execute(
+                    "SELECT id, ticker, market, technical_score, weights_used_json "
+                    "FROM scoring_results WHERE scan_date = ? ORDER BY id DESC",
+                    (latest_date,),
+                ).fetchall()
+
     if not rows:
-        logger.info("Rescore: no rows for today")
+        logger.info("Rescore: no rows found")
         return 0
 
     # ticker별 최신 1건만
@@ -57,7 +71,7 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                 # 각 축 재계산 (캐시 우선, 만료 시 API 호출)
                 fund_score = fund_col.score(ticker, market).get("score", 0.5)
                 flow_score = flow_col.score(ticker, market).get("score", 0.5)
-                macro_score = macro_col.score(ticker, market).get("score", 0.5)
+                macro_score = macro_col.score().get("score", 0.5)
                 intel_score = intel_col.score(ticker, market).get("score", 0.5)
                 tech_score = item["technical_score"] or 0.5  # 기술적은 daily 값 유지
 
