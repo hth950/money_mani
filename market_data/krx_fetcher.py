@@ -34,14 +34,34 @@ class KRXFetcher:
         start_fmt = start.replace("-", "")
         end_fmt = (end or datetime.now(KST).strftime("%Y%m%d")).replace("-", "")
         logger.info(f"Fetching KRX OHLCV: {ticker} ({start_fmt}~{end_fmt})")
-        df = krx.get_market_ohlcv(start_fmt, end_fmt, ticker)
-        self._wait()
-        if df.empty:
-            logger.warning(f"No OHLCV data for {ticker}")
-            return df
-        df.columns = ["Open", "High", "Low", "Close", "Volume", "Change"]
-        df.index.name = "Date"
-        return df[["Open", "High", "Low", "Close", "Volume"]]
+        try:
+            df = krx.get_market_ohlcv(start_fmt, end_fmt, ticker)
+            self._wait()
+            if not df.empty:
+                df.columns = ["Open", "High", "Low", "Close", "Volume", "Change"]
+                df.index.name = "Date"
+                return df[["Open", "High", "Low", "Close", "Volume"]]
+            logger.warning(f"pykrx returned empty for {ticker}, trying yfinance fallback")
+        except Exception as e:
+            logger.warning(f"pykrx get_ohlcv failed for {ticker}: {e}, trying yfinance fallback")
+
+        # Fallback: yfinance
+        try:
+            import yfinance as yf
+            start_dt = f"{start_fmt[:4]}-{start_fmt[4:6]}-{start_fmt[6:]}"
+            end_dt = f"{end_fmt[:4]}-{end_fmt[4:6]}-{end_fmt[6:]}"
+            yf_ticker = f"{ticker}.KS"
+            df = yf.download(yf_ticker, start=start_dt, end=end_dt, progress=False)
+            if hasattr(df.columns, "levels"):
+                df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+            if not df.empty:
+                df.index.name = "Date"
+                return df[["Open", "High", "Low", "Close", "Volume"]]
+            logger.warning(f"yfinance also returned empty for {yf_ticker}")
+        except Exception as e:
+            logger.warning(f"yfinance fallback failed for {ticker}: {e}")
+
+        return pd.DataFrame()
 
     def get_fundamentals(self, ticker: str, start: str, end: str = None) -> pd.DataFrame:
         """Get fundamental data (PER, PBR, EPS, BPS, DIV)."""

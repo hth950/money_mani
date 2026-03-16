@@ -2,7 +2,7 @@ name: MACD 크로스오버
 description: MACD 라인이 시그널 라인을 상향 돌파시 매수, 하향 돌파시 매도
 source: classic_ta
 category: crossover
-status: validated
+status: validated_v2
 rules:
   entry:
   - condition: crossover
@@ -24,5 +24,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.07
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

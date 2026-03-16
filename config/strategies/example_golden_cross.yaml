@@ -1,33 +1,30 @@
-name: "Golden Cross MA(20,60)"
-description: "MA20이 MA60을 상향 돌파하면 매수, 하향 돌파하면 매도"
-source: "builtin_example"
-category: "crossover"
-status: "validated"
-
+name: Golden Cross MA(20,60)
+description: MA20이 MA60을 상향 돌파하면 매수, 하향 돌파하면 매도
+source: builtin_example
+category: crossover
+status: rejected_v2
 rules:
   entry:
-    - condition: "crossover"
-      indicator_a: "SMA_20"
-      indicator_b: "SMA_60"
-      direction: "above"
+  - condition: crossover
+    indicator_a: SMA_20
+    indicator_b: SMA_60
+    direction: above
   exit:
-    - condition: "crossover"
-      indicator_a: "SMA_20"
-      indicator_b: "SMA_60"
-      direction: "below"
-
+  - condition: crossover
+    indicator_a: SMA_20
+    indicator_b: SMA_60
+    direction: below
 indicators:
-  - type: "sma"
-    period: 20
-    column: "close"
-    output_name: "SMA_20"
-  - type: "sma"
-    period: 60
-    column: "close"
-    output_name: "SMA_60"
-
+- type: sma
+  period: 20
+  column: close
+  output_name: SMA_20
+- type: sma
+  period: 60
+  column: close
+  output_name: SMA_60
 parameters:
   position_size: 1.0
   stop_loss: null
   take_profit: null
-timeframe: "1d"
+timeframe: 1d

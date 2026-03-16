@@ -2,7 +2,7 @@ name: 볼린저 스퀴즈 (KC 안쪽)
 description: KC가 BB 안쪽에 있다가(수축) BB 상단 돌파시 매수
 source: auto_generated
 category: volatility
-status: validated
+status: validated_v2
 rules:
   entry:
   - condition: threshold_compare
@@ -28,5 +28,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

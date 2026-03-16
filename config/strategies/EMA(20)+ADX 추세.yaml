@@ -2,7 +2,7 @@ name: EMA(20)+ADX 추세
 description: EMA(20) 위 + ADX>20 추세 매수
 source: auto_generated
 category: trend
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: threshold_compare
@@ -34,5 +34,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

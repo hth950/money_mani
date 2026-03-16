@@ -2,7 +2,7 @@ name: ADX+RSI+EMA (25)
 description: ADX>25 추세 + RSI>50 모멘텀 + EMA 정렬시 매수
 source: auto_generated
 category: composite
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: threshold
@@ -42,5 +42,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

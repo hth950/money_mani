@@ -2,7 +2,7 @@ name: VWAP 회귀
 description: 가격이 VWAP 아래로 2% 이상 이탈시 매수, VWAP 복귀시 청산
 source: institutional
 category: mean_reversion
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: threshold
@@ -22,5 +22,5 @@ parameters:
   position_size: 0.7
   stop_loss: 0.04
   take_profit: 0.03
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

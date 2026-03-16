@@ -62,6 +62,9 @@ def run_rescore(tickers: list[str] | None = None) -> int:
     macro_col = MacroCollector()
     intel_col = IntelScorer()
 
+    from scoring.risk_manager import PortfolioRiskManager
+    risk_mgr = PortfolioRiskManager()
+
     with get_db() as db:
         for item in to_update:
             try:
@@ -101,11 +104,25 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                     4,
                 )
 
+                # Re-evaluate decision & block_reason using current risk limits
+                allowed, block_reason = risk_mgr.check_can_buy(ticker, market)
+                if not allowed:
+                    new_decision = "BLOCKED"
+                elif new_composite >= 0.60:
+                    new_decision = "EXECUTE"
+                    block_reason = None
+                elif new_composite >= 0.40:
+                    new_decision = "WATCH"
+                    block_reason = None
+                else:
+                    new_decision = "SKIP"
+                    block_reason = None
+
                 db.execute(
                     """
                     UPDATE scoring_results
                     SET fundamental_score=?, flow_score=?, macro_score=?,
-                        intel_score=?, composite_score=?
+                        intel_score=?, composite_score=?, decision=?, block_reason=?
                     WHERE id=?
                     """,
                     (
@@ -114,6 +131,8 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                         round(macro_score, 4),
                         round(intel_score, 4),
                         new_composite,
+                        new_decision,
+                        block_reason,
                         item["id"],
                     ),
                 )

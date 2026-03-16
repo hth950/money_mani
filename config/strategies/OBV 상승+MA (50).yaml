@@ -2,7 +2,7 @@ name: OBV 상승+MA (50)
 description: OBV 기울기 양수 + 가격이 SMA(50) 위일 때 매수
 source: auto_generated
 category: volume
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: threshold
@@ -29,5 +29,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}
