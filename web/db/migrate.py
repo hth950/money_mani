@@ -7,6 +7,15 @@ from web.db.connection import get_db
 logger = logging.getLogger("money_mani.web.db.migrate")
 
 
+def _rebuild_table_fk(db, table_name: str, create_sql: str) -> None:
+    """Recreate a table with corrected FK references (rename → create → copy → drop)."""
+    old_name = f"{table_name}_fk_rebuild"
+    db.execute(f"ALTER TABLE {table_name} RENAME TO {old_name}")
+    db.execute(create_sql)
+    db.execute(f"INSERT INTO {table_name} SELECT * FROM {old_name}")
+    db.execute(f"DROP TABLE {old_name}")
+
+
 def run_schema_migrations():
     """Run additive schema migrations (safe to call repeatedly)."""
     migrations = [
@@ -54,6 +63,27 @@ def run_schema_migrations():
                 """)
                 db.execute("INSERT INTO strategies SELECT * FROM strategies_old")
                 db.execute("DROP TABLE strategies_old")
+                # Fix FK references: SQLite auto-updated backtest_results/signals FKs to point
+                # to strategies_old when we renamed. Rebuild them to point back to strategies.
+                _rebuild_table_fk(db, "backtest_results",
+                    """CREATE TABLE backtest_results (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        strategy_id INTEGER REFERENCES strategies(id) ON DELETE CASCADE,
+                        strategy_name TEXT, ticker TEXT, market TEXT DEFAULT 'KRX',
+                        period TEXT, total_return REAL, sharpe_ratio REAL,
+                        max_drawdown REAL, win_rate REAL, num_trades INTEGER,
+                        is_valid INTEGER, trades_json TEXT,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )""")
+                _rebuild_table_fk(db, "signals",
+                    """CREATE TABLE signals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
+                        strategy_name TEXT, ticker TEXT, ticker_name TEXT, market TEXT,
+                        signal_type TEXT CHECK(signal_type IN ('BUY', 'SELL')),
+                        price REAL, indicators_json TEXT, source TEXT DEFAULT 'daily_scan',
+                        detected_at TEXT DEFAULT (datetime('now'))
+                    )""")
                 db.execute("PRAGMA foreign_keys=ON")
                 logger.info("strategies.status CHECK constraint expanded successfully.")
         except Exception as e:

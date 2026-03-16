@@ -2,7 +2,7 @@ name: 듀얼 모멘텀 KR
 description: Gary Antonacci 듀얼 모멘텀 KR버전. 12개월 절대 모멘텀(ROC_252>0) 매수/청산. Sharpe ~0.9
 source: research_validated
 category: momentum
-status: draft
+status: validated_v2
 timeframe: 1d
 markets:
 - KRX

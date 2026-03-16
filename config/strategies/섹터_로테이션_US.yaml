@@ -2,7 +2,7 @@ name: 섹터 로테이션 US
 description: 섹터 ETF 12개월 모멘텀 로테이션. Select SPDR ETF 대상. ROC_252 > 5% 매수. Sharpe ~0.9
 source: research_validated
 category: momentum
-status: draft
+status: validated_v2
 timeframe: 1d
 markets:
 - US

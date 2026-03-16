@@ -250,7 +250,8 @@ class SignalGenerator:
                     df[output_name] = result
         elif itype == "highest":
             high = df.get("High", df.get("high", series))
-            df[output_name] = high.rolling(window=period).max()
+            # shift(1): compare against prior period's high (today's close vs yesterday's 252d high)
+            df[output_name] = high.rolling(window=period).max().shift(1)
         elif itype == "atr_stop":
             # Trailing stop = rolling_max(Close, period) - multiplier * ATR
             atr_col_name = ind.get("atr_col", "ATR_14")
