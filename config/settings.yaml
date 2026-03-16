@@ -1,5 +1,10 @@
 python_cmd: "py -3.14"
 
+schedule:
+  daily_scan:
+    cron: "0 9 * * mon-fri"   # 매일 09:00 KST (평일)
+    timezone: "Asia/Seoul"
+
 backtest:
   default_period: "2013-01-01"
   initial_capital: 10000000

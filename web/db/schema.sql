@@ -310,3 +310,22 @@ CREATE TABLE IF NOT EXISTS daily_scoring_summary (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scoring_summary_date ON daily_scoring_summary (report_date);
+
+-- Macro environment snapshots (VIX + community sentiment)
+CREATE TABLE IF NOT EXISTS macro_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_at TEXT DEFAULT (datetime('now')),
+    vix REAL,
+    vix_score REAL,
+    community_score REAL,
+    macro_score REAL,
+    regime TEXT,
+    dcinside_posts INTEGER,
+    fmkorea_posts INTEGER,
+    post_count INTEGER,
+    posts_sample_json TEXT,
+    market TEXT DEFAULT 'KRX'
+);
+
+CREATE INDEX IF NOT EXISTS idx_macro_snapshot_at ON macro_snapshots (snapshot_at);
+CREATE INDEX IF NOT EXISTS idx_macro_market ON macro_snapshots (market);

@@ -120,6 +120,14 @@ macro:
     - [20, 0.70]
     - [25, 0.50]
     - [35, 0.15]
+  community_sentiment:
+    enabled: false          # safe rollout: test locally first, then enable
+    vix_weight: 0.6
+    max_posts: 30
+    request_delay: 2.5
+    sources:
+      - dcinside_neostock
+      - fmkorea_stock
 
 flow_scoring:
   enabled: true

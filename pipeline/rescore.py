@@ -149,6 +149,16 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                 logger.warning(f"Rescore failed for {item['ticker']}: {e}")
 
     logger.info(f"Rescore complete: {updated}/{len(to_update)} tickers updated")
+
+    # Save macro snapshot once per rescore run (non-critical)
+    try:
+        from web.services.macro_service import MacroService
+        from scoring.data_collectors import MacroCollector
+        macro_result = MacroCollector().score(market="KRX")
+        MacroService().save_snapshot(macro_result, market="KRX")
+    except Exception:
+        pass  # non-critical
+
     return updated
 
 

@@ -325,15 +325,14 @@ def start_scheduler():
     )
     logger.info("Scheduled weekly correlation report: Sunday 09:00 KST")
 
-    # 매크로 재스코어링 (09:30/11:30/13:30/15:30 KST, 평일)
-    for hour in ["9", "11", "13", "15"]:
-        scheduler.add_job(
-            _run_rescore,
-            CronTrigger(hour=hour, minute="30", day_of_week="mon-fri", timezone=tz),
-            id=f"rescore_{hour}30",
-            name=f"Rescore {hour}:30",
-        )
-    logger.info("Scheduled rescore: 09:30/11:30/13:30/15:30 KST (weekdays)")
+    # 전 종목 재스코어링 (10분마다)
+    scheduler.add_job(
+        _run_rescore,
+        CronTrigger(minute="*/10", timezone=tz),
+        id="rescore_10min",
+        name="Rescore every 10 minutes",
+    )
+    logger.info("Scheduled rescore: every 10 minutes")
 
     # 수급 장 마감 재스코어링 (16:10 KST, flow_cache 무효화 후)
     scheduler.add_job(

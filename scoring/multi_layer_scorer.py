@@ -113,7 +113,7 @@ class MultiLayerScorer:
         intel_details = intel_result["details"]
 
         # 5. Macro score
-        macro_result = collectors["macro"].score()
+        macro_result = collectors["macro"].score(market=market)
         macro_score = macro_result["score"]
         macro_details = macro_result["details"]
 

@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+{% block title %}매크로 환경 - Money Mani{% endblock %}
+{% block content %}
+<h1>매크로 환경 모니터</h1>
+<p>VIX 지수 + 커뮤니티 심리 기반 시장 환경 분석</p>
+
+<!-- Summary cards -->
+<div class="grid" id="summary-cards" style="margin-bottom:1.5rem">
+    <article>
+        <header><strong>VIX 값</strong></header>
+        <p id="card-vix" style="font-size:1.8rem;font-weight:bold;margin:0">--</p>
+        <footer><small>공포/탐욕 지수</small></footer>
+    </article>
+    <article>
+        <header><strong>VIX 점수</strong></header>
+        <p id="card-vix-score" style="font-size:1.8rem;font-weight:bold;margin:0">--</p>
+        <footer><small>0 ~ 1 (높을수록 긍정)</small></footer>
+    </article>
+    <article>
+        <header><strong>커뮤니티 점수</strong></header>
+        <p id="card-community-score" style="font-size:1.8rem;font-weight:bold;margin:0">--</p>
+        <footer><small>DCInside + FMKorea 심리</small></footer>
+    </article>
+    <article>
+        <header>
+            <strong>종합 점수</strong>
+            <span id="regime-badge" style="margin-left:0.5rem;padding:2px 8px;border-radius:4px;font-size:0.8rem;display:none"></span>
+        </header>
+        <p id="card-macro-score" style="font-size:1.8rem;font-weight:bold;margin:0">--</p>
+        <footer><small>매크로 환경 종합 평가</small></footer>
+    </article>
+</div>
+
+<!-- Refresh button + timestamp -->
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem">
+    <button id="refresh-btn" onclick="doRefresh()" style="width:auto">새로고침</button>
+    <small id="last-updated" style="color:#888">마지막 업데이트: --</small>
+</div>
+
+<!-- 48h trend chart -->
+<div style="margin-bottom:2rem">
+    <h3>48시간 추이</h3>
+    <canvas id="macro-chart" height="80"></canvas>
+</div>
+
+<!-- Community posts table -->
+<div>
+    <h3>커뮤니티 포스트 샘플</h3>
+    <div id="posts-meta" style="margin-bottom:0.5rem;color:#888;font-size:0.9rem"></div>
+    <div id="posts-table">로딩 중...</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let macroChart = null;
+
+function scoreColor(score) {
+    if (score === null || score === undefined) return '#888';
+    if (score >= 0.6) return '#00B050';
+    if (score >= 0.4) return '#F39C12';
+    return '#E74C3C';
+}
+
+function scoreLabel(score) {
+    if (score === null || score === undefined) return '--';
+    if (score >= 0.6) return '탐욕';
+    if (score >= 0.4) return '중립';
+    return '공포';
+}
+
+function regimeBadge(regime) {
+    const map = {
+        calm:   { label: '안정', color: '#3498DB' },
+        normal: { label: '보통', color: '#F39C12' },
+        fear:   { label: '공포', color: '#E74C3C' },
+    };
+    return map[regime] || { label: regime || '-', color: '#888' };
+}
+
+function toKST(utcStr) {
+    if (!utcStr) return '--';
+    const d = new Date(utcStr + (utcStr.includes('Z') ? '' : 'Z'));
+    const p = {};
+    new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Seoul',
+        month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(d).forEach(v => p[v.type] = v.value);
+    return p.month + '/' + p.day + ' ' + p.hour + ':' + p.minute;
+}
+
+async function loadCurrent() {
+    try {
+        const res = await fetch('/api/macro/current');
+        const data = await res.json();
+        if (!data || !Object.keys(data).length) {
+            document.getElementById('last-updated').textContent = '데이터 없음 (아직 스냅샷이 저장되지 않았습니다)';
+            return;
+        }
+
+        // VIX
+        const vixEl = document.getElementById('card-vix');
+        vixEl.textContent = data.vix !== null && data.vix !== undefined ? data.vix.toFixed(2) : '--';
+
+        // VIX score
+        const vixScoreEl = document.getElementById('card-vix-score');
+        const vs = data.vix_score;
+        vixScoreEl.textContent = vs !== null && vs !== undefined ? vs.toFixed(2) : '--';
+        vixScoreEl.style.color = scoreColor(vs);
+
+        // Community score
+        const csEl = document.getElementById('card-community-score');
+        const cs = data.community_score;
+        csEl.textContent = cs !== null && cs !== undefined ? cs.toFixed(2) : '--';
+        csEl.style.color = scoreColor(cs);
+
+        // Macro score
+        const msEl = document.getElementById('card-macro-score');
+        const ms = data.macro_score;
+        msEl.textContent = ms !== null && ms !== undefined
+            ? ms.toFixed(2) + ' (' + scoreLabel(ms) + ')'
+            : '--';
+        msEl.style.color = scoreColor(ms);
+
+        // Regime badge
+        if (data.regime) {
+            const badge = document.getElementById('regime-badge');
+            const info = regimeBadge(data.regime);
+            badge.textContent = info.label;
+            badge.style.background = info.color;
+            badge.style.color = '#fff';
+            badge.style.display = 'inline';
+        }
+
+        // Timestamp
+        document.getElementById('last-updated').textContent =
+            '마지막 업데이트: ' + toKST(data.snapshot_at);
+    } catch (e) {
+        document.getElementById('last-updated').textContent = '로딩 실패: ' + e.message;
+    }
+}
+
+async function loadHistory() {
+    try {
+        const res = await fetch('/api/macro/history?hours=48');
+        const data = await res.json();
+        if (!data.length) return;
+
+        const labels = data.map(r => toKST(r.snapshot_at));
+        const vixScores = data.map(r => r.vix_score);
+        const communityScores = data.map(r => r.community_score);
+        const macroScores = data.map(r => r.macro_score);
+
+        const ctx = document.getElementById('macro-chart').getContext('2d');
+        if (macroChart) macroChart.destroy();
+        macroChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'VIX 점수',
+                        data: vixScores,
+                        borderColor: '#3498DB',
+                        backgroundColor: 'rgba(52,152,219,0.1)',
+                        tension: 0.3,
+                        pointRadius: 3,
+                    },
+                    {
+                        label: '커뮤니티 점수',
+                        data: communityScores,
+                        borderColor: '#9B59B6',
+                        backgroundColor: 'rgba(155,89,182,0.1)',
+                        tension: 0.3,
+                        pointRadius: 3,
+                    },
+                    {
+                        label: '종합 매크로 점수',
+                        data: macroScores,
+                        borderColor: '#00B050',
+                        backgroundColor: 'rgba(0,176,80,0.1)',
+                        tension: 0.3,
+                        pointRadius: 3,
+                        borderWidth: 2,
+                    },
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        min: 0,
+                        max: 1,
+                        ticks: { stepSize: 0.2 },
+                        grid: { color: 'rgba(0,0,0,0.05)' }
+                    },
+                    x: {
+                        ticks: {
+                            maxTicksLimit: 12,
+                            maxRotation: 45,
+                        }
+                    }
+                },
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y !== null ? ctx.parsed.y.toFixed(3) : '--')
+                        }
+                    }
+                }
+            }
+        });
+    } catch (e) {
+        document.getElementById('macro-chart').parentElement.innerHTML +=
+            '<p style="color:red">차트 로딩 실패: ' + e.message + '</p>';
+    }
+}
+
+async function loadPosts() {
+    const el = document.getElementById('posts-table');
+    const metaEl = document.getElementById('posts-meta');
+    try {
+        const res = await fetch('/api/macro/posts');
+        const data = await res.json();
+        if (!data || !Object.keys(data).length) {
+            el.innerHTML = '<p>커뮤니티 포스트 데이터가 없습니다.</p>';
+            return;
+        }
+
+        // Meta info
+        const parts = [];
+        if (data.dcinside_posts !== null && data.dcinside_posts !== undefined)
+            parts.push('DCInside: ' + data.dcinside_posts + '건');
+        if (data.fmkorea_posts !== null && data.fmkorea_posts !== undefined)
+            parts.push('FMKorea: ' + data.fmkorea_posts + '건');
+        if (data.post_count !== null && data.post_count !== undefined)
+            parts.push('총 분석: ' + data.post_count + '건');
+        if (data.community_score !== null && data.community_score !== undefined) {
+            const cs = data.community_score;
+            parts.push('커뮤니티 점수: <span style="color:' + scoreColor(cs) + ';font-weight:bold">' + cs.toFixed(2) + '</span>');
+        }
+        if (data.snapshot_at)
+            parts.push('기준시각: ' + toKST(data.snapshot_at));
+        metaEl.innerHTML = parts.join(' &nbsp;|&nbsp; ');
+
+        const posts = data.posts_sample || [];
+        if (!posts.length) {
+            el.innerHTML = '<p>포스트 샘플이 없습니다.</p>';
+            return;
+        }
+
+        let html = '<table role="grid"><thead><tr>' +
+            '<th>출처</th><th>제목</th><th>감성</th><th>점수</th>' +
+            '</tr></thead><tbody>';
+        for (const p of posts) {
+            const sentColor = p.sentiment === 'positive' ? '#00B050'
+                : p.sentiment === 'negative' ? '#E74C3C' : '#888';
+            const sentLabel = p.sentiment === 'positive' ? '긍정'
+                : p.sentiment === 'negative' ? '부정'
+                : p.sentiment === 'neutral' ? '중립' : (p.sentiment || '-');
+            const scoreVal = p.score !== undefined && p.score !== null
+                ? '<span style="color:' + scoreColor(p.score) + '">' + Number(p.score).toFixed(2) + '</span>'
+                : '-';
+            html += '<tr>' +
+                '<td><small>' + (p.source || p.platform || '-') + '</small></td>' +
+                '<td>' + (p.title || p.text || '-') + '</td>' +
+                '<td style="color:' + sentColor + ';font-weight:bold">' + sentLabel + '</td>' +
+                '<td>' + scoreVal + '</td>' +
+                '</tr>';
+        }
+        html += '</tbody></table>';
+        el.innerHTML = html;
+    } catch (e) {
+        el.innerHTML = '<p style="color:red">포스트 로딩 실패: ' + e.message + '</p>';
+    }
+}
+
+async function doRefresh() {
+    const btn = document.getElementById('refresh-btn');
+    btn.setAttribute('aria-busy', 'true');
+    btn.disabled = true;
+    document.getElementById('last-updated').textContent = '갱신 중...';
+    try {
+        const res = await fetch('/api/macro/refresh', { method: 'POST' });
+        const data = await res.json();
+        // Wait a moment for background task then reload
+        setTimeout(async () => {
+            await Promise.all([loadCurrent(), loadHistory(), loadPosts()]);
+            btn.removeAttribute('aria-busy');
+            btn.disabled = false;
+        }, 3000);
+    } catch (e) {
+        document.getElementById('last-updated').textContent = '새로고침 실패: ' + e.message;
+        btn.removeAttribute('aria-busy');
+        btn.disabled = false;
+    }
+}
+
+// Initial load
+Promise.all([loadCurrent(), loadHistory(), loadPosts()]);
+</script>
+{% endblock %}
