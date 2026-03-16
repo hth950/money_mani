@@ -2,7 +2,7 @@ name: BB+RSI+거래량 복합
 description: BB 수축(BBB<5) + RSI 40~60 중립 + 거래량 급증 → 폭발 직전 매수
 source: auto_generated
 category: composite
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: threshold
@@ -39,5 +39,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

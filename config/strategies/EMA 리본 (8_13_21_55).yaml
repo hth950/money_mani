@@ -2,7 +2,7 @@ name: EMA 리본 (8/13/21/55)
 description: EMA 8 > 13 > 21 > 55 정렬시 강한 상승 추세, 역전시 청산
 source: auto_generated
 category: trend
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: threshold_compare
@@ -42,5 +42,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

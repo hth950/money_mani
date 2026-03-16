@@ -2,7 +2,7 @@ name: 이중 이동평균 + RSI 필터
 description: MA5 > MA20 골든크로스 + RSI 40~70 구간 필터로 과매수 진입 방지
 source: composite
 category: composite
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: crossover
@@ -38,5 +38,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

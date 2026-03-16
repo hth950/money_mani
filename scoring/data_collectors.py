@@ -18,6 +18,8 @@ _macro_cache = TTLCache(ttl=2 * 3600, maxsize=4)
 # Sector cache: refreshed once per day
 _sector_cache: dict = {}
 _sector_cache_date: str = ""
+# Per-ticker yfinance sector cache (fallback when FDR/pykrx is blocked)
+_sector_yf_cache: dict = {}
 
 KRX_SECTOR_MAP = {
     "전기전자": "Technology",
@@ -73,6 +75,35 @@ def _get_sector_map() -> dict:
         _sector_cache = {}
         _sector_cache_date = today
     return _sector_cache
+
+
+def _get_ticker_sector_eng(ticker: str) -> str | None:
+    """Get English sector name for a KRX ticker.
+
+    Uses sector map (FDR) first; falls back to yfinance info when map is unavailable.
+    Returns None if sector cannot be determined.
+    """
+    sector_map = _get_sector_map()
+    raw_sector = sector_map.get(ticker, "Unknown")
+    eng_sector = KRX_SECTOR_MAP.get(raw_sector, None)
+    if eng_sector:
+        return eng_sector
+
+    # Fallback: yfinance info['sector'] (English sector name, directly usable)
+    if ticker in _sector_yf_cache:
+        return _sector_yf_cache[ticker]
+    try:
+        import yfinance as yf
+        info = yf.Ticker(f"{ticker}.KS").get_info()
+        yf_sector = info.get("sector")
+        _sector_yf_cache[ticker] = yf_sector
+        if yf_sector:
+            logger.debug(f"yfinance sector for {ticker}: {yf_sector}")
+        return yf_sector
+    except Exception as e:
+        logger.debug(f"yfinance sector lookup failed for {ticker}: {e}")
+        _sector_yf_cache[ticker] = None
+        return None
 
 
 class FundamentalCollector:
@@ -141,6 +172,45 @@ class FundamentalCollector:
             return neutral
 
         if df is None or df.empty:
+            # Fallback: DART-based fundamentals with sector-aware benchmarks
+            try:
+                from scoring.dart_fundamental import DARTFundamentalFetcher
+                dart_data = DARTFundamentalFetcher().get_financial_data(ticker)
+                if dart_data:
+                    ticker_per = float(dart_data.get("per", 0) or 0)
+                    ticker_pbr = float(dart_data.get("pbr", 0) or 0)
+                    ticker_div = float(dart_data.get("div_yield", 0) or 0) * 100  # → %
+
+                    eng_sector = _get_ticker_sector_eng(ticker)
+                    raw_sector = eng_sector or "Unknown"
+                    benchmarks = self._get_sector_benchmarks(eng_sector or "Unknown")
+                    sector_avg_per = benchmarks["per"]
+                    sector_avg_pbr = benchmarks.get("pbr", 1.5)
+
+                    per_score = max(0.0, 1.0 - (ticker_per / sector_avg_per)) if ticker_per > 0 else 0.5
+                    pbr_score = max(0.0, 1.0 - (ticker_pbr / sector_avg_pbr)) if ticker_pbr > 0 else 0.5
+                    div_score = min(1.0, ticker_div / 5.0)
+                    fundamental_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
+
+                    logger.info(f"DART fallback fundamentals for {ticker}: PER={ticker_per}, PBR={ticker_pbr}")
+                    return {
+                        "score": round(fundamental_score, 4),
+                        "details": {
+                            "per_score": round(per_score, 4),
+                            "pbr_score": round(pbr_score, 4),
+                            "div_score": round(div_score, 4),
+                            "per": ticker_per,
+                            "pbr": ticker_pbr,
+                            "div": ticker_div,
+                            "sector": raw_sector,
+                            "sector_eng": eng_sector,
+                            "sector_benchmark_per": sector_avg_per,
+                            "sector_benchmark_pbr": sector_avg_pbr,
+                            "source": "dart",
+                        },
+                    }
+            except Exception as e:
+                logger.warning(f"DART fundamental fallback failed for {ticker}: {e}")
             return neutral
 
         # Use the latest row
@@ -150,12 +220,7 @@ class FundamentalCollector:
         ticker_div = float(row.get("DIV", 0) or 0)
 
         # Sector-aware benchmarks from config/scoring.yaml
-        sector_map = _get_sector_map()
-        raw_sector = sector_map.get(ticker, "Unknown")
-        eng_sector = KRX_SECTOR_MAP.get(raw_sector, None)
-        if eng_sector is None and raw_sector != "Unknown":
-            logger.warning(f"Unmapped KRX sector: '{raw_sector}' for {ticker}")
-            eng_sector = "Unknown"
+        eng_sector = _get_ticker_sector_eng(ticker)
         benchmarks = self._get_sector_benchmarks(eng_sector or "Unknown")
         sector_avg_per = benchmarks["per"]
         sector_avg_pbr = benchmarks.get("pbr", 1.5)

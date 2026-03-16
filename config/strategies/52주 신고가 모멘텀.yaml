@@ -2,7 +2,7 @@ name: 52주 신고가 모멘텀
 description: 52주 신고가 갱신 종목 매수, 20일 이동평균 이탈시 청산
 source: momentum_investing
 category: momentum
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: threshold_compare
@@ -26,5 +26,5 @@ indicators:
 parameters:
   position_size: 0.8
   stop_loss: 0.08
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

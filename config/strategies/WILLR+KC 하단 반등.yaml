@@ -2,7 +2,7 @@ name: WILLR+KC 하단 반등
 description: Williams %R<-90 + Keltner 하한 이하 반등 매수
 source: auto_generated
 category: mean_reversion
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: threshold
@@ -31,5 +31,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

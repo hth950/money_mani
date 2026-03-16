@@ -2,7 +2,7 @@ name: EMA 크로스 (20/60)
 description: EMA 20일이 EMA 60일을 상향 돌파시 매수
 source: auto_generated
 category: crossover
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: crossover
@@ -26,5 +26,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.05
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

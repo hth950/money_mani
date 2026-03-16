@@ -2,7 +2,7 @@ name: 삼중 EMA 추세
 description: EMA 5/20/60 정배열시 매수, 역배열시 매도. 단기-중기-장기 이동평균 정렬 전략
 source: trend_following
 category: crossover
-status: validated
+status: rejected_v2
 rules:
   entry:
   - condition: crossover
@@ -34,5 +34,5 @@ indicators:
 parameters:
   position_size: 1.0
   stop_loss: 0.06
-timeframe: "1d"
+timeframe: 1d
 backtest_results: {}

@@ -36,8 +36,22 @@ def run_rescore(tickers: list[str] | None = None) -> int:
             (today,),
         ).fetchall()
 
+        if not rows:
+            # No daily scan today (e.g., weekend): fall back to most recent scan date
+            recent = db.execute(
+                "SELECT MAX(scan_date) as latest FROM scoring_results"
+            ).fetchone()
+            latest_date = recent["latest"] if recent else None
+            if latest_date and latest_date != today:
+                logger.info(f"Rescore: no rows for today ({today}), using latest scan_date={latest_date}")
+                rows = db.execute(
+                    "SELECT id, ticker, market, technical_score, weights_used_json "
+                    "FROM scoring_results WHERE scan_date = ? ORDER BY id DESC",
+                    (latest_date,),
+                ).fetchall()
+
     if not rows:
-        logger.info("Rescore: no rows for today")
+        logger.info("Rescore: no rows found")
         return 0
 
     # ticker별 최신 1건만
@@ -53,6 +67,9 @@ def run_rescore(tickers: list[str] | None = None) -> int:
     flow_col = FlowCollector()
     macro_col = MacroCollector()
     intel_col = IntelScorer()
+
+    from scoring.risk_manager import PortfolioRiskManager
+    risk_mgr = PortfolioRiskManager()
 
     with get_db() as db:
         for item in to_update:
@@ -94,11 +111,25 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                     4,
                 )
 
+                # Re-evaluate decision & block_reason using current risk limits
+                allowed, block_reason = risk_mgr.check_can_buy(ticker, market)
+                if not allowed:
+                    new_decision = "BLOCKED"
+                elif new_composite >= 0.60:
+                    new_decision = "EXECUTE"
+                    block_reason = None
+                elif new_composite >= 0.40:
+                    new_decision = "WATCH"
+                    block_reason = None
+                else:
+                    new_decision = "SKIP"
+                    block_reason = None
+
                 db.execute(
                     """
                     UPDATE scoring_results
                     SET fundamental_score=?, flow_score=?, macro_score=?,
-                        intel_score=?, composite_score=?
+                        intel_score=?, composite_score=?, decision=?, block_reason=?
                     WHERE id=?
                     """,
                     (
@@ -107,6 +138,8 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                         round(macro_score, 4),
                         round(intel_score, 4),
                         new_composite,
+                        new_decision,
+                        block_reason,
                         item["id"],
                     ),
                 )
