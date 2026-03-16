@@ -61,11 +61,12 @@
                     <th>펀더멘탈</th>
                     <th>수급</th>
                     <th>인텔</th>
+                    <th>매크로</th>
                     <th>결정</th>
                 </tr>
             </thead>
             <tbody id="score-tbody">
-                <tr><td colspan="9" style="text-align:center;">로딩 중...</td></tr>
+                <tr><td colspan="10" style="text-align:center;">로딩 중...</td></tr>
             </tbody>
         </table>
     </div>
@@ -156,7 +157,7 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
     const sorted = [...items].sort((a, b) => (parseFloat(b.composite_score) || 0) - (parseFloat(a.composite_score) || 0));
     const tbody = document.getElementById('score-tbody');
     if (sorted.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">데이터 없음</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;">데이터 없음</td></tr>';
         return;
     }
     tbody.innerHTML = sorted.map(item => {
@@ -165,6 +166,7 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
         const fu = parseFloat(item.fundamental_score ?? item.fundamental);
         const fl = parseFloat(item.flow_score ?? item.flow);
         const it = parseFloat(item.intel_score ?? item.intel);
+        const ma = parseFloat(item.macro_score ?? item.macro);
         return '<tr>' +
             '<td><strong>' + (item.ticker || '-') + '</strong></td>' +
             '<td>' + (item.ticker_name || item.ticker || '-') + '</td>' +
@@ -174,6 +176,7 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
             '<td class="' + scoreClass(fu) + '">' + fmtScore(fu) + '</td>' +
             '<td class="' + scoreClass(fl) + '">' + fmtScore(fl) + '</td>' +
             '<td class="' + scoreClass(it) + '">' + fmtScore(it) + '</td>' +
+            '<td class="' + scoreClass(ma) + '">' + fmtScore(ma) + '</td>' +
             '<td>' + decisionBadge(item.decision) + '</td>' +
             '</tr>';
     }).join('');
@@ -205,6 +208,9 @@ fetch('/api/scoring/summary').then(r => r.json()).then(data => {
     });
     const intelArr = items.map(d => {
         const v = parseFloat(d.avg_intel ?? 0); return isNaN(v) ? 0 : +(v * 100).toFixed(1);
+    });
+    const macroArr = items.map(d => {
+        const v = parseFloat(d.avg_macro ?? d.avg_macro_score ?? 0); return isNaN(v) ? 0 : +(v * 100).toFixed(1);
     });
 
     // 차트 1: EXECUTE/WATCH 건수 + 평균 composite_score
@@ -260,7 +266,8 @@ fetch('/api/scoring/summary').then(r => r.json()).then(data => {
                 { label: '기술적', data: techArr, borderColor: '#3498DB', tension: 0.3, pointRadius: 2 },
                 { label: '수급', data: flowArr, borderColor: '#9B59B6', tension: 0.3, pointRadius: 2 },
                 { label: '펀더멘탈', data: fundArr, borderColor: '#E74C3C', tension: 0.3, pointRadius: 2 },
-                { label: '인텔', data: intelArr, borderColor: '#F39C12', tension: 0.3, pointRadius: 2 }
+                { label: '인텔', data: intelArr, borderColor: '#F39C12', tension: 0.3, pointRadius: 2 },
+                { label: '매크로', data: macroArr, borderColor: '#27AE60', tension: 0.3, pointRadius: 2, borderDash: [4,2] }
             ]
         },
         options: {
