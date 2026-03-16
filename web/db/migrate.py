@@ -23,6 +23,16 @@ def run_schema_migrations():
          "ALTER TABLE scoring_results ADD COLUMN ticker_name TEXT"),
         ("scoring_results_macro_score",
          "ALTER TABLE scoring_results ADD COLUMN macro_score REAL"),
+        ("macro_snapshots_table",
+         """CREATE TABLE IF NOT EXISTS macro_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_at TEXT DEFAULT (datetime('now')),
+    vix REAL, vix_score REAL, community_score REAL,
+    macro_score REAL, regime TEXT,
+    dcinside_posts INTEGER, fmkorea_posts INTEGER,
+    post_count INTEGER, posts_sample_json TEXT,
+    market TEXT DEFAULT 'KRX'
+ )"""),
     ]
     with get_db() as db:
         for name, sql in migrations:

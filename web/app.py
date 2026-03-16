@@ -80,3 +80,5 @@ from web.routers.scoring import router as scoring_router
 app.include_router(scoring_router)
 from web.routers.guide import router as guide_router
 app.include_router(guide_router)
+from web.routers import macro as macro_router
+app.include_router(macro_router.router)

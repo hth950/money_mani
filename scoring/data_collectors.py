@@ -480,7 +480,7 @@ class FlowCollector:
 
 
 class MacroCollector:
-    """Macro environment score based on VIX."""
+    """Macro environment score based on VIX + (KRX only) community sentiment."""
 
     def __init__(self):
         self._config = self._load_config()
@@ -498,20 +498,8 @@ class MacroCollector:
             pass
         return {}
 
-    def score(self) -> dict:
-        """Return macro environment score based on VIX.
-
-        Returns:
-            {"score": 0.0~1.0, "details": {"vix": float, "regime": str}}
-        """
-        if not self._config.get("enabled", False):
-            return {"score": 0.5, "details": {"note": "macro disabled"}}
-
-        today = datetime.now(KST).strftime("%Y-%m-%d")
-        hit, cached = _macro_cache.get(today)
-        if hit:
-            return cached
-
+    def _get_vix_result(self) -> dict:
+        """Fetch VIX and compute VIX-based score. Extracted from score()."""
         try:
             from market_data.us_fetcher import USFetcher
             vix = USFetcher().get_vix()
@@ -524,7 +512,7 @@ class MacroCollector:
         # Piecewise-linear interpolation (preferred) or step function fallback
         anchors = self._config.get("vix_anchors")
         if anchors:
-            macro_score = self._piecewise_linear(vix, anchors)
+            vix_score = self._piecewise_linear(vix, anchors)
             if vix < 20:
                 regime = "calm"
             elif vix > 30:
@@ -535,14 +523,63 @@ class MacroCollector:
             thresholds = self._config.get("vix_thresholds", {"low": 20, "high": 30})
             scores_cfg = self._config.get("scores", {"low": 0.7, "medium": 0.5, "high": 0.2})
             if vix < thresholds["low"]:
-                macro_score, regime = scores_cfg["low"], "calm"
+                vix_score, regime = scores_cfg["low"], "calm"
             elif vix > thresholds["high"]:
-                macro_score, regime = scores_cfg["high"], "fear"
+                vix_score, regime = scores_cfg["high"], "fear"
             else:
-                macro_score, regime = scores_cfg["medium"], "normal"
+                vix_score, regime = scores_cfg["medium"], "normal"
 
-        result = {"score": round(macro_score, 4), "details": {"vix": round(vix, 2), "regime": regime}}
-        _macro_cache.set(today, result)
+        return {"score": round(vix_score, 4), "details": {"vix": round(vix, 2), "regime": regime}}
+
+    def score(self, market: str = "KRX") -> dict:
+        """Return macro environment score based on VIX + optional community sentiment.
+
+        Returns:
+            {"score": 0.0~1.0, "details": {"vix": float, "regime": str, "vix_score": float,
+             "community_score": float|None, "market": str, "community": dict|None}}
+        """
+        if not self._config.get("enabled", False):
+            return {"score": 0.5, "details": {"note": "macro disabled"}}
+
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        cache_key = f"{market}:{today}"
+        hit, cached = _macro_cache.get(cache_key)
+        if hit:
+            return cached
+
+        # VIX score
+        vix_result = self._get_vix_result()
+        vix_score = vix_result["score"]
+
+        # Community sentiment (KRX only)
+        community_score = None
+        community_details = {}
+        community_cfg = self._config.get("community_sentiment", {})
+        if market == "KRX" and community_cfg.get("enabled", False):
+            try:
+                from scoring.community_sentiment import CommunitySentimentCollector
+                comm_result = CommunitySentimentCollector().score()
+                community_score = comm_result["score"]
+                community_details = comm_result.get("details", {})
+                vix_w = float(community_cfg.get("vix_weight", 0.6))
+                macro_score = vix_w * vix_score + (1.0 - vix_w) * community_score
+            except Exception as e:
+                logger.warning(f"Community sentiment failed, using VIX only: {e}")
+                macro_score = vix_score
+        else:
+            macro_score = vix_score
+
+        result = {
+            "score": round(macro_score, 4),
+            "details": {
+                **vix_result["details"],
+                "vix_score": round(vix_score, 4),
+                "community_score": community_score,
+                "market": market,
+                "community": community_details if community_score is not None else None,
+            },
+        }
+        _macro_cache.set(cache_key, result)
         return result
 
     def _piecewise_linear(self, vix: float, anchors: list[list]) -> float:

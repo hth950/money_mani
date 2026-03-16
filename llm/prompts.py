@@ -196,8 +196,8 @@ Analyze the news and extract:
 Respond with ONLY a valid JSON array (no markdown, no extra text):
 [
   {{
-    "title": "<Issue title>",
-    "summary": "<Issue description (2-3 sentences)>",
+    "title": "<이슈 제목 (한국어)>",
+    "summary": "<이슈 설명 (2-3문장, 한국어)>",
     "category": "<policy|earnings|sector|global|event|supply_demand>",
     "sentiment": "<positive|negative|neutral|mixed>",
     "confidence": <0.0-1.0>,
@@ -206,16 +206,18 @@ Respond with ONLY a valid JSON array (no markdown, no extra text):
         "ticker": "<US ticker symbol (e.g. AAPL, MSFT, NVDA)>",
         "name": "<Company name>",
         "direction": "<up|down>",
-        "reason": "<Why this stock is affected>"
+        "reason": "<영향받는 이유 (한국어)>"
       }}
     ],
     "source_info": "<News source summary>"
   }}
 ]
 
-Rules:
-- Extract 3-8 issues minimum
-- Each issue should have 1-5 affected tickers
-- Use standard US ticker symbols (e.g. AAPL=Apple, MSFT=Microsoft, GOOGL=Alphabet, AMZN=Amazon, NVDA=NVIDIA, TSLA=Tesla, META=Meta, JPM=JPMorgan, V=Visa, JNJ=Johnson&Johnson)
-- Only include issues based on actual news (no speculation)
+규칙:
+- 최소 3개, 최대 8개 이슈를 분석하세요
+- 각 이슈마다 1-5개의 관련 종목을 지정하세요
+- 모든 텍스트 필드(title, summary, reason)는 반드시 한국어로 작성하세요
+- 티커 심볼, company name, 그리고 카테고리/감정 enum 값은 영문 유지
+- 표준 US 티커 심볼 사용 (예: AAPL=Apple, MSFT=Microsoft, GOOGL=Alphabet, AMZN=Amazon, NVDA=NVIDIA, TSLA=Tesla, META=Meta, JPM=JPMorgan, V=Visa, JNJ=Johnson&Johnson)
+- 실제 뉴스에 기반한 이슈만 포함하세요 (추측 금지)
 """

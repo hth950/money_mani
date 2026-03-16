@@ -36,5 +36,9 @@ python-multipart>=0.0.6
 # 웹 검색
 duckduckgo-search>=6.0.0
 
+# HTML 파싱 (커뮤니티 크롤링)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
 # 환경변수
 python-dotenv>=1.0.0
