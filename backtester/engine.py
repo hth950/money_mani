@@ -34,8 +34,11 @@ def _make_bt_strategy(signals: pd.Series, position_size: float) -> type:
             sig = self._sig.iloc[idx]
             if sig == 1 and not self.position:
                 size = self._position_size
-                if size <= 0 or size > 1:
-                    size = 1.0
+                # backtesting.py: size is a fraction only when 0 < size < 1.
+                # size >= 1.0 is treated as number of shares, not equity fraction.
+                # Clamp to 0.9999 to represent "full equity".
+                if size <= 0 or size >= 1.0:
+                    size = 0.9999
                 self.buy(size=size)
             elif sig == -1 and self.position:
                 self.position.close()
