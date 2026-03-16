@@ -2,7 +2,7 @@ name: ATR 추세추종 신고가
 description: 252일(1년) 신고가 돌파 매수 + ATR×10 트레일링 스탑 청산. Sharpe ~1.24, CAGR ~19.3%
 source: research_validated
 category: trend
-status: draft
+status: validated_v2
 timeframe: 1d
 markets:
 - KRX
