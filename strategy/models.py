@@ -19,6 +19,7 @@ class Strategy:
     backtest_results: dict | None = None
     market: str = "ALL"  # "KRX", "US", or "ALL"
     timeframe: str = "1d"
+    strategy_type: str = "indicator"  # "indicator" | "factor"
 
     @classmethod
     def from_yaml(cls, data: dict) -> "Strategy":
@@ -34,6 +35,7 @@ class Strategy:
             backtest_results=data.get("backtest_results", None),
             market=data.get("market", "ALL"),
             timeframe=data.get("timeframe", "1d"),
+            strategy_type=data.get("strategy_type", "indicator"),
         )
 
     def to_dict(self) -> dict:
@@ -49,4 +51,5 @@ class Strategy:
             "backtest_results": self.backtest_results,
             "market": self.market,
             "timeframe": self.timeframe,
+            "strategy_type": self.strategy_type,
         }
