@@ -13,6 +13,9 @@
             <option value="draft">초안 (Draft)</option>
             <option value="testing">테스트 중</option>
             <option value="validated">검증됨</option>
+            <option value="validated_v2">검증됨 v2 ✅</option>
+            <option value="rejected_v2">거부됨 v2</option>
+            <option value="archived">아카이브</option>
             <option value="retired">종료</option>
         </select>
     </div>
@@ -39,7 +42,7 @@
 function renderStrategies(data) {
     const tbody = document.getElementById('strategy-list');
     if (!data.length) { tbody.innerHTML = '<tr><td colspan="6">전략이 없습니다.</td></tr>'; return; }
-    const statusMap = {draft: '초안', testing: '테스트', validated: '검증됨', retired: '종료'};
+    const statusMap = {draft: '초안', testing: '테스트', validated: '검증됨', validated_v2: '검증됨 v2', rejected_v2: '거부됨 v2', archived: '아카이브', retired: '종료'};
     let html = '';
     data.forEach(s => {
         html += '<tr><td><span class="status-badge status-' + s.status + '">' + (statusMap[s.status]||s.status) + '</span></td>'

@@ -24,6 +24,41 @@ def run_schema_migrations():
                 if "duplicate column" not in str(e).lower() and "already exists" not in str(e).lower():
                     logger.error(f"Migration failed: {e}")
 
+        # Expand strategies.status CHECK constraint to include validated_v2 / rejected_v2 / archived
+        try:
+            row = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='strategies'"
+            ).fetchone()
+            if row and "validated_v2" not in row["sql"]:
+                logger.info("Migrating strategies.status CHECK constraint...")
+                db.execute("PRAGMA foreign_keys=OFF")
+                db.execute("ALTER TABLE strategies RENAME TO strategies_old")
+                db.execute("""
+                    CREATE TABLE strategies (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL UNIQUE,
+                        description TEXT,
+                        source TEXT,
+                        category TEXT,
+                        status TEXT CHECK(status IN (
+                            'draft','testing','validated','validated_v2',
+                            'rejected_v2','archived','retired'
+                        )),
+                        rules_json TEXT,
+                        indicators_json TEXT,
+                        parameters_json TEXT,
+                        backtest_results_json TEXT,
+                        created_at TEXT DEFAULT (datetime('now')),
+                        updated_at TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+                db.execute("INSERT INTO strategies SELECT * FROM strategies_old")
+                db.execute("DROP TABLE strategies_old")
+                db.execute("PRAGMA foreign_keys=ON")
+                logger.info("strategies.status CHECK constraint expanded successfully.")
+        except Exception as e:
+            logger.error(f"strategies status migration failed: {e}")
+
 def migrate_yaml_strategies():
     """Import strategies from config/strategies/*.yaml into SQLite if not already present."""
     registry = StrategyRegistry()

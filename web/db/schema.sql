@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS strategies (
     description TEXT,
     source TEXT,
     category TEXT,
-    status TEXT CHECK(status IN ('draft', 'testing', 'validated', 'retired')),
+    status TEXT CHECK(status IN ('draft', 'testing', 'validated', 'validated_v2', 'rejected_v2', 'archived', 'retired')),
     rules_json TEXT,
     indicators_json TEXT,
     parameters_json TEXT,

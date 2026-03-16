@@ -20,8 +20,11 @@ nav a {
 .signal-sell { color: #ff0000; font-weight: bold; }
 
 .status-validated { color: #00b050; }
+.status-validated_v2 { color: #00b050; font-weight: bold; }
 .status-testing { color: #f39c12; }
 .status-draft { color: #95a5a6; }
+.status-rejected_v2 { color: #e74c3c; }
+.status-archived { color: #aaaaaa; }
 .status-retired { color: #e74c3c; }
 
 table { font-size: 0.9rem; }

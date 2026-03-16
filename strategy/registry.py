@@ -83,12 +83,12 @@ class StrategyRegistry:
             yaml.safe_dump(strategy.to_dict(), f, allow_unicode=True, sort_keys=False)
 
     def get_validated(self) -> list[Strategy]:
-        """Return all strategies with status == 'validated'."""
+        """Return all strategies with status 'validated' or 'validated_v2'."""
         result = []
         for name in self.list_strategies():
             try:
                 strat = self.load(name)
-                if strat.status == "validated":
+                if strat.status in ("validated", "validated_v2"):
                     result.append(strat)
             except Exception:
                 pass
