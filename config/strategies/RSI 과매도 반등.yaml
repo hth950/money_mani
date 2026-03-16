@@ -2,7 +2,7 @@ name: RSI 과매도 반등
 description: RSI 30 이하 과매도 구간 진입, 70 이상 과매수 구간 청산
 source: classic_ta
 category: momentum
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

@@ -2,7 +2,7 @@ name: ADX 추세 (10/ADX>20)
 description: ADX(10)>20이고 DI+ > DI- 시 매수
 source: auto_generated
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

@@ -2,7 +2,7 @@ name: RSI + 볼린저 밴드 하단
 description: RSI 35 이하 + 볼린저 하단 터치시 매수 (이중 과매도 확인)
 source: composite
 category: mean_reversion
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

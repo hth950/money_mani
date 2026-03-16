@@ -2,7 +2,7 @@ name: 200일 이동평균 지지
 description: 200일 MA 위에서만 매수, 가격이 200일 MA 아래로 이탈시 전량 청산
 source: long_term
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

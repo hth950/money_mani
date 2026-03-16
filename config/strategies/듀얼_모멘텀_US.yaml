@@ -1,0 +1,28 @@
+name: 듀얼 모멘텀 US
+description: Gary Antonacci 듀얼 모멘텀 US버전. 12개월 절대 모멘텀(ROC_252>0) 매수/청산. Sharpe ~0.9
+source: research_validated
+category: momentum
+status: draft
+timeframe: 1d
+markets:
+- US
+indicators:
+- type: roc
+  column: close
+  output_name: ROC_252
+  period: 252
+rules:
+  entry:
+  - condition: threshold
+    indicator: ROC_252
+    direction: above
+    value: 0
+  exit:
+  - condition: threshold
+    indicator: ROC_252
+    direction: below
+    value: 0
+parameters:
+  position_size: 0.9999
+  stop_loss: 0.15
+backtest_results: {}

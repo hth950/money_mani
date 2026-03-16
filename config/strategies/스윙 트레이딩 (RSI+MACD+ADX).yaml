@@ -2,7 +2,7 @@ name: 스윙 트레이딩 (RSI+MACD+ADX)
 description: ADX>20 추세 확인 + RSI 30~50 + MACD 상향 전환시 스윙 매수
 source: swing_trading
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

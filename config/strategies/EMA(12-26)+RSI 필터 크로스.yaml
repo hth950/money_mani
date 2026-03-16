@@ -2,7 +2,7 @@ name: EMA(12-26)+RSI 필터 크로스
 description: EMA 12/26 크로스 + RSI>40 필터 매수
 source: auto_generated
 category: crossover
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: crossover

@@ -2,7 +2,7 @@ name: Golden Cross MA(20,60)
 description: MA20이 MA60을 상향 돌파하면 매수, 하향 돌파하면 매도
 source: builtin_example
 category: crossover
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: crossover

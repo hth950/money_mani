@@ -2,7 +2,7 @@ name: Ichimoku 구름 (13/34/68)
 description: Ichimoku(13,34,68) 구름 상방 돌파시 매수
 source: auto_generated
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

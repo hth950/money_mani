@@ -2,7 +2,7 @@ name: 거래량 급증+MACD
 description: 거래량 2배 급증 + MACD 히스토그램 양수시 매수
 source: auto_generated
 category: volume
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

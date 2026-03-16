@@ -2,7 +2,7 @@ name: ROC 모멘텀 (60/10%)
 description: ROC(60) 10% 이상 상승 모멘텀시 매수, 0% 이하 청산
 source: auto_generated
 category: momentum
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

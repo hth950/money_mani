@@ -1,0 +1,20 @@
+name: 피오트로스키 F스코어 KR
+description: 재무건전성 9개 기준 F-Score >= 7 매수. Sharpe ~1.38, CAGR ~24%
+source: research_validated
+category: factor
+status: draft
+strategy_type: factor
+timeframe: 1d
+markets:
+- KRX
+market: KRX
+indicators: []
+rules:
+  entry: []
+  exit: []
+parameters:
+  position_size: 0.9999
+  factor_metric: piotroski_fscore
+  buy_threshold: 7
+  sell_threshold: 2
+backtest_results: {}

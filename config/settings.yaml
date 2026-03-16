@@ -83,6 +83,11 @@ realtime:
   warmup_bars: 60
   max_buffer_size: 200
   cooldown_minutes: 30
+  consensus:
+    threshold: 0.55
+    hold_threshold: 0.50
+    min_hold_minutes: 60
+    urgent_threshold: 0.80
   watchlist:
     krx: ["005930", "000660", "035420", "035720", "051910"]
     us: ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA"]

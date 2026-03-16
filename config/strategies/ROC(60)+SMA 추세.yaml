@@ -2,7 +2,7 @@ name: ROC(60)+SMA 추세
 description: ROC(60)>8% + SMA 50 위 모멘텀 추세
 source: auto_generated
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

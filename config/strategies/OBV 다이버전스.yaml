@@ -2,7 +2,7 @@ name: OBV 다이버전스
 description: OBV 상승 추세 + 가격 횡보시 매수 (숨겨진 매집 탐지)
 source: volume_analysis
 category: volume
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

@@ -251,6 +251,16 @@ class SignalGenerator:
         elif itype == "highest":
             high = df.get("High", df.get("high", series))
             df[output_name] = high.rolling(window=period).max()
+        elif itype == "atr_stop":
+            # Trailing stop = rolling_max(Close, period) - multiplier * ATR
+            atr_col_name = ind.get("atr_col", "ATR_14")
+            multiplier = float(ind.get("multiplier", 10.0))
+            close = df.get("Close", df.get("close", series))
+            if atr_col_name in df.columns:
+                rolling_max_close = close.rolling(window=period).max()
+                df[output_name] = rolling_max_close - multiplier * df[atr_col_name]
+            else:
+                logger.warning(f"ATR column not found for atr_stop: {atr_col_name}")
         else:
             logger.warning(f"Unknown indicator type: {itype}")
 

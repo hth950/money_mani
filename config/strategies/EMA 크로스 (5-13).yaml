@@ -2,7 +2,7 @@ name: EMA 크로스 (5/13)
 description: EMA 5일이 EMA 13일을 상향 돌파시 매수
 source: auto_generated
 category: crossover
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: crossover

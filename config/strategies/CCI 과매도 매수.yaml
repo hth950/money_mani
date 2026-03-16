@@ -2,7 +2,7 @@ name: CCI 과매도 매수
 description: CCI -100 이하 진입, +100 이상 청산. 상품채널지수 역추세 전략
 source: classic_ta
 category: momentum
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

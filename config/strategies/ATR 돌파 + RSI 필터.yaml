@@ -2,7 +2,7 @@ name: ATR 돌파 + RSI 필터
 description: ATR 변동성 돌파 + RSI 50 이상 모멘텀 확인 매수
 source: auto_generated
 category: breakout
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

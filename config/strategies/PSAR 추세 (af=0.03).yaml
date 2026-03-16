@@ -2,7 +2,7 @@ name: PSAR 추세 (af=0.03)
 description: Parabolic SAR(af=0.03, max=0.3) 가격 하방에 있을 때 매수
 source: auto_generated
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

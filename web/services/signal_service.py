@@ -81,3 +81,79 @@ class SignalService:
         with get_db() as db:
             row = db.execute("SELECT * FROM signals WHERE id=?", (signal_id,)).fetchone()
             return dict(row) if row else None
+
+    def get_actions(self, days: int = 7) -> list[dict]:
+        """Return latest scoring-based actions per ticker for the trading dashboard.
+
+        Queries scoring_results directly (no signal_id JOIN required).
+        signal_id is NULL for BLOCKED decisions, so we derive action from composite_score.
+        Returns one entry per ticker (latest by scan_date).
+        """
+        import json as _json
+        since = f"-{days} days"
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT
+                    sr.ticker,
+                    sr.ticker_name,
+                    sr.market,
+                    sr.composite_score,
+                    sr.decision,
+                    sr.scan_date,
+                    sr.score_breakdown_json,
+                    p.status  AS position_status,
+                    p.pnl_pct
+                FROM scoring_results sr
+                LEFT JOIN positions p
+                    ON sr.ticker = p.ticker AND p.status = 'open'
+                WHERE sr.scan_date >= DATE('now', ?)
+                ORDER BY sr.scan_date DESC, sr.composite_score DESC
+                """,
+                (since,),
+            ).fetchall()
+
+        seen: set[str] = set()
+        actions: list[dict] = []
+        for row in rows:
+            ticker = row["ticker"]
+            if ticker in seen:
+                continue
+            seen.add(ticker)
+
+            score = row["composite_score"] or 0.0
+            if score >= 0.65:
+                conviction = "HIGH"
+            elif score >= 0.50:
+                conviction = "MED"
+            else:
+                conviction = "LOW"
+
+            # Derive action from score (signal_id may be NULL for BLOCKED decisions)
+            if score >= 0.65:
+                action = "BUY"
+            elif score <= 0.40:
+                action = "SELL"
+            else:
+                action = "WATCH"
+
+            try:
+                breakdown = _json.loads(row["score_breakdown_json"] or "{}")
+            except Exception:
+                breakdown = {}
+
+            actions.append({
+                "ticker": ticker,
+                "ticker_name": row["ticker_name"] or ticker,
+                "market": row["market"] or "KRX",
+                "action": action,
+                "conviction": conviction,
+                "composite_score": score,
+                "score_breakdown": breakdown,
+                "signal_price": None,
+                "last_signal_date": str(row["scan_date"] or "")[:10],
+                "is_holding": row["position_status"] == "open",
+                "pnl_pct": row["pnl_pct"],
+            })
+
+        return actions

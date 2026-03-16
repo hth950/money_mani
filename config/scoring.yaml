@@ -5,17 +5,17 @@ fallback_on_error: true
 # Market-specific weight profiles
 weights:
   KRX:
-    technical: 0.30
-    fundamental: 0.25
+    technical: 0.50
+    fundamental: 0.10
     flow: 0.20
-    intel: 0.15
+    intel: 0.10
     macro: 0.10
   US:
-    technical: 0.45
-    fundamental: 0.20
+    technical: 0.50
+    fundamental: 0.10
     flow: 0.0
     intel: 0.25
-    macro: 0.10
+    macro: 0.15
 
 # Decision thresholds
 thresholds:
@@ -115,6 +115,11 @@ macro:
     low: 0.7
     medium: 0.5
     high: 0.2
+  vix_anchors:  # piecewise-linear interpolation (fallback to step function if absent)
+    - [15, 0.80]
+    - [20, 0.70]
+    - [25, 0.50]
+    - [35, 0.15]
 
 flow_scoring:
   enabled: true

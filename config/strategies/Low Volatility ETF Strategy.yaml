@@ -2,7 +2,7 @@ name: Low Volatility ETF Strategy
 description: 변동성 기반 매매 - 볼린저밴드 폭이 좁아질 때 진입, 넓어지면 청산
 source: notebooklm
 category: extracted
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

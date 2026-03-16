@@ -1,57 +1,118 @@
 {% extends "base.html" %}
-{% block title %}신호 이력 - Money Mani{% endblock %}
+{% block title %}매매 대시보드 - Money Mani{% endblock %}
+
 {% block content %}
-<h1>신호 이력</h1>
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+  <h1 style="margin:0;">💹 매매 대시보드</h1>
+  <div style="display:flex; gap:0.5rem; align-items:center;">
+    <span id="last-updated" style="font-size:0.85rem; color:#888;"></span>
+    <button onclick="loadActions()" class="outline" style="padding:0.3rem 0.8rem;">🔄 새로고침</button>
+    <a href="/guide" style="padding:0.3rem 0.8rem;" role="button" class="outline">📖 매매 가이드</a>
+  </div>
+</div>
 
-<article>
-    <header>필터</header>
-    <div class="grid">
-        <label>종목 코드 <input type="text" id="filter-ticker" placeholder="예: 005930"></label>
-        <label>신호 타입
-            <select id="filter-type">
-                <option value="">전체</option>
-                <option value="BUY">매수 (BUY)</option>
-                <option value="SELL">매도 (SELL)</option>
-            </select>
-        </label>
-        <label>시작일 <input type="date" id="filter-from"></label>
-        <label>종료일 <input type="date" id="filter-to"></label>
-    </div>
-    <button onclick="loadSignals()">검색</button>
-</article>
+<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem;" id="action-columns">
+  <div>
+    <h3 style="color:#2d9e5f; margin-bottom:0.5rem;">✅ 매수 추천</h3>
+    <div id="buy-list"></div>
+  </div>
+  <div>
+    <h3 style="color:#e05252; margin-bottom:0.5rem;">🔴 매도 추천</h3>
+    <div id="sell-list"></div>
+  </div>
+  <div>
+    <h3 style="color:#888; margin-bottom:0.5rem;">👀 관망</h3>
+    <div id="watch-list"></div>
+  </div>
+</div>
 
-<div id="signals-table"><p>로딩 중...</p></div>
+<div id="no-data" style="display:none; text-align:center; padding:3rem; color:#888;">
+  <p>아직 매매 신호가 없습니다.</p>
+  <p style="font-size:0.9rem;">일일 스캔(장 마감 후)이 실행되면 여기에 표시됩니다.</p>
+</div>
 
 <script>
-function loadSignals() {
-    const params = new URLSearchParams();
-    const ticker = document.getElementById('filter-ticker').value;
-    const type = document.getElementById('filter-type').value;
-    const from = document.getElementById('filter-from').value;
-    const to = document.getElementById('filter-to').value;
-    if (ticker) params.set('ticker', ticker);
-    if (type) params.set('signal_type', type);
-    if (from) params.set('date_from', from);
-    if (to) params.set('date_to', to);
-
-    fetch('/api/signals?' + params.toString())
-        .then(r => r.json())
-        .then(data => {
-            const div = document.getElementById('signals-table');
-            if (!data.length) { div.innerHTML = '<p>신호 이력이 없습니다.</p>'; return; }
-            let html = '<table><thead><tr><th>시간</th><th>전략</th><th>종목</th><th>이름</th><th>시장</th><th>신호</th><th>가격</th><th>출처</th></tr></thead><tbody>';
-            data.forEach(s => {
-                const cls = s.signal_type === 'BUY' ? 'signal-buy' : 'signal-sell';
-                html += '<tr><td>' + (s.detected_at||'').substring(0,16) + '</td>'
-                    + '<td>' + s.strategy_name + '</td><td>' + s.ticker + '</td>'
-                    + '<td>' + (s.ticker_name||'') + '</td><td>' + s.market + '</td>'
-                    + '<td class="' + cls + '">' + s.signal_type + '</td>'
-                    + '<td>' + Number(s.price).toLocaleString() + '</td>'
-                    + '<td>' + s.source + '</td></tr>';
-            });
-            div.innerHTML = html + '</tbody></table>';
-        });
+function convictionColor(c) {
+  if (c === 'HIGH') return '#2d9e5f';
+  if (c === 'MED') return '#e09820';
+  return '#888';
 }
-loadSignals();
+
+function scoreBar(score) {
+  const pct = Math.round((score || 0) * 100);
+  const color = pct >= 65 ? '#2d9e5f' : pct >= 50 ? '#e09820' : '#e05252';
+  return `<div style="background:#eee; border-radius:4px; height:6px; margin:4px 0;">
+    <div style="width:${pct}%; background:${color}; height:6px; border-radius:4px;"></div>
+  </div><span style="font-size:0.8rem; color:${color};">${pct}%</span>`;
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s || '');
+  return d.innerHTML;
+}
+
+function renderCard(item) {
+  const holdBadge = item.is_holding
+    ? `<span style="background:#3b82f6;color:#fff;padding:1px 6px;border-radius:4px;font-size:0.75rem;margin-left:4px;">보유중${item.pnl_pct != null ? ' ' + (item.pnl_pct >= 0 ? '+' : '') + item.pnl_pct.toFixed(1) + '%' : ''}</span>`
+    : '';
+  const mktBadge = `<span style="font-size:0.75rem;color:#888;">${esc(item.market)}</span>`;
+  const scoreDisplay = scoreBar(item.composite_score);
+  const conviction = item.conviction || '-';
+  const convColor = convictionColor(conviction);
+  const date = item.last_signal_date || '-';
+  const price = item.signal_price ? item.signal_price.toLocaleString() : '-';
+
+  return `<div onclick="window.location='/scoring?ticker=${esc(item.ticker)}'"
+    style="border:1px solid #ddd; border-radius:8px; padding:0.75rem; margin-bottom:0.5rem; cursor:pointer; background:#fff; transition:box-shadow 0.2s;"
+    onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'"
+    onmouseout="this.style.boxShadow='none'">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-weight:600;">${esc(item.ticker_name)}</span>
+      <span style="font-size:0.8rem; color:#888;">${esc(item.ticker)}</span>
+    </div>
+    <div style="margin:2px 0;">${mktBadge}${holdBadge}</div>
+    ${scoreDisplay}
+    <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
+      <span style="color:${convColor}; font-weight:600;">${conviction}</span>
+      <span style="color:#888;">${date}</span>
+    </div>
+    <div style="font-size:0.8rem; color:#aaa;">신호가: ${price}</div>
+  </div>`;
+}
+
+async function loadActions() {
+  try {
+    const res = await fetch('/api/signals/actions?days=7');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    const buy = data.filter(d => d.action === 'BUY');
+    const sell = data.filter(d => d.action === 'SELL');
+    const watch = data.filter(d => d.action === 'WATCH');
+
+    document.getElementById('buy-list').innerHTML = buy.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
+    document.getElementById('sell-list').innerHTML = sell.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
+    document.getElementById('watch-list').innerHTML = watch.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
+
+    if (data.length === 0) {
+      document.getElementById('no-data').style.display = 'block';
+      document.getElementById('action-columns').style.display = 'none';
+    } else {
+      document.getElementById('no-data').style.display = 'none';
+      document.getElementById('action-columns').style.display = 'grid';
+    }
+
+    const now = new Date().toLocaleTimeString('ko-KR');
+    document.getElementById('last-updated').textContent = `최근 업데이트: ${now}`;
+  } catch (err) {
+    document.getElementById('action-columns').innerHTML =
+      '<p style="color:var(--pico-del-color,red);text-align:center;">데이터 로딩 실패: ' + err.message + '</p>';
+  }
+}
+
+loadActions();
+// Auto-refresh every 5 minutes
+setInterval(loadActions, 5 * 60 * 1000);
 </script>
 {% endblock %}

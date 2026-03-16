@@ -2,7 +2,7 @@ name: ADX 강한 추세 추종
 description: ADX 25 이상 강한 추세 + DI+ > DI-면 매수, ADX 하락시 청산
 source: trend_following
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

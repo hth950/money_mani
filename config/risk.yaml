@@ -1,6 +1,6 @@
 # Portfolio risk management configuration
 enabled: true
-max_positions: 20
+max_positions: 9999  # 무제한 (Paper Trading)
 max_single_weight: 0.20
 max_sector_weight: 0.30
 max_daily_loss: -0.03

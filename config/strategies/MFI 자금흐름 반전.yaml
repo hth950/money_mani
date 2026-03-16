@@ -2,7 +2,7 @@ name: MFI 자금흐름 반전
 description: MFI 20 이하 자금 유출 과다시 매수, 80 이상 자금 유입 과다시 매도
 source: classic_ta
 category: volume
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

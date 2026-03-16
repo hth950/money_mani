@@ -2,7 +2,7 @@ name: 듀얼 모멘텀 (절대+상대)
 description: 12개월 수익률 양수(절대 모멘텀) + 시장 대비 우위(상대 모멘텀) 충족시 매수
 source: gary_antonacci
 category: momentum
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

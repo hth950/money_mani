@@ -2,7 +2,7 @@ name: KC+MACD+RSI 트리플
 description: Keltner 상한 돌파 + MACD 양수 + RSI<70 여력 확인 매수
 source: auto_generated
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

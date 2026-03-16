@@ -2,7 +2,7 @@ name: 갭 상승 매수
 description: 전일 대비 2% 이상 갭 상승 시작시 모멘텀 매수, 당일 음봉 전환시 청산
 source: day_trading
 category: breakout
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

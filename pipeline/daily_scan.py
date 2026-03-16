@@ -189,6 +189,10 @@ class DailyScan:
         except Exception as e:
             logger.warning(f"Failed to load intel tickers for daily scan: {e}")
 
+        # Factor strategies scan (cross-sectional)
+        factor_signals = self._scan_factor_strategies("KRX" if is_krx_day else None, "US" if is_nyse_day else None)
+        signals.extend(factor_signals)
+
         # KRX scan (KRX/ALL strategies only)
         if is_krx_day:
             krx_tickers = self.config["pipeline"]["targets"].get("custom_tickers", [])
@@ -268,6 +272,85 @@ class DailyScan:
 
         return {"date": str(today), "signals": ensemble_signals, "all_signals": signals, "skipped": False}
 
+    def _scan_factor_strategies(self, krx_market=None, us_market=None) -> list[dict]:
+        """Scan factor-based strategies (low volatility, F-Score).
+
+        These strategies rank the entire universe rather than per-ticker rules.
+        """
+        from backtester.factor_ranker import FactorRanker
+        from strategy.registry import StrategyRegistry
+
+        signals = []
+        ranker = FactorRanker()
+        registry = StrategyRegistry()
+
+        # Find factor strategies (strategy_type == "factor")
+        factor_strategies = []
+        for name in registry.list_strategies():
+            try:
+                s = registry.load(name)
+                if getattr(s, 'strategy_type', 'indicator') == 'factor' and s.status in ('validated', 'validated_v2', 'draft'):
+                    factor_strategies.append(s)
+            except Exception:
+                pass
+
+        if not factor_strategies:
+            return signals
+
+        for strat in factor_strategies:
+            try:
+                market = strat.market  # "KRX" or "US"
+                if market == "KRX" and not krx_market:
+                    continue
+                if market == "US" and not us_market:
+                    continue
+
+                # Get universe from config
+                if market == "KRX":
+                    universe = self.config["pipeline"]["targets"].get("custom_tickers", [])
+                else:
+                    universe = self.config["pipeline"].get("us_targets", {}).get("custom_tickers", [])
+
+                factor_name = strat.parameters.get("factor_metric", "low_volatility")
+
+                if factor_name == "low_volatility":
+                    rankings = ranker.rank_low_volatility(universe, market)
+                elif factor_name == "piotroski_fscore":
+                    rankings = ranker.rank_piotroski(universe, market)
+                else:
+                    continue
+
+                # Convert rankings to signals
+                for ticker, signal_val in rankings.items():
+                    if signal_val == 1:
+                        signals.append({
+                            "strategy_name": strat.name,
+                            "category": strat.category,
+                            "ticker": ticker,
+                            "ticker_name": ticker,
+                            "signal_type": "BUY",
+                            "price": 0.0,  # Will be filled by scoring
+                            "market": market,
+                            "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                            "indicators": {"factor": factor_name, "rank_signal": signal_val},
+                        })
+                    elif signal_val == -1:
+                        signals.append({
+                            "strategy_name": strat.name,
+                            "category": strat.category,
+                            "ticker": ticker,
+                            "ticker_name": ticker,
+                            "signal_type": "SELL",
+                            "price": 0.0,
+                            "market": market,
+                            "date": datetime.now(KST).strftime("%Y-%m-%d"),
+                            "indicators": {"factor": factor_name, "rank_signal": signal_val},
+                        })
+            except Exception as e:
+                logger.error(f"Factor strategy {strat.name} failed: {e}")
+
+        return signals
+
     def _scan_market(self, strategies, tickers, market):
         """Scan tickers with all strategies. Optimized: fetch once per ticker, compute in parallel."""
         scan_start = time.time()
@@ -310,7 +393,14 @@ class DailyScan:
                         ticker, df = future.result()
                         if not df.empty and len(df) >= 60:
                             ohlcv_cache[ticker] = df
-                            ticker_names[ticker] = ticker
+                            # Try to get company name from yfinance
+                            try:
+                                import yfinance as yf
+                                info = yf.Ticker(ticker).info
+                                name = info.get("shortName") or info.get("longName") or ticker
+                                ticker_names[ticker] = name
+                            except Exception:
+                                ticker_names[ticker] = ticker
                     except Exception as e:
                         logger.warning(f"US fetch failed for {futures[future]}: {e}")
 
@@ -399,14 +489,21 @@ class DailyScan:
                 logger.info("Multi-layer scoring disabled, using consensus only")
                 return ensemble_signals
 
+            # Build combined OHLCV lookup {ticker: df} across both markets
+            all_ohlcv = {}
+            all_ohlcv.update(self._last_krx_ohlcv)
+            all_ohlcv.update(self._last_us_ohlcv)
+
             scored_signals = []
             for sig in ensemble_signals:
                 try:
+                    ohlcv_df = all_ohlcv.get(sig["ticker"])
                     result = scorer.score(
                         ticker=sig["ticker"],
                         market=sig.get("market", "KRX"),
                         consensus_count=sig.get("consensus_count", 1),
                         total_strategies=total_strategies,
+                        ohlcv_df=ohlcv_df,
                     )
 
                     # Attach scoring data to signal

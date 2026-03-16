@@ -1,0 +1,46 @@
+name: 외국인 기관 수급팔로잉
+description: OBV 상승 + MFI > 50 + 거래량 급증 조합으로 외국인/기관 매수 프록시. KRX only.
+source: research_validated
+category: flow
+status: draft
+strategy_type: indicator
+timeframe: 1d
+markets:
+- KRX
+market: KRX
+indicators:
+- type: obv
+  column: close
+  output_name: OBV
+  period: 14
+- type: mfi
+  column: close
+  output_name: MFI_14
+  period: 14
+- type: sma
+  column: close
+  output_name: OBV_SMA_20
+  period: 20
+- type: sma
+  column: volume
+  output_name: VOL_SMA_20
+  period: 20
+rules:
+  entry:
+  - condition: threshold_compare
+    indicator_a: OBV
+    indicator_b: OBV_SMA_20
+    direction: above
+  - condition: threshold
+    indicator: MFI_14
+    direction: above
+    value: 50
+  exit:
+  - condition: threshold_compare
+    indicator_a: OBV
+    indicator_b: OBV_SMA_20
+    direction: below
+parameters:
+  position_size: 0.9999
+  stop_loss: 0.08
+backtest_results: {}

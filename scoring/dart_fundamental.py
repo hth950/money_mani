@@ -149,27 +149,32 @@ class DARTFundamentalFetcher:
             logger.error(f"Failed to download DART corp codes: {e}")
             return {}
 
-    def get_financial_data(self, ticker: str) -> dict:
+    def get_financial_data(self, ticker: str, bsns_year: str = None) -> dict:
         """PER/PBR/ROE 계산용 재무 데이터 반환.
 
         캐시: 4시간 TTL.
         연결재무제표(CFS) 우선, 없으면 별도재무제표(OFS) 폴백.
 
+        Args:
+            ticker: KRX 종목코드
+            bsns_year: 회계연도 (e.g. "2023"). None이면 현재 날짜 기반 자동 결정.
+
         Returns:
             {"per": float, "pbr": float, "roe": float, "div_yield": float,
              "market_cap": float, "source": "dart"}
         """
+        cache_key = f"{ticker}_{bsns_year or 'current'}"
         if _financial_cache is not None:
-            hit, cached = _financial_cache.get(ticker)
+            hit, cached = _financial_cache.get(cache_key)
             if hit:
                 return cached
 
-        result = self._fetch_fundamentals(ticker)
+        result = self._fetch_fundamentals(ticker, bsns_year=bsns_year)
         if result and _financial_cache is not None:
-            _financial_cache.set(ticker, result)
+            _financial_cache.set(cache_key, result)
         return result
 
-    def _fetch_fundamentals(self, ticker: str) -> dict:
+    def _fetch_fundamentals(self, ticker: str, bsns_year: str = None) -> dict:
         """실제 DART API 호출로 펀더멘탈 계산."""
         # 1. corp_code 조회
         corp_map = self.get_corp_code_map()
@@ -178,10 +183,11 @@ class DARTFundamentalFetcher:
             logger.warning(f"No corp_code for {ticker}")
             return {}
 
-        # 2. 최신 회계연도 결정 (당해 3월 이전이면 전전년도)
-        now = datetime.now(KST)
-        year = now.year - 1 if now.month < 4 else now.year - 1
-        bsns_year = str(year)
+        # 2. 회계연도 결정: 파라미터 있으면 사용, 없으면 현재 날짜 기반
+        if bsns_year is None:
+            now = datetime.now(KST)
+            year = now.year - 1 if now.month < 4 else now.year - 1
+            bsns_year = str(year)
 
         # 3. 재무제표 (CFS 우선, OFS 폴백)
         financials = {}
@@ -259,7 +265,7 @@ class DARTFundamentalFetcher:
             if key and key not in result:
                 try:
                     val = int(thstrm_amount.replace(",", ""))
-                    result[key] = val * 1_000_000  # 단위: 백만원 → 원
+                    result[key] = val  # 단위: 원 (DART fnlttSinglAcntAll은 이미 원 단위 반환)
                 except (ValueError, AttributeError):
                     pass
 

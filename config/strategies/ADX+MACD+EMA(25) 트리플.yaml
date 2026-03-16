@@ -2,7 +2,7 @@ name: ADX+MACD+EMA(25) 트리플
 description: ADX+MACD+EMA
 source: auto_generated
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

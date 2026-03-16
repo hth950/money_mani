@@ -1,0 +1,21 @@
+name: 저변동성 팩터 US
+description: 252일 연율화 변동성 하위 20% 매수. Sharpe ~0.72, 시장 하락기 방어적 성과
+source: research_validated
+category: factor
+status: draft
+strategy_type: factor
+timeframe: 1d
+markets:
+- US
+market: US
+indicators: []
+rules:
+  entry: []
+  exit: []
+parameters:
+  position_size: 0.9999
+  factor_metric: low_volatility
+  lookback_days: 252
+  buy_percentile: 20
+  sell_percentile: 80
+backtest_results: {}

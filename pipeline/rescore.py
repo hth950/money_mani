@@ -3,9 +3,15 @@
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from scoring.multi_layer_scorer import _load_scoring_config
 
 KST = timezone(timedelta(hours=9))
 logger = logging.getLogger("money_mani.pipeline.rescore")
+
+# scoring.yaml에서 시장별 기본 가중치 로드
+_scoring_cfg = _load_scoring_config()
+_DEFAULT_WEIGHTS = _scoring_cfg.get("weights", {})
+
 
 
 def run_rescore(tickers: list[str] | None = None) -> int:
@@ -83,11 +89,12 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                 except Exception:
                     weights = {}
 
-                w_tech = weights.get("technical", 0.27)
-                w_fund = weights.get("fundamental", 0.23)
-                w_flow = weights.get("flow", 0.18)
-                w_intel = weights.get("intel", 0.22)
-                w_macro = weights.get("macro", 0.10)
+                mw = _DEFAULT_WEIGHTS.get(market, _DEFAULT_WEIGHTS.get("KRX", {}))
+                w_tech = weights.get("technical", mw.get("technical", 0.50))
+                w_fund = weights.get("fundamental", mw.get("fundamental", 0.10))
+                w_flow = weights.get("flow", mw.get("flow", 0.20))
+                w_intel = weights.get("intel", mw.get("intel", 0.10))
+                w_macro = weights.get("macro", mw.get("macro", 0.10))
 
                 new_composite = round(
                     min(
@@ -172,9 +179,10 @@ def rescore_ticker_by_signal(ticker: str, market: str, signal_type: str) -> bool
         except Exception:
             weights = {}
 
+        mw = _DEFAULT_WEIGHTS.get(market, _DEFAULT_WEIGHTS.get("KRX", {}))
         fund_score = FundamentalCollector().score(ticker, market).get("score", 0.5)
         flow_score = FlowCollector().score(ticker, market).get("score", 0.5)
-        macro_score = MacroCollector().score(ticker, market).get("score", 0.5)
+        macro_score = MacroCollector().score().get("score", 0.5)
         intel_score = IntelScorer().score(ticker, market).get("score", 0.5)
 
         new_composite = round(
@@ -182,11 +190,11 @@ def rescore_ticker_by_signal(ticker: str, market: str, signal_type: str) -> bool
                 1.0,
                 max(
                     0.0,
-                    new_tech * weights.get("technical", 0.27)
-                    + fund_score * weights.get("fundamental", 0.23)
-                    + flow_score * weights.get("flow", 0.18)
-                    + intel_score * weights.get("intel", 0.22)
-                    + macro_score * weights.get("macro", 0.10),
+                    new_tech * weights.get("technical", mw.get("technical", 0.50))
+                    + fund_score * weights.get("fundamental", mw.get("fundamental", 0.10))
+                    + flow_score * weights.get("flow", mw.get("flow", 0.20))
+                    + intel_score * weights.get("intel", mw.get("intel", 0.10))
+                    + macro_score * weights.get("macro", mw.get("macro", 0.10)),
                 ),
             ),
             4,
