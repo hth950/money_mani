@@ -2,7 +2,7 @@ name: 데드크로스 공매도
 description: MA20이 MA60을 하향 돌파시 매도 신호, 상향 복귀시 청산
 source: classic_ta
 category: crossover
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: crossover

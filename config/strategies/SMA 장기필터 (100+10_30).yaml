@@ -2,7 +2,7 @@ name: SMA 장기필터 (100+10/30)
 description: SMA100 위에서 10/30 크로스 매수
 source: auto_generated
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

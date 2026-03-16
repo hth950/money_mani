@@ -2,7 +2,7 @@ name: EMA 5-20 MACD 히스토그램
 description: EMA 5>20 + MACD 히스토그램 양전환 복합 조건 매수
 source: composite
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

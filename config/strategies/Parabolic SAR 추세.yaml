@@ -2,7 +2,7 @@ name: Parabolic SAR 추세
 description: Parabolic SAR이 가격 아래로 전환시 매수, 위로 전환시 매도
 source: classic_ta
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

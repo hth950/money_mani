@@ -2,7 +2,7 @@ name: SMA 삼중 정렬 (10-25-75)
 description: SMA 10 > 25 > 75 정렬 확인 추세 매수
 source: auto_generated
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

@@ -2,7 +2,7 @@ name: MA 수렴 확산 (10/20/50)
 description: SMA 10/20/50 수렴 후 확산시 추세 시작 매수
 source: auto_generated
 category: volatility
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: crossover

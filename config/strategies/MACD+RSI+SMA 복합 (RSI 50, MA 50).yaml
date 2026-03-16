@@ -2,7 +2,7 @@ name: MACD+RSI+SMA 복합 (RSI 50, MA 50)
 description: MACD 양수 + RSI>50 + SMA(50) 지지 매수
 source: auto_generated
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

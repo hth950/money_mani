@@ -2,7 +2,7 @@ name: ATR 변동성 돌파
 description: 전일 종가 + ATR*0.5 이상 돌파시 매수 (래리 윌리엄스 변형)
 source: larry_williams
 category: breakout
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

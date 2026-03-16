@@ -2,7 +2,7 @@ name: EMA(10/40)+RSI+ATR
 description: EMA 10/40 크로스 + RSI>45 + ATR 돌파 확인 매수
 source: auto_generated
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: crossover

@@ -2,7 +2,7 @@ name: SMA(50)+MACD 추세
 description: SMA(50)+MACD
 source: auto_generated
 category: trend
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

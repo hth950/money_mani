@@ -2,7 +2,7 @@ name: EMA(8-25)+RSI 모멘텀
 description: EMA 8/25+RSI>45
 source: auto_generated
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

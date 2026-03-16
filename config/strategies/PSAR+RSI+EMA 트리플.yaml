@@ -2,7 +2,7 @@ name: PSAR+RSI+EMA 트리플
 description: PSAR 매수 + RSI>45 + EMA 20 위 매수
 source: auto_generated
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

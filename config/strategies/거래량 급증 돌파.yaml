@@ -2,7 +2,7 @@ name: 거래량 급증 돌파
 description: 20일 평균 거래량 대비 2배 이상 급증 + 가격 상승시 매수
 source: volume_analysis
 category: volume
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold

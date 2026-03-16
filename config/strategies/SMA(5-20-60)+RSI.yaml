@@ -2,7 +2,7 @@ name: SMA(5-20-60)+RSI
 description: SMA triple+RSI
 source: auto_generated
 category: composite
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare

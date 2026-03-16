@@ -2,7 +2,7 @@ name: Donchian Channel 돌파
 description: 20일 최고가 돌파시 매수 (터틀 트레이딩), 10일 최저가 이탈시 매도
 source: turtle_trading
 category: breakout
-status: rejected_v2
+status: archived
 rules:
   entry:
   - condition: threshold_compare
