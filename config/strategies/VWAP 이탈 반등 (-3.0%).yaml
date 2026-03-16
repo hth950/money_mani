@@ -2,7 +2,7 @@ name: VWAP 이탈 반등 (-3.0%)
 description: VWAP 대비 -3.0% 이상 하락시 평균회귀 매수
 source: auto_generated
 category: mean_reversion
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

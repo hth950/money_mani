@@ -2,7 +2,7 @@ name: EMA 20+Donchian(15) 복합
 description: EMA20+DC
 source: auto_generated
 category: composite
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold_compare

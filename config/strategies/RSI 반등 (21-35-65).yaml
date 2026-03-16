@@ -2,7 +2,7 @@ name: RSI 반등 (21/35/65)
 description: RSI(21) 35 이하 진입, 65 이상 청산
 source: auto_generated
 category: momentum
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

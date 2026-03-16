@@ -2,7 +2,7 @@ name: RSI+Stochastic 이중 과매도
 description: RSI<35 + Stochastic<25 이중 과매도 확인 반등 매수
 source: auto_generated
 category: composite
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

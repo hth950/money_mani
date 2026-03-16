@@ -2,7 +2,7 @@ name: Donchian+ADX 돌파
 description: Donchian 20일 상한 돌파 + ADX>20 추세 확인 매수
 source: auto_generated
 category: composite
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold_compare

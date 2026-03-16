@@ -2,7 +2,7 @@ name: Williams %R (21/-90)
 description: Williams %R(21) -90 이하 진입, -10 이상 청산
 source: auto_generated
 category: momentum
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

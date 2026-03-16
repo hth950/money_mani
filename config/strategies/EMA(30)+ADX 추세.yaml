@@ -2,7 +2,7 @@ name: EMA(30)+ADX 추세
 description: EMA(30) 위 + ADX>20 추세 매수
 source: auto_generated
 category: trend
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold_compare

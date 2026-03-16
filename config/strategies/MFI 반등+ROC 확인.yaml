@@ -2,7 +2,7 @@ name: MFI 반등+ROC 확인
 description: MFI<25 과매도 + ROC(5) 양수(모멘텀 전환) 매수
 source: auto_generated
 category: volume
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

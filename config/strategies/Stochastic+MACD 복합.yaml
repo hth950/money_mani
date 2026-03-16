@@ -2,7 +2,7 @@ name: Stochastic+MACD 복합
 description: Stochastic 과매도 + MACD 시그널 크로스 매수
 source: auto_generated
 category: composite
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

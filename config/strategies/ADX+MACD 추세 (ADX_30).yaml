@@ -2,7 +2,7 @@ name: ADX+MACD 추세 (ADX>30)
 description: ADX>30 강한 추세 + MACD 히스토그램 양수 매수
 source: auto_generated
 category: trend
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

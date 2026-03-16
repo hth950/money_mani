@@ -2,7 +2,7 @@ name: EMA+CCI+거래량 복합
 description: EMA 20 지지 + CCI>0 모멘텀 + 거래량 1.5배 매수
 source: auto_generated
 category: composite
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold_compare

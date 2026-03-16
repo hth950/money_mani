@@ -2,7 +2,7 @@ name: Donchian 돌파 (10)
 description: Donchian Channel 10일 상한 돌파시 매수, 하한 이탈시 매도
 source: auto_generated
 category: breakout
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold_compare

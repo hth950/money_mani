@@ -2,7 +2,7 @@ name: 60일 신고가 돌파
 description: 60일 최고가 돌파시 모멘텀 매수
 source: auto_generated
 category: breakout
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold_compare

@@ -2,7 +2,7 @@ name: RSI 반등 (7/25/75)
 description: RSI(7) 25 이하 진입, 75 이상 청산
 source: auto_generated
 category: momentum
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

@@ -2,7 +2,7 @@ name: Stochastic 크로스 (9)
 description: Stochastic K(9)가 D를 과매도 구간에서 상향 돌파시 매수
 source: auto_generated
 category: crossover
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

@@ -2,7 +2,7 @@ name: ADX 추세 (14/ADX>30)
 description: ADX(14)>30이고 DI+ > DI- 시 매수
 source: auto_generated
 category: trend
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold
