@@ -1,6 +1,7 @@
 """Signal persistence service."""
 import json
 import logging
+import time
 from web.db.connection import get_db
 
 logger = logging.getLogger("money_mani.web.services.signal")
@@ -157,3 +158,65 @@ class SignalService:
             })
 
         return actions
+
+    def get_exit_scores_for_holdings(self) -> list[dict]:
+        """Return exit score info for all open positions from scoring_results."""
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT sr.ticker, sr.ticker_name, sr.market,
+                       sr.exit_score, sr.exit_decision,
+                       sr.composite_score, sr.scan_date,
+                       p.entry_price, p.entry_date, p.pnl_pct
+                FROM scoring_results sr
+                JOIN positions p ON sr.ticker = p.ticker AND p.status = 'open'
+                WHERE sr.exit_score IS NOT NULL
+                  AND sr.scan_date = (
+                      SELECT MAX(scan_date) FROM scoring_results WHERE ticker = sr.ticker
+                  )
+                ORDER BY sr.exit_score ASC
+                """
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_signal_summary(self, ticker: str, market: str) -> dict:
+        """Generate an AI-powered plain-language summary for a ticker's current signals.
+
+        Uses a module-level TTL cache (5 min) to avoid repeated LLM calls.
+        Returns {"ticker": str, "summary": str, "generated_at": float}.
+        """
+        cache_key = f"{ticker}:{market}"
+        now = time.time()
+        cached = _summary_cache.get(cache_key)
+        if cached and now - cached["generated_at"] < 300:
+            return cached
+
+        # Gather context
+        actions = self.get_actions(days=7)
+        item = next((a for a in actions if a["ticker"] == ticker), None)
+
+        try:
+            from llm.prompts import SIGNAL_SUMMARY_PROMPT
+            from llm.client import call_llm
+            breakdown = item.get("score_breakdown", {}) if item else {}
+            composite = item.get("composite_score", 0.0) if item else 0.0
+            action = item.get("action", "WATCH") if item else "WATCH"
+            prompt = SIGNAL_SUMMARY_PROMPT.format(
+                ticker=ticker,
+                market=market,
+                action=action,
+                composite_score=f"{composite:.2f}",
+                score_breakdown=json.dumps(breakdown, ensure_ascii=False),
+            )
+            summary_text = call_llm(prompt)
+        except Exception as e:
+            logger.warning(f"Signal summary LLM failed for {ticker}: {e}")
+            summary_text = f"{ticker} 신호 요약을 생성할 수 없습니다."
+
+        result = {"ticker": ticker, "summary": summary_text, "generated_at": now}
+        _summary_cache[cache_key] = result
+        return result
+
+
+# Module-level summary cache: {cache_key: {ticker, summary, generated_at}}
+_summary_cache: dict = {}

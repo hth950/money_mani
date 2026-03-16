@@ -121,7 +121,7 @@ macro:
     - [25, 0.50]
     - [35, 0.15]
   community_sentiment:
-    enabled: false          # safe rollout: test locally first, then enable
+    enabled: true           # 커뮤니티 감성 활성화
     vix_weight: 0.6
     max_posts: 30
     request_delay: 2.5

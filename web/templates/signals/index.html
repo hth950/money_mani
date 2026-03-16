@@ -52,10 +52,46 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function exitBadge(item) {
+  if (item.exit_score == null) return '';
+  const pct = Math.round(item.exit_score * 100);
+  const dec = item.exit_decision || '';
+  let bg = '#6b7280', label = 'HOLD';
+  if (dec === 'SELL_EXECUTE') { bg = '#dc2626'; label = '매도실행'; }
+  else if (dec === 'SELL_WATCH') { bg = '#f59e0b'; label = '매도경고'; }
+  return `<span style="background:${bg};color:#fff;padding:1px 6px;border-radius:4px;font-size:0.72rem;margin-left:4px;">Exit ${pct}% ${label}</span>`;
+}
+
+async function showSummary(ticker, market, btn) {
+  const card = btn.closest('div[data-card]');
+  const textEl = card ? card.querySelector('.summary-text') : btn.nextElementSibling;
+  if (!textEl) return;
+  if (textEl.style.display !== 'none' && textEl.textContent) {
+    textEl.style.display = 'none';
+    btn.textContent = 'AI 요약';
+    return;
+  }
+  btn.textContent = '로딩중...';
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/signals/summary/${encodeURIComponent(ticker)}?market=${encodeURIComponent(market)}`);
+    const data = await res.json();
+    textEl.textContent = data.summary || '요약 없음';
+    textEl.style.display = 'inline';
+    btn.textContent = '닫기';
+  } catch (e) {
+    textEl.textContent = '요약 실패';
+    textEl.style.display = 'inline';
+    btn.textContent = 'AI 요약';
+  }
+  btn.disabled = false;
+}
+
 function renderCard(item) {
   const holdBadge = item.is_holding
     ? `<span style="background:#3b82f6;color:#fff;padding:1px 6px;border-radius:4px;font-size:0.75rem;margin-left:4px;">보유중${item.pnl_pct != null ? ' ' + (item.pnl_pct >= 0 ? '+' : '') + item.pnl_pct.toFixed(1) + '%' : ''}</span>`
     : '';
+  const eBadge = item.is_holding ? exitBadge(item) : '';
   const mktBadge = `<span style="font-size:0.75rem;color:#888;">${esc(item.market)}</span>`;
   const scoreDisplay = scoreBar(item.composite_score);
   const conviction = item.conviction || '-';
@@ -63,29 +99,57 @@ function renderCard(item) {
   const date = item.last_signal_date || '-';
   const price = item.signal_price ? item.signal_price.toLocaleString() : '-';
 
-  return `<div onclick="window.location='/scoring?ticker=${esc(item.ticker)}'"
-    style="border:1px solid #ddd; border-radius:8px; padding:0.75rem; margin-bottom:0.5rem; cursor:pointer; background:#fff; transition:box-shadow 0.2s;"
+  return `<div data-card="1" style="border:1px solid #ddd; border-radius:8px; padding:0.75rem; margin-bottom:0.5rem; background:#fff; transition:box-shadow 0.2s;"
     onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'"
     onmouseout="this.style.boxShadow='none'">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
+    <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="window.location='/scoring?ticker=${esc(item.ticker)}'">
       <span style="font-weight:600;">${esc(item.ticker_name)}</span>
       <span style="font-size:0.8rem; color:#888;">${esc(item.ticker)}</span>
     </div>
-    <div style="margin:2px 0;">${mktBadge}${holdBadge}</div>
+    <div style="margin:2px 0;">${mktBadge}${holdBadge}${eBadge}</div>
     ${scoreDisplay}
     <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
       <span style="color:${convColor}; font-weight:600;">${conviction}</span>
       <span style="color:#888;">${date}</span>
     </div>
     <div style="font-size:0.8rem; color:#aaa;">신호가: ${price}</div>
+    <div style="margin-top:6px; display:flex; align-items:flex-start; gap:6px; flex-wrap:wrap;">
+      <button class="outline" style="font-size:0.75rem;padding:2px 8px;" onclick="showSummary('${esc(item.ticker)}','${esc(item.market)}',this)">AI 요약</button>
+      <span class="summary-text" style="font-size:0.8rem;color:#555;display:none;flex:1;"></span>
+    </div>
   </div>`;
+}
+
+// Merge exit score data into actions list
+let _exitScores = {};
+
+async function loadExitScores() {
+  try {
+    const res = await fetch('/api/signals/exit-scores');
+    if (!res.ok) return;
+    const data = await res.json();
+    _exitScores = {};
+    for (const row of data) {
+      _exitScores[row.ticker] = row;
+    }
+  } catch (e) { /* non-critical */ }
 }
 
 async function loadActions() {
   try {
+    await loadExitScores();
     const res = await fetch('/api/signals/actions?days=7');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
+
+    // Merge exit score fields into each action item
+    for (const item of data) {
+      const es = _exitScores[item.ticker];
+      if (es) {
+        item.exit_score = es.exit_score;
+        item.exit_decision = es.exit_decision;
+      }
+    }
 
     const buy = data.filter(d => d.action === 'BUY');
     const sell = data.filter(d => d.action === 'SELL');

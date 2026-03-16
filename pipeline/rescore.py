@@ -150,6 +150,37 @@ def run_rescore(tickers: list[str] | None = None) -> int:
 
     logger.info(f"Rescore complete: {updated}/{len(to_update)} tickers updated")
 
+    # Compute exit scores for open positions (non-critical)
+    try:
+        from web.services.position_service import PositionService
+        from scoring.exit_scorer import ExitScorer
+        import yfinance as yf
+
+        exit_scorer = ExitScorer()
+        if exit_scorer.enabled:
+            open_positions = PositionService().get_open_positions()
+            for pos in open_positions:
+                try:
+                    p_ticker = pos["ticker"]
+                    p_market = pos["market"]
+                    p_entry_price = pos["entry_price"]
+                    p_entry_date = pos["entry_date"]
+                    yf_ticker = p_ticker + ".KS" if p_market == "KRX" else p_ticker
+                    df = yf.download(yf_ticker, period="6mo", progress=False, auto_adjust=True)
+                    if df is not None and len(df) >= 20:
+                        result = exit_scorer.evaluate(p_ticker, p_market, p_entry_price, p_entry_date, df)
+                        with get_db() as db:
+                            db.execute(
+                                "UPDATE scoring_results SET exit_score=?, exit_decision=? "
+                                "WHERE ticker=? AND scan_date=(SELECT MAX(scan_date) FROM scoring_results WHERE ticker=?)",
+                                (result["exit_score"], result["decision"], p_ticker, p_ticker),
+                            )
+                        logger.info(f"Exit score updated: {p_ticker} score={result['exit_score']} [{result['decision']}]")
+                except Exception as ex:
+                    logger.debug(f"Exit score failed for {pos.get('ticker')}: {ex}")
+    except Exception:
+        pass  # non-critical
+
     # Save macro snapshot once per rescore run (non-critical)
     try:
         from web.services.macro_service import MacroService

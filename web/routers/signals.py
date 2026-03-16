@@ -16,3 +16,15 @@ async def list_signals(ticker: str = None, signal_type: str = None,
 @router.get("/actions")
 async def get_actions(days: int = Query(7, ge=1, le=30)):
     return service.get_actions(days=days)
+
+
+@router.get("/exit-scores")
+async def get_exit_scores():
+    """Return exit scores for all open positions."""
+    return service.get_exit_scores_for_holdings()
+
+
+@router.get("/summary/{ticker}")
+async def get_signal_summary(ticker: str, market: str = "KRX"):
+    """Return AI-generated plain-language summary for a ticker's current signals."""
+    return service.get_signal_summary(ticker, market)

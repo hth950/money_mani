@@ -221,3 +221,17 @@ Respond with ONLY a valid JSON array (no markdown, no extra text):
 - 표준 US 티커 심볼 사용 (예: AAPL=Apple, MSFT=Microsoft, GOOGL=Alphabet, AMZN=Amazon, NVDA=NVIDIA, TSLA=Tesla, META=Meta, JPM=JPMorgan, V=Visa, JNJ=Johnson&Johnson)
 - 실제 뉴스에 기반한 이슈만 포함하세요 (추측 금지)
 """
+
+SIGNAL_SUMMARY_PROMPT = """당신은 주식 투자 어시스턴트입니다. 아래 정보를 바탕으로 해당 종목의 현재 투자 신호를 한국어로 2~3문장으로 간결하게 요약하세요.
+
+종목: {ticker} ({market})
+현재 액션: {action}
+복합 점수: {composite_score}
+축별 점수: {score_breakdown}
+
+규칙:
+- 투자 권고가 아닌 시스템 신호 요약임을 명시하세요
+- 점수 수치를 포함해 근거를 설명하세요
+- 2~3문장으로 간결하게 작성하세요
+- 마크다운 없이 평문으로 작성하세요
+"""

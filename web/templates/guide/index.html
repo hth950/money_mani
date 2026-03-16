@@ -65,7 +65,7 @@
   Technical  50%                                      │
   Fundamental 10%                                     │
   Flow        20%                           [재스코어링]
-  Intel       10%                        (09:30/11:30/13:30/15:30)
+  Intel       10%                        (매 10분 자동 재스코어링)
   Macro       10%                                     │
     ↓                                                 │
 [scoring_results DB]   ←───── [인텔 스캔 매시] ────────┘
@@ -419,10 +419,7 @@
       <tr><td><strong>08:00</strong></td><td><strong>일일 스캔</strong></td><td>전 감시 종목 기술적 전략 합의 평가 + 5축 스코어 계산 → DB 저장</td></tr>
       <tr><td>08:50</td><td>실시간 모니터 시작</td><td>KRX 장 시작 10분 전 자동 시작</td></tr>
       <tr><td>09:00~15:00 (매시)</td><td><strong>인텔 스캔</strong></td><td>KRX 뉴스·공시 AI 분석 → Intel Score 갱신 → 전 종목 재스코어링</td></tr>
-      <tr><td>09:30</td><td>재스코어링</td><td>최신 캐시로 전 종목 복합 점수 재계산</td></tr>
-      <tr><td>11:30</td><td>재스코어링</td><td></td></tr>
-      <tr><td>13:30</td><td>재스코어링</td><td></td></tr>
-      <tr><td>15:30</td><td>재스코어링</td><td></td></tr>
+      <tr><td>매 10분마다 자동 실행</td><td>재스코어링</td><td>최신 캐시로 전 종목 복합 점수 재계산</td></tr>
       <tr><td>15:35</td><td>실시간 모니터 종료</td><td>KRX 장 마감 후 자동 종료</td></tr>
       <tr><td>16:00</td><td>인텔 가격 추적</td><td>시그널 발생 종목의 당일 종가 기록 → accuracy_score 계산</td></tr>
       <tr><td><strong>16:10</strong></td><td><strong>수급 재스코어링</strong></td><td>Flow 캐시 강제 만료 → 당일 수급 데이터로 재계산</td></tr>
@@ -459,7 +456,7 @@
   <table>
     <thead><tr><th>트리거</th><th>시점</th><th>대상</th></tr></thead>
     <tbody>
-      <tr><td>스케줄 재스코어링</td><td>09:30 / 11:30 / 13:30 / 15:30</td><td>오늘 스캔된 전 종목</td></tr>
+      <tr><td>스케줄 재스코어링</td><td>매 10분마다 자동 실행</td><td>오늘 스캔된 전 종목</td></tr>
       <tr><td>인텔 스캔 완료 후</td><td>매시 인텔 스캔 직후</td><td>전 종목</td></tr>
       <tr><td>수급 재스코어링</td><td>16:10 (Flow 캐시 강제 만료 후)</td><td>전 종목</td></tr>
       <tr><td><strong>합의 전환 즉시</strong></td><td>실시간 모니터에서 Consensus Flip 감지 즉시</td><td><strong>해당 종목만</strong></td></tr>
@@ -526,6 +523,7 @@
       <tr><td><a href="/strategies">/strategies</a></td><td>전략 목록</td><td>기술적 전략 관리 (YAML 기반)</td></tr>
       <tr><td><a href="/scanner">/scanner</a></td><td>일일 스캔</td><td>당일 스캔 결과 확인</td></tr>
       <tr><td><a href="/discovery">/discovery</a></td><td>종목 발굴</td><td>신규 유망 종목 스캔 결과</td></tr>
+      <tr><td><a href="/macro">/macro</a></td><td>매크로 현황</td><td>VIX 추이, 매크로 스냅샷 히스토리</td></tr>
       <tr><td><a href="/guide">/guide</a></td><td>매매 가이드</td><td>이 페이지</td></tr>
     </tbody>
   </table>

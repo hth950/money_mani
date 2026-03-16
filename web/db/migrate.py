@@ -23,6 +23,10 @@ def run_schema_migrations():
          "ALTER TABLE scoring_results ADD COLUMN ticker_name TEXT"),
         ("scoring_results_macro_score",
          "ALTER TABLE scoring_results ADD COLUMN macro_score REAL"),
+        ("scoring_results_exit_score",
+         "ALTER TABLE scoring_results ADD COLUMN exit_score REAL"),
+        ("scoring_results_exit_decision",
+         "ALTER TABLE scoring_results ADD COLUMN exit_decision TEXT"),
         ("macro_snapshots_table",
          """CREATE TABLE IF NOT EXISTS macro_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
