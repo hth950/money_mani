@@ -2,7 +2,7 @@ name: MACD 크로스 (8/17/9)
 description: MACD(8,17,9) 시그널선 상향 돌파시 매수
 source: auto_generated
 category: crossover
-status: rejected
+status: archived
 rules:
   entry:
   - condition: crossover

@@ -2,7 +2,7 @@ name: 거래량 급증+RSI (20/RSI>40)
 description: 거래량 SMA(20) 2배 이상 급증 + RSI>40 매수
 source: auto_generated
 category: volume
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

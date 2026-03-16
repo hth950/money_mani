@@ -2,7 +2,7 @@ name: MFI+BB 하단 반등
 description: MFI<20 + BB 하단 이하 → 자금유출 과매도 반등
 source: auto_generated
 category: mean_reversion
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

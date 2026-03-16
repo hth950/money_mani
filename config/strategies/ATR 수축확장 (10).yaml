@@ -2,7 +2,7 @@ name: ATR 수축확장 (10)
 description: ATR(10) 수축 후 돌파 감지 매수
 source: auto_generated
 category: volatility
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

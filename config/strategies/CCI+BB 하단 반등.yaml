@@ -2,7 +2,7 @@ name: CCI+BB 하단 반등
 description: CCI<-100 + BB 하단 이하 → 극단적 과매도 반등
 source: auto_generated
 category: mean_reversion
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

@@ -2,7 +2,7 @@ name: BB 수축 대기 (30/BBB<0.06)
 description: BB(30) 밴드폭 0.06 이하 수축 후 상단 돌파
 source: auto_generated
 category: volatility
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

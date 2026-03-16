@@ -2,7 +2,7 @@ name: RSI+BB 하단 반등 (RSI<35/BB25)
 description: RSI<35 + BB(25) 하단 이하 → 과매도 반등 매수
 source: auto_generated
 category: mean_reversion
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

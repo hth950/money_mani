@@ -2,7 +2,7 @@ name: Donchian+RSI+MACD 복합
 description: Donchian 20 채널 내 + RSI>40 + MACD 양수 매수
 source: auto_generated
 category: composite
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold_compare

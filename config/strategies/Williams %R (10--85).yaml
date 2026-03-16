@@ -2,7 +2,7 @@ name: Williams %R (10/-85)
 description: Williams %R(10) -85 이하 진입, -15 이상 청산
 source: auto_generated
 category: momentum
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

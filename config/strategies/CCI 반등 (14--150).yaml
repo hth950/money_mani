@@ -2,7 +2,7 @@ name: CCI 반등 (14/-150)
 description: CCI(14) -150 이하 진입, 150 이상 청산
 source: auto_generated
 category: momentum
-status: rejected
+status: archived
 rules:
   entry:
   - condition: threshold

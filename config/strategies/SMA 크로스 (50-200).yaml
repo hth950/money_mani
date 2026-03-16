@@ -2,7 +2,7 @@ name: SMA 크로스 (50/200)
 description: SMA 50일이 SMA 200일을 상향 돌파시 매수, 하향 돌파시 매도
 source: auto_generated
 category: crossover
-status: rejected
+status: archived
 rules:
   entry:
   - condition: crossover
