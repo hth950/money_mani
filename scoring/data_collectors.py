@@ -187,8 +187,10 @@ class FundamentalCollector:
                     sector_avg_per = benchmarks["per"]
                     sector_avg_pbr = benchmarks.get("pbr", 1.5)
 
-                    per_score = max(0.0, 1.0 - (ticker_per / sector_avg_per)) if ticker_per > 0 else 0.5
-                    pbr_score = max(0.0, 1.0 - (ticker_pbr / sector_avg_pbr)) if ticker_pbr > 0 else 0.5
+                    per_ratio = ticker_per / sector_avg_per
+                    per_score = max(0.0, min(1.0, 1.5 - per_ratio)) if ticker_per > 0 else 0.5
+                    pbr_ratio = ticker_pbr / sector_avg_pbr
+                    pbr_score = max(0.0, min(1.0, 1.5 - pbr_ratio)) if ticker_pbr > 0 else 0.5
                     div_score = min(1.0, ticker_div / 5.0)
                     fundamental_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
 
@@ -225,8 +227,10 @@ class FundamentalCollector:
         sector_avg_per = benchmarks["per"]
         sector_avg_pbr = benchmarks.get("pbr", 1.5)
 
-        per_score = max(0.0, 1.0 - (ticker_per / sector_avg_per)) if ticker_per > 0 else 0.5
-        pbr_score = max(0.0, 1.0 - (ticker_pbr / sector_avg_pbr)) if ticker_pbr > 0 else 0.5
+        per_ratio = ticker_per / sector_avg_per
+        per_score = max(0.0, min(1.0, 1.5 - per_ratio)) if ticker_per > 0 else 0.5
+        pbr_ratio = ticker_pbr / sector_avg_pbr
+        pbr_score = max(0.0, min(1.0, 1.5 - pbr_ratio)) if ticker_pbr > 0 else 0.5
         div_score = min(1.0, ticker_div / 5.0)
 
         fundamental_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
