@@ -33,6 +33,8 @@ def run_schema_migrations():
     post_count INTEGER, posts_sample_json TEXT,
     market TEXT DEFAULT 'KRX'
  )"""),
+        ("macro_snapshots_llm_comment",
+         "ALTER TABLE macro_snapshots ADD COLUMN llm_comment TEXT"),
     ]
     with get_db() as db:
         for name, sql in migrations:

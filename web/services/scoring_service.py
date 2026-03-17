@@ -61,7 +61,23 @@ class ScoringService:
                             WHERE scan_date = ? AND source != 'backfill'
                             ORDER BY composite_score DESC
                         """, (latest[0],)).fetchall()
-            return [dict(r) for r in rows]
+            results = []
+            for r in rows:
+                row = dict(r)
+                # 보유 중인 종목은 BLOCKED 대신 실제 점수 기반 결정으로 표시
+                if row.get("decision") == "BLOCKED" and "이미 포지션 보유 중" in (row.get("block_reason") or ""):
+                    score = row.get("composite_score") or 0.0
+                    if score >= 0.65:
+                        row["decision"] = "EXECUTE"
+                    elif score >= 0.40:
+                        row["decision"] = "WATCH"
+                    else:
+                        row["decision"] = "SKIP"
+                    row["is_holding"] = True
+                else:
+                    row["is_holding"] = False
+                results.append(row)
+            return results
         except Exception as e:
             logger.warning(f"Failed to get today results: {e}")
             return []

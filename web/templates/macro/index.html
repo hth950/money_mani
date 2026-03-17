@@ -244,29 +244,28 @@ async function loadPosts() {
             parts.push('기준시각: ' + toKST(data.snapshot_at));
         metaEl.innerHTML = parts.join(' &nbsp;|&nbsp; ');
 
+        // LLM 분석 코멘트
+        if (data.llm_comment) {
+            el.innerHTML = '<p style="background:#f0f4ff;padding:0.6rem 1rem;border-left:3px solid #6c5ce7;margin-bottom:1rem;">' +
+                '<strong>AI 분석:</strong> ' + data.llm_comment + '</p>';
+        }
+
         const posts = data.posts_sample || [];
         if (!posts.length) {
-            el.innerHTML = '<p>포스트 샘플이 없습니다.</p>';
+            el.innerHTML += '<p>포스트 샘플이 없습니다.</p>';
             return;
         }
 
         let html = '<table role="grid"><thead><tr>' +
-            '<th>출처</th><th>제목</th><th>감성</th><th>점수</th>' +
+            '<th>출처</th><th>제목</th>' +
             '</tr></thead><tbody>';
         for (const p of posts) {
-            const sentColor = p.sentiment === 'positive' ? '#00B050'
-                : p.sentiment === 'negative' ? '#E74C3C' : '#888';
-            const sentLabel = p.sentiment === 'positive' ? '긍정'
-                : p.sentiment === 'negative' ? '부정'
-                : p.sentiment === 'neutral' ? '중립' : (p.sentiment || '-');
-            const scoreVal = p.score !== undefined && p.score !== null
-                ? '<span style="color:' + scoreColor(p.score) + '">' + Number(p.score).toFixed(2) + '</span>'
-                : '-';
+            const isStr = typeof p === 'string';
+            const title = isStr ? p : (p.title || p.text || '-');
+            const source = isStr ? 'DCInside' : (p.source || p.platform || '-');
             html += '<tr>' +
-                '<td><small>' + (p.source || p.platform || '-') + '</small></td>' +
-                '<td>' + (p.title || p.text || '-') + '</td>' +
-                '<td style="color:' + sentColor + ';font-weight:bold">' + sentLabel + '</td>' +
-                '<td>' + scoreVal + '</td>' +
+                '<td><small>' + source + '</small></td>' +
+                '<td>' + title + '</td>' +
                 '</tr>';
         }
         html += '</tbody></table>';

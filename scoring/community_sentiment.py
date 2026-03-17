@@ -25,13 +25,19 @@ COMMUNITY_SENTIMENT_PROMPT = """다음은 한국 주식 커뮤니티(DCInside, F
 게시글 제목 목록:
 {titles}
 
-0.0부터 1.0 사이의 숫자(소수점 2자리)만 출력하세요. 예: 0.34"""
+다음 형식으로 정확히 출력하세요 (다른 텍스트 없이):
+점수|한줄이유
+
+예시:
+0.34|손절/공포 게시글이 많고 긍정적 신호가 적어 투자 심리가 위축된 상태
+
+점수는 0.0~1.0 소수점 2자리, 이유는 20자 이내 한글로."""
 
 
 class CommunitySentimentCollector:
     """KRX-only: Crawl DCInside/FMKorea and analyze sentiment via LLM batch."""
 
-    DCINSIDE_HTML_URL = "https://gall.dcinside.com/board/lists/?id=neostock"
+    DCINSIDE_HTML_URL = "https://gall.dcinside.com/board/lists/?id=stock"
     FMKOREA_RSS_URL = "https://www.fmkorea.com/index.php?mid=stock&act=rss"
     FMKOREA_HTML_URL = "https://www.fmkorea.com/stock"
 
@@ -45,7 +51,7 @@ class CommunitySentimentCollector:
         self._request_delay = 2.5
 
     def _fetch_dcinside(self, max_posts: int = 30) -> list[str]:
-        """Fetch post titles from DCInside neostock gallery."""
+        """Fetch post titles from DCInside stock gallery (skip notice/sticky posts)."""
         try:
             resp = requests.get(
                 self.DCINSIDE_HTML_URL,
@@ -56,8 +62,13 @@ class CommunitySentimentCollector:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(resp.text, "html.parser")
             titles = []
-            # DCInside uses <td class="gall_tit"> or <a class="ub-word"> for titles
-            for el in soup.select("td.gall_tit a.ub-word, .gall_tit > a:not(.reply_numbox)"):
+            # Skip rows with data-type="icon_notice" (sticky/admin posts)
+            for row in soup.select("tr.ub-content"):
+                if row.get("data-type") in ("icon_notice", "icon_notice_all"):
+                    continue
+                el = row.select_one("td.gall_tit a:not(.reply_numbox)")
+                if not el:
+                    continue
                 text = el.get_text(strip=True)
                 if text and len(text) > 2:
                     titles.append(text)
@@ -112,10 +123,13 @@ class CommunitySentimentCollector:
             logger.warning(f"FMKorea HTML crawl failed: {e}")
             return []
 
-    def _analyze_sentiment(self, titles: list[str]) -> float:
-        """Use Gemini flash-lite to analyze sentiment of post titles."""
+    def _analyze_sentiment(self, titles: list[str]) -> tuple[float, str]:
+        """Use Gemini flash-lite to analyze sentiment of post titles.
+
+        Returns (score, comment) tuple.
+        """
         if not titles:
-            return 0.5
+            return 0.5, "게시글 없음"
         try:
             from llm.client import OpenRouterClient
             llm = OpenRouterClient()
@@ -125,14 +139,21 @@ class CommunitySentimentCollector:
                 messages=[{"role": "user", "content": prompt}],
                 model="google/gemini-3.1-flash-lite-preview",
                 temperature=0.1,
-                max_tokens=16,
+                max_tokens=80,
             )
-            score = float(response.strip())
+            raw = response.strip()
+            if "|" in raw:
+                parts = raw.split("|", 1)
+                score = float(parts[0].strip())
+                comment = parts[1].strip()
+            else:
+                score = float(raw)
+                comment = ""
             score = max(0.0, min(1.0, score))
-            return round(score, 4)
+            return round(score, 4), comment
         except Exception as e:
             logger.warning(f"LLM sentiment analysis failed: {e}")
-            return 0.5
+            return 0.5, ""
 
     def score(self) -> dict:
         """Return community sentiment score (0=fear, 1=greed).
@@ -171,7 +192,7 @@ class CommunitySentimentCollector:
             return result
 
         # LLM batch analysis
-        sentiment_score = self._analyze_sentiment(all_titles)
+        sentiment_score, llm_comment = self._analyze_sentiment(all_titles)
 
         result = {
             "score": sentiment_score,
@@ -179,7 +200,8 @@ class CommunitySentimentCollector:
                 "dcinside_posts": len(dcinside_titles),
                 "fmkorea_posts": len(fmkorea_titles),
                 "post_count": post_count,
-                "posts_sample": all_titles[:10],
+                "posts_sample": all_titles,
+                "llm_comment": llm_comment,
                 "method": "llm",
                 "crawled_at": now.isoformat(),
             },

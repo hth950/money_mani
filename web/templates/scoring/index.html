@@ -36,8 +36,8 @@
             <div class="big-num" id="cnt-skip" style="color:#999;">-</div>
         </article>
         <article class="summary-card">
-            <header>BLOCKED</header>
-            <div class="big-num score-low" id="cnt-blocked">-</div>
+            <header>보유중 (리스크 차단)</header>
+            <div class="big-num" id="cnt-blocked" style="color:#6c5ce7;">-</div>
         </article>
         <article class="summary-card">
             <header>평균 종합점수</header>
@@ -122,10 +122,12 @@ function fmtScore(v) {
     return (v * 100).toFixed(0);
 }
 
-function decisionBadge(d) {
+function decisionBadge(d, isHolding) {
     if (!d) return '-';
     const cls = 'decision-' + d.toLowerCase();
-    return '<span class="' + cls + '">' + d + '</span>';
+    let badge = '<span class="' + cls + '">' + d + '</span>';
+    if (isHolding) badge += ' <span style="background:#6c5ce7;color:#fff;padding:2px 6px;border-radius:4px;font-size:0.8em;">보유중</span>';
+    return badge;
 }
 
 // 오늘의 스코어링 데이터 로드
@@ -133,9 +135,10 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
     const items = Array.isArray(data) ? data : (data.items || []);
 
     // 요약 카드
-    let cntExecute = 0, cntWatch = 0, cntSkip = 0, cntBlocked = 0, sumScore = 0, cntScore = 0;
+    let cntExecute = 0, cntWatch = 0, cntSkip = 0, cntBlocked = 0, cntHolding = 0, sumScore = 0, cntScore = 0;
     items.forEach(item => {
         const d = (item.decision || '').toUpperCase();
+        if (item.is_holding) cntHolding++;
         if (d === 'EXECUTE') cntExecute++;
         else if (d === 'WATCH') cntWatch++;
         else if (d === 'SKIP') cntSkip++;
@@ -147,7 +150,7 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
     document.getElementById('cnt-execute').textContent = cntExecute;
     document.getElementById('cnt-watch').textContent = cntWatch;
     document.getElementById('cnt-skip').textContent = cntSkip;
-    document.getElementById('cnt-blocked').textContent = cntBlocked;
+    document.getElementById('cnt-blocked').textContent = cntHolding;
     const avg = cntScore > 0 ? (sumScore / cntScore) : null;
     const avgEl = document.getElementById('avg-score');
     avgEl.textContent = avg !== null ? (avg * 100).toFixed(1) : '-';
@@ -177,7 +180,7 @@ fetch('/api/scoring/today').then(r => r.json()).then(data => {
             '<td class="' + scoreClass(fl) + '">' + fmtScore(fl) + '</td>' +
             '<td class="' + scoreClass(it) + '">' + fmtScore(it) + '</td>' +
             '<td class="' + scoreClass(ma) + '">' + fmtScore(ma) + '</td>' +
-            '<td>' + decisionBadge(item.decision) + '</td>' +
+            '<td>' + decisionBadge(item.decision, item.is_holding) + '</td>' +
             '</tr>';
     }).join('');
 }).catch(() => {
