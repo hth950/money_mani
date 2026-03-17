@@ -80,7 +80,7 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                 # 각 축 재계산 (캐시 우선, 만료 시 API 호출)
                 fund_score = fund_col.score(ticker, market).get("score", 0.5)
                 flow_score = flow_col.score(ticker, market).get("score", 0.5)
-                macro_score = macro_col.score().get("score", 0.5)
+                macro_score = macro_col.score(market=market).get("score", 0.5)
                 intel_score = intel_col.score(ticker, market).get("score", 0.5)
                 tech_score = item["technical_score"] or 0.5  # 기술적은 daily 값 유지
 

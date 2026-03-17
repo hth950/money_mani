@@ -327,9 +327,9 @@ class SignalGenerator:
             b = df[b_col]
         else:
             try:
-                b = float(b_col)
+                b = float(b_raw)
             except (TypeError, ValueError):
-                logger.warning(f"Column not found and not numeric: {b_col}")
+                logger.warning(f"Column not found and not numeric: {b_raw}")
                 return pd.Series(False, index=df.index)
 
         a_prev = a.shift(1)
