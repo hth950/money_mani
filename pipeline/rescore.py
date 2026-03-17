@@ -115,7 +115,7 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                 allowed, block_reason = risk_mgr.check_can_buy(ticker, market)
                 if not allowed:
                     new_decision = "BLOCKED"
-                elif new_composite >= 0.60:
+                elif new_composite >= 0.65:
                     new_decision = "EXECUTE"
                     block_reason = None
                 elif new_composite >= 0.40:
