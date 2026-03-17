@@ -20,8 +20,9 @@ class MacroService:
                 db.execute("""
                     INSERT INTO macro_snapshots
                     (vix, vix_score, community_score, macro_score, regime,
-                     dcinside_posts, fmkorea_posts, post_count, posts_sample_json, market)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     dcinside_posts, fmkorea_posts, post_count, posts_sample_json,
+                     llm_comment, market)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     details.get("vix"),
                     details.get("vix_score"),
@@ -32,6 +33,7 @@ class MacroService:
                     community.get("fmkorea_posts"),
                     community.get("post_count"),
                     json.dumps(community.get("posts_sample", []), ensure_ascii=False),
+                    community.get("llm_comment", ""),
                     market,
                 ))
         except Exception as e:
@@ -78,7 +80,7 @@ class MacroService:
             with get_db() as db:
                 row = db.execute("""
                     SELECT snapshot_at, posts_sample_json, dcinside_posts,
-                           fmkorea_posts, post_count, community_score
+                           fmkorea_posts, post_count, community_score, llm_comment
                     FROM macro_snapshots
                     WHERE market = ? AND posts_sample_json IS NOT NULL
                     ORDER BY snapshot_at DESC LIMIT 1
