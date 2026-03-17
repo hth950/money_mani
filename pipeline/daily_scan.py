@@ -361,11 +361,13 @@ class DailyScan:
         ohlcv_cache: dict = {}
         ticker_names: dict = {}
 
+        start_date = (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
+
         if market == "KRX":
             # Sequential — pykrx is NOT thread-safe
             for ticker in tickers:
                 try:
-                    df = fetcher.get_ohlcv(ticker, "2024-01-01")
+                    df = fetcher.get_ohlcv(ticker, start_date)
                     if df.empty or len(df) < 60:
                         logger.debug(f"Skip {ticker}: insufficient data ({len(df) if not df.empty else 0} rows)")
                         continue
@@ -384,7 +386,7 @@ class DailyScan:
         else:
             # Parallel for US (yfinance is thread-safe)
             def _fetch_us(t):
-                return t, fetcher.get_ohlcv(t, "2024-01-01")
+                return t, fetcher.get_ohlcv(t, start_date)
 
             with ThreadPoolExecutor(max_workers=3) as pool:
                 futures = {pool.submit(_fetch_us, t): t for t in tickers}

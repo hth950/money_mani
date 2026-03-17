@@ -4,7 +4,7 @@ import logging
 import threading
 import time as _time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from broker.kis_client import KISClient
@@ -210,7 +210,8 @@ class RealtimeMonitor:
         for ticker, ctx in self.ticker_map.items():
             try:
                 fetcher = krx_fetcher if ctx.market == "KRX" else us_fetcher
-                df = fetcher.get_ohlcv(ticker, "2024-01-01")
+                start_date = (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
+                df = fetcher.get_ohlcv(ticker, start_date)
                 buf = RollingBuffer(ticker, max_size=self.max_buffer,
                                     warmup_bars=self.warmup_bars)
                 if not df.empty:
