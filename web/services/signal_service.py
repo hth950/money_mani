@@ -197,7 +197,7 @@ class SignalService:
 
         try:
             from llm.prompts import SIGNAL_SUMMARY_PROMPT
-            from llm.client import call_llm
+            from llm.client import OpenRouterClient
             breakdown = item.get("score_breakdown", {}) if item else {}
             composite = item.get("composite_score", 0.0) if item else 0.0
             action = item.get("action", "WATCH") if item else "WATCH"
@@ -208,7 +208,13 @@ class SignalService:
                 composite_score=f"{composite:.2f}",
                 score_breakdown=json.dumps(breakdown, ensure_ascii=False),
             )
-            summary_text = call_llm(prompt)
+            client = OpenRouterClient()
+            summary_text = client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model="fast",
+                max_tokens=300,
+                temperature=0.3,
+            )
         except Exception as e:
             logger.warning(f"Signal summary LLM failed for {ticker}: {e}")
             summary_text = f"{ticker} 신호 요약을 생성할 수 없습니다."
