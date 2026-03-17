@@ -24,7 +24,7 @@ def _load_scoring_config() -> dict:
             "KRX": {"technical": 0.50, "fundamental": 0.10, "flow": 0.20, "intel": 0.10, "macro": 0.10},
             "US": {"technical": 0.50, "fundamental": 0.10, "flow": 0.0, "intel": 0.25, "macro": 0.15},
         },
-        "thresholds": {"execute": 0.60, "watch": 0.40},
+        "thresholds": {"execute": 0.65, "watch": 0.40},
     }
 
 
@@ -78,7 +78,7 @@ class MultiLayerScorer:
         }
         """
         weights = self.config.get("weights", {}).get(market, self.config["weights"]["KRX"])
-        thresholds = self.config.get("thresholds", {"execute": 0.60, "watch": 0.40})
+        thresholds = self.config.get("thresholds", {"execute": 0.65, "watch": 0.40})
 
         collectors = self._get_collectors()
 
