@@ -150,7 +150,16 @@ class DailyScan:
         strategies = []
         for name in selected_names:
             try:
-                strategies.append(self.registry.load(name))
+                strat = self.registry.load(name)
+                # Consistent with StrategyRegistry.get_validated(): only run strategies
+                # with status 'validated' or 'validated_v2'. The DB backtest_results table
+                # stores is_valid=1 for rows that passed validation, but the strategy YAML
+                # status field is the authoritative source — strategies may have been
+                # invalidated or promoted since last backtest.
+                if strat.status not in ("validated", "validated_v2"):
+                    logger.debug(f"Skipping strategy {name}: status={strat.status}")
+                    continue
+                strategies.append(strat)
             except Exception:
                 logger.warning(f"Could not load strategy: {name}")
         return strategies
