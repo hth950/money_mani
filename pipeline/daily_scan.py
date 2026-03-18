@@ -656,7 +656,10 @@ class DailyScan:
                 )
                 passes_fallback = buy_count >= ensemble_cfg.get("fallback_count", ENSEMBLE_CONSENSUS_N)
 
-                if passes_diversity or passes_fallback:
+                passes_fallback_multi = (
+                    passes_fallback and diversity_buy.get("agreeing_categories", 0) >= 2
+                )
+                if passes_diversity or passes_fallback_multi:
                     rep = groups["buy"][0].copy()
                     rep["consensus_count"] = buy_count
                     rep["consensus_strategies"] = buy_names
@@ -687,7 +690,10 @@ class DailyScan:
                 )
                 passes_fallback_sell = sell_count >= ensemble_cfg.get("fallback_count", ENSEMBLE_CONSENSUS_N)
 
-                if passes_diversity_sell or passes_fallback_sell:
+                passes_fallback_sell_multi = (
+                    passes_fallback_sell and diversity_sell.get("agreeing_categories", 0) >= 2
+                )
+                if passes_diversity_sell or passes_fallback_sell_multi:
                     rep = groups["sell"][0].copy()
                     rep["consensus_count"] = sell_count
                     rep["consensus_strategies"] = sell_names
