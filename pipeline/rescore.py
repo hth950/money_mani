@@ -192,7 +192,7 @@ def rescore_ticker_by_signal(ticker: str, market: str, signal_type: str) -> bool
         mw = _DEFAULT_WEIGHTS.get(market, _DEFAULT_WEIGHTS.get("KRX", {}))
         fund_score = FundamentalCollector().score(ticker, market).get("score", 0.5)
         flow_score = FlowCollector().score(ticker, market).get("score", 0.5)
-        macro_score = MacroCollector().score().get("score", 0.5)
+        macro_score = MacroCollector().score(market=market).get("score", 0.5)
         intel_score = IntelScorer().score(ticker, market).get("score", 0.5)
 
         new_composite = round(
