@@ -223,6 +223,7 @@ class FundamentalCollector:
 
         # Sector-aware benchmarks from config/scoring.yaml
         eng_sector = _get_ticker_sector_eng(ticker)
+        raw_sector = eng_sector or "Unknown"
         benchmarks = self._get_sector_benchmarks(eng_sector or "Unknown")
         sector_avg_per = benchmarks["per"]
         sector_avg_pbr = benchmarks.get("pbr", 1.5)
@@ -248,6 +249,7 @@ class FundamentalCollector:
                 "sector_eng": eng_sector,
                 "sector_benchmark_per": sector_avg_per,
                 "sector_benchmark_pbr": sector_avg_pbr,
+                "source": "pykrx",
             },
         }
 
@@ -272,7 +274,8 @@ class FundamentalCollector:
         benchmark_roe = benchmarks["roe"]
 
         # PER score: lower is better (0 at PER=benchmark, 1 at PER=0)
-        per_score = max(0.0, min(1.0, 1.0 - (per / benchmark_per))) if per > 0 else 0.5
+        per_ratio = per / benchmark_per
+        per_score = max(0.0, min(1.0, 1.5 - per_ratio)) if per > 0 else 0.5
         # ROE score: higher is better (cap at sector benchmark)
         roe_score = min(1.0, max(0.0, roe / benchmark_roe)) if roe > 0 else 0.3
         # Dividend score: higher is better (cap at 5%)

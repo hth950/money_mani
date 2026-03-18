@@ -4,6 +4,10 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from scoring.multi_layer_scorer import _load_scoring_config as _load_cfg
+_INTEL_SCORING_CFG = _load_cfg()
+_INTEL_DEFAULT_WEIGHTS = _INTEL_SCORING_CFG.get("weights", {})
+
 KST = timezone(timedelta(hours=9))
 logger = logging.getLogger("money_mani.pipeline.intel_rescore")
 
@@ -61,11 +65,12 @@ def run_intel_rescore() -> int:
                 except Exception:
                     weights = {}
 
-                w_tech  = weights.get("technical",   0.27)
-                w_fund  = weights.get("fundamental", 0.23)
-                w_flow  = weights.get("flow",        0.18)
-                w_intel = weights.get("intel",       0.22)
-                w_macro = weights.get("macro",       0.10)
+                _mw = _INTEL_DEFAULT_WEIGHTS.get(market, _INTEL_DEFAULT_WEIGHTS.get("KRX", {}))
+                w_tech  = weights.get("technical",   _mw.get("technical",   0.50))
+                w_fund  = weights.get("fundamental", _mw.get("fundamental", 0.10))
+                w_flow  = weights.get("flow",        _mw.get("flow",        0.20))
+                w_intel = weights.get("intel",       _mw.get("intel",       0.10))
+                w_macro = weights.get("macro",       _mw.get("macro",       0.10))
 
                 # composite_score 재계산 (다른 축은 기존 값 유지)
                 tech  = item["technical_score"]   or 0.5

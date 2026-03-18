@@ -125,11 +125,11 @@ class MultiLayerScorer:
 
         # Weighted sum
         composite = (
-            technical_score * weights.get("technical", 0.35) +
-            fundamental_score * weights.get("fundamental", 0.25) +
-            flow_score * weights.get("flow", 0.25) +
-            intel_score * weights.get("intel", 0.15) +
-            macro_score * weights.get("macro", 0.0)
+            technical_score * weights.get("technical", 0.50) +
+            fundamental_score * weights.get("fundamental", 0.10) +
+            flow_score * weights.get("flow", 0.20) +
+            intel_score * weights.get("intel", 0.10) +
+            macro_score * weights.get("macro", 0.10)
         )
         composite = round(min(1.0, max(0.0, composite)), 4)
 
