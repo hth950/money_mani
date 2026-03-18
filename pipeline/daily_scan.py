@@ -722,12 +722,27 @@ class DailyScan:
         """Save multi-layer scoring results to DB (Phase 5)."""
         try:
             from web.services.scoring_service import ScoringService
+            from web.db.connection import get_db
             service = ScoringService()
+            # Pre-fetch known ticker names from DB as fallback when name resolution fails
+            try:
+                with get_db() as db:
+                    name_rows = db.execute(
+                        "SELECT ticker, ticker_name FROM scoring_results "
+                        "WHERE ticker_name != ticker GROUP BY ticker"
+                    ).fetchall()
+                known_names = {r["ticker"]: r["ticker_name"] for r in name_rows}
+            except Exception:
+                known_names = {}
             for sig in signals:
                 if sig.get("composite_score") is not None:
+                    ticker = sig["ticker"]
+                    ticker_name = sig.get("ticker_name", ticker)
+                    if ticker_name == ticker and ticker in known_names:
+                        ticker_name = known_names[ticker]
                     service.save_scoring_result(
-                        ticker=sig["ticker"],
-                        ticker_name=sig.get("ticker_name", sig["ticker"]),
+                        ticker=ticker,
+                        ticker_name=ticker_name,
                         market=sig.get("market", "KRX"),
                         scan_date=date_str,
                         scores={
