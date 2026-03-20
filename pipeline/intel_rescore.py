@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from scoring.multi_layer_scorer import _load_scoring_config as _load_cfg
 _INTEL_SCORING_CFG = _load_cfg()
 _INTEL_DEFAULT_WEIGHTS = _INTEL_SCORING_CFG.get("weights", {})
+_INTEL_THRESHOLDS = _INTEL_SCORING_CFG.get("thresholds", {"execute": 0.65, "watch": 0.40})
 
 KST = timezone(timedelta(hours=9))
 logger = logging.getLogger("money_mani.pipeline.intel_rescore")
@@ -28,7 +29,7 @@ def run_intel_rescore() -> int:
         rows = db.execute(
             """
             SELECT id, ticker, market, weights_used_json,
-                   technical_score, fundamental_score, flow_score, macro_score
+                   technical_score, fundamental_score, flow_score, macro_score, decision
             FROM scoring_results
             WHERE scan_date = ?
             ORDER BY id DESC
@@ -86,14 +87,32 @@ def run_intel_rescore() -> int:
                     macro * w_macro
                 )), 4)
 
-                db.execute(
-                    """
-                    UPDATE scoring_results
-                    SET intel_score = ?, composite_score = ?
-                    WHERE id = ?
-                    """,
-                    (round(new_intel, 4), new_composite, item["id"]),
-                )
+                # decision 재계산 (BLOCKED는 유지, 나머지는 composite 기반으로 갱신)
+                current_decision = item.get("decision", "")
+                if current_decision == "BLOCKED":
+                    db.execute(
+                        """
+                        UPDATE scoring_results
+                        SET intel_score = ?, composite_score = ?
+                        WHERE id = ?
+                        """,
+                        (round(new_intel, 4), new_composite, item["id"]),
+                    )
+                else:
+                    if new_composite >= _INTEL_THRESHOLDS.get("execute", 0.65):
+                        new_decision = "EXECUTE"
+                    elif new_composite >= _INTEL_THRESHOLDS.get("watch", 0.40):
+                        new_decision = "WATCH"
+                    else:
+                        new_decision = "SKIP"
+                    db.execute(
+                        """
+                        UPDATE scoring_results
+                        SET intel_score = ?, composite_score = ?, decision = ?
+                        WHERE id = ?
+                        """,
+                        (round(new_intel, 4), new_composite, new_decision, item["id"]),
+                    )
                 updated += 1
 
             except Exception as e:
