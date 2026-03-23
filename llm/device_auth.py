@@ -118,16 +118,19 @@ def exchange_code_for_tokens(authorization_code: str, code_verifier: str) -> dic
     """
     resp = requests.post(
         OAUTH_TOKEN_URL,
-        json={
+        data={
             "grant_type": "authorization_code",
             "client_id": CLIENT_ID,
             "code": authorization_code,
             "code_verifier": code_verifier,
+            "redirect_uri": "http://localhost:1455/auth/callback",
         },
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=30,
     )
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        logger.error(f"Token exchange failed (HTTP {resp.status_code}): {resp.text[:500]}")
+        resp.raise_for_status()
     data = resp.json()
 
     expires_in = data.get("expires_in", 3600)
@@ -149,12 +152,12 @@ def refresh_access_token(refresh_token: str) -> dict:
     """
     resp = requests.post(
         OAUTH_TOKEN_URL,
-        json={
+        data={
             "grant_type": "refresh_token",
             "client_id": CLIENT_ID,
             "refresh_token": refresh_token,
         },
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=30,
     )
     if resp.status_code != 200:
