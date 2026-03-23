@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from llm.client import OpenRouterClient
+from llm.client import create_llm_client
 from llm.prompts import MARKET_INTEL_PROMPT, MARKET_INTEL_US_PROMPT
 from market_data.fdr_fetcher import FDRFetcher
 from market_data.krx_fetcher import KRXFetcher
@@ -83,7 +83,7 @@ class MarketIntelScanner:
     """Scan web for market issues using LLM analysis."""
 
     def __init__(self):
-        self.llm = OpenRouterClient()
+        self.llm = create_llm_client()
         self.searcher = WebSearcher()
         self.fdr = FDRFetcher()
         self.krx = KRXFetcher(delay=0.5)
@@ -135,7 +135,7 @@ class MarketIntelScanner:
         try:
             raw_response = self.llm.chat(
                 messages=[{"role": "user", "content": prompt}],
-                model="google/gemini-3.1-flash-lite-preview",
+                model="lite",
                 temperature=0.2,
                 max_tokens=4096,
             )
@@ -288,7 +288,7 @@ class MarketIntelScanner:
                    (scan_time, scan_type, model_used, raw_response,
                     issues_count, tickers_count, status, error_message)
                    VALUES (?, ?, ?, ?, 0, 0, ?, ?)""",
-                (scan_time, scan_type, "google/gemini-3.1-flash-lite-preview",
+                (scan_time, scan_type, self.llm._resolve_model("lite"),
                  raw_response, status, error),
             )
             scan_id = cur.lastrowid
@@ -310,7 +310,7 @@ class MarketIntelScanner:
                    (scan_time, scan_type, model_used, raw_response,
                     issues_count, tickers_count, status)
                    VALUES (?, ?, ?, ?, 0, 0, ?)""",
-                (scan_time, scan_type, "google/gemini-3.1-flash-lite-preview",
+                (scan_time, scan_type, self.llm._resolve_model("lite"),
                  raw_response, status),
             )
             scan_id = cur.lastrowid

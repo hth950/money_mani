@@ -1,15 +1,15 @@
 """LLM-based strategy refiner: raw text -> structured strategy dicts."""
 
 import json
-from llm.client import OpenRouterClient
+from llm.client import BaseLLMClient, create_llm_client
 from llm.prompts import STRATEGY_REFINE_PROMPT, STRATEGY_VALIDATE_PROMPT
 
 
 class StrategyRefiner:
     """Parse and validate strategy dicts from raw analysis text using LLM."""
 
-    def __init__(self, client: OpenRouterClient | None = None):
-        self._client = client or OpenRouterClient()
+    def __init__(self, client: BaseLLMClient | None = None):
+        self._client = client or create_llm_client()
 
     def _parse_json(self, raw: str) -> object:
         """Parse JSON from LLM response, stripping markdown fences."""

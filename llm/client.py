@@ -1,32 +1,22 @@
-"""OpenRouter LLM client with retry logic."""
+"""LLM client abstraction with OpenRouter implementation and provider factory."""
 
 import time
+from abc import ABC, abstractmethod
+
 import requests
 from utils.config_loader import load_config, get_env
 
 
-class OpenRouterClient:
-    """HTTP client for OpenRouter API with exponential backoff retry."""
+class BaseLLMClient(ABC):
+    """Abstract base for LLM API clients."""
 
-    BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
     MAX_RETRIES = 3
 
     def __init__(self):
         cfg = load_config()
-        llm_cfg = cfg.get("llm", {})
-        api_key = llm_cfg.get("api_key") or get_env("OPENROUTER_KEY")
-        if not api_key:
-            raise ValueError("OPENROUTER_KEY not found in config or environment")
-        self._api_key = api_key
-        self._default_model = llm_cfg.get("default_model", "anthropic/claude-sonnet-4")
-        self._fast_model = llm_cfg.get("fast_model", "anthropic/claude-haiku-4")
-        self._deep_model = llm_cfg.get("deep_model", "anthropic/claude-opus-4")
-        self._max_tokens = llm_cfg.get("max_tokens", 4096)
-        self._temperature = llm_cfg.get("temperature", 0.3)
-        self._headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
+        self._llm_cfg = cfg.get("llm", {})
+        self._max_tokens = self._llm_cfg.get("max_tokens", 4096)
+        self._temperature = self._llm_cfg.get("temperature", 0.3)
 
     def _resolve_model(self, model: str | None) -> str:
         if model is None or model == "default":
@@ -35,7 +25,40 @@ class OpenRouterClient:
             return self._fast_model
         if model == "deep":
             return self._deep_model
+        if model == "lite":
+            return self._lite_model
         return model
+
+    @abstractmethod
+    def chat(
+        self,
+        messages: list[dict],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Send chat messages and return assistant response text."""
+
+
+class OpenRouterClient(BaseLLMClient):
+    """HTTP client for OpenRouter API with exponential backoff retry."""
+
+    BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+    def __init__(self):
+        super().__init__()
+        api_key = self._llm_cfg.get("api_key") or get_env("OPENROUTER_KEY")
+        if not api_key:
+            raise ValueError("OPENROUTER_KEY not found in config or environment")
+        self._api_key = api_key
+        self._default_model = self._llm_cfg.get("default_model", "anthropic/claude-sonnet-4")
+        self._fast_model = self._llm_cfg.get("fast_model", "anthropic/claude-haiku-4")
+        self._deep_model = self._llm_cfg.get("deep_model", "anthropic/claude-opus-4")
+        self._lite_model = self._llm_cfg.get("lite_model", "anthropic/claude-haiku-4")
+        self._headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
 
     def chat(
         self,
@@ -48,7 +71,7 @@ class OpenRouterClient:
 
         Args:
             messages: List of {role, content} dicts.
-            model: Model alias ("fast", "deep", "default") or full model ID.
+            model: Model alias ("fast", "deep", "default", "lite") or full model ID.
             temperature: Sampling temperature. Defaults to config value.
             max_tokens: Max output tokens. Defaults to config value.
 
@@ -88,3 +111,17 @@ class OpenRouterClient:
                     time.sleep(2 ** attempt)
 
         raise RuntimeError(f"OpenRouter request failed after {self.MAX_RETRIES} retries: {last_error}")
+
+
+def create_llm_client() -> BaseLLMClient:
+    """Factory: create LLM client based on config provider setting.
+
+    Returns OpenRouterClient or OpenAIOAuthClient depending on
+    llm.provider in config/settings.yaml.
+    """
+    cfg = load_config()
+    provider = cfg.get("llm", {}).get("provider", "openrouter")
+    if provider == "openai_oauth":
+        from llm.openai_oauth_client import OpenAIOAuthClient
+        return OpenAIOAuthClient()
+    return OpenRouterClient()

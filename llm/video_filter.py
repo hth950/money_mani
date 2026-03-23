@@ -1,15 +1,15 @@
 """Video quality filter using LLM evaluation."""
 
 import json
-from llm.client import OpenRouterClient
+from llm.client import BaseLLMClient, create_llm_client
 from llm.prompts import VIDEO_FILTER_PROMPT
 
 
 class VideoFilter:
     """Filter YouTube videos by quality using LLM scoring."""
 
-    def __init__(self, client: OpenRouterClient | None = None):
-        self._client = client or OpenRouterClient()
+    def __init__(self, client: BaseLLMClient | None = None):
+        self._client = client or create_llm_client()
 
     def _score_video(self, video: dict) -> dict:
         """Score a single video. Returns video dict augmented with quality_score and is_clickbait."""
