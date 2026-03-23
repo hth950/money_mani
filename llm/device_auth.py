@@ -172,7 +172,7 @@ def run_device_flow() -> dict:
     device_data = request_device_code()
     device_auth_id = device_data["device_auth_id"]
     user_code = device_data["user_code"]
-    interval = device_data.get("interval", 5)
+    interval = int(device_data.get("interval", 5))
 
     # Step 2: Display instructions
     print("\n" + "=" * 60)

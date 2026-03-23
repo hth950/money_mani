@@ -1,0 +1,67 @@
+<article>
+    <header>
+        <h3>현재 Provider: <mark>{{ provider }}</mark></h3>
+    </header>
+
+    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+        <button
+            hx-post="/api/settings/provider"
+            hx-vals='{"provider": "openrouter"}'
+            hx-target="#provider-status"
+            hx-swap="innerHTML"
+            {% if provider == 'openrouter' %}class="outline" disabled aria-busy="false"{% endif %}
+        >
+            OpenRouter
+            {% if provider == 'openrouter' %} (활성){% endif %}
+        </button>
+
+        <button
+            hx-post="/api/settings/provider"
+            hx-vals='{"provider": "openai_oauth"}'
+            hx-target="#provider-status"
+            hx-swap="innerHTML"
+            {% if provider == 'openai_oauth' %}class="outline" disabled aria-busy="false"{% endif %}
+        >
+            OpenAI OAuth
+            {% if provider == 'openai_oauth' %} (활성){% endif %}
+        </button>
+    </div>
+
+    {% if provider == 'openrouter' %}
+    <p>OpenRouter API 키를 사용하여 LLM 호출을 수행합니다.</p>
+    <small>모델: google/gemini-3.1-pro-preview (default), gemini-3-flash-preview (fast)</small>
+
+    {% elif provider == 'openai_oauth' %}
+    <p>OpenAI ChatGPT 계정의 OAuth 인증을 통해 LLM 호출을 수행합니다.</p>
+    <small>모델: gpt-5.4-mini</small>
+
+    <article style="margin-top: 1rem;">
+        <header><h4>OAuth 토큰 상태</h4></header>
+
+        {% if token_status.exists and token_status.valid %}
+            <p style="color: var(--pico-color-green-500);">
+                토큰 유효
+                {% if token_status.expired %}
+                    (access token 만료됨, refresh 가능)
+                {% endif %}
+            </p>
+        {% elif token_status.exists and not token_status.valid %}
+            <p style="color: var(--pico-color-red-500);">
+                토큰이 만료되었습니다. 재인증이 필요합니다.
+            </p>
+        {% else %}
+            <p style="color: var(--pico-color-amber-500);">
+                토큰이 없습니다. 인증이 필요합니다.
+            </p>
+        {% endif %}
+
+        <div id="oauth-flow">
+            {% include "settings/_oauth_flow.html" %}
+        </div>
+    </article>
+    {% endif %}
+
+    <footer>
+        <small>변경 후 <code>sudo systemctl restart money-mani money-mani-scheduler</code> 실행 필요</small>
+    </footer>
+</article>

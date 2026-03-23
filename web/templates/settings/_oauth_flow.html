@@ -1,0 +1,49 @@
+{% if flow.status == 'idle' or (flow.status in ('success', 'error') and not flow.active) %}
+    {% if flow.status == 'success' %}
+        <p style="color: var(--pico-color-green-500); font-weight: bold;">
+            인증 성공! 토큰이 저장되었습니다.
+        </p>
+    {% endif %}
+
+    {% if flow.status == 'error' %}
+        <p style="color: var(--pico-color-red-500);">
+            오류: {{ flow.error }}
+        </p>
+    {% endif %}
+
+    <button
+        hx-post="/api/settings/oauth/start"
+        hx-target="#oauth-flow"
+        hx-swap="innerHTML"
+    >
+        {% if flow.status == 'success' %}재인증{% else %}OpenAI 로그인{% endif %}
+    </button>
+
+{% elif flow.status == 'starting' %}
+    <p aria-busy="true">인증 준비 중...</p>
+
+{% elif flow.status == 'waiting' %}
+    <article style="background: var(--pico-card-background-color); border: 2px solid var(--pico-primary); padding: 1.5rem; border-radius: 8px;">
+        <h4 style="margin-bottom: 0.5rem;">OpenAI 로그인</h4>
+        <p>아래 URL을 브라우저에서 열고 코드를 입력하세요:</p>
+
+        <div style="background: var(--pico-code-background-color); padding: 1rem; border-radius: 4px; margin: 1rem 0;">
+            <p style="margin-bottom: 0.5rem;">
+                <strong>URL:</strong>
+                <a href="{{ flow.verify_url }}" target="_blank" rel="noopener">{{ flow.verify_url }}</a>
+            </p>
+            <p style="margin-bottom: 0; font-size: 1.8rem; font-weight: bold; letter-spacing: 0.3rem; text-align: center;">
+                {{ flow.user_code }}
+            </p>
+        </div>
+
+        <p aria-busy="true" style="margin-bottom: 0;">인증 대기 중... (최대 15분)</p>
+    </article>
+
+    <div
+        hx-get="/api/settings/oauth/poll"
+        hx-target="#oauth-flow"
+        hx-swap="innerHTML"
+        hx-trigger="every 3s"
+    ></div>
+{% endif %}

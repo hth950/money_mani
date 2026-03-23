@@ -82,3 +82,5 @@ from web.routers.guide import router as guide_router
 app.include_router(guide_router)
 from web.routers import macro as macro_router
 app.include_router(macro_router.router)
+from web.routers.settings import router as settings_router
+app.include_router(settings_router)

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}설정 - Money Mani{% endblock %}
+{% block content %}
+<h2>LLM Provider 설정</h2>
+<p>LLM API 제공자를 선택합니다. 변경 후 서비스를 재시작해야 적용됩니다.</p>
+
+<div id="provider-status">
+    {% include "settings/_provider_status.html" %}
+</div>
+{% endblock %}
