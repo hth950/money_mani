@@ -108,6 +108,7 @@ def _run_device_flow_background():
             tokens = {
                 "access_token": auth_data["access_token"],
                 "refresh_token": auth_data.get("refresh_token", ""),
+                "id_token": auth_data.get("id_token", ""),
                 "expires_at": int(_time.time()) + expires_in,
             }
         elif "authorization_code" in auth_data:

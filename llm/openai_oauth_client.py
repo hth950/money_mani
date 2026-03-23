@@ -1,4 +1,4 @@
-"""OpenAI OAuth LLM client with token management and auto-refresh."""
+"""OpenAI OAuth LLM client using ChatGPT Backend API (Codex endpoint)."""
 
 import json
 import logging
@@ -8,18 +8,20 @@ from pathlib import Path
 
 import requests
 from llm.client import BaseLLMClient
+from llm.device_auth import extract_account_id
 
 logger = logging.getLogger("money_mani.llm.openai_oauth_client")
 
 
 class OpenAIOAuthClient(BaseLLMClient):
-    """OpenAI API client authenticated via OAuth device flow.
+    """ChatGPT Backend API client authenticated via OAuth device flow.
 
-    Manages token lifecycle: load from disk, auto-refresh on expiry,
-    re-run device flow if refresh fails.
+    Uses the Codex responses endpoint (chatgpt.com/backend-api/codex/responses)
+    instead of the standard OpenAI API. This endpoint works with ChatGPT
+    subscription OAuth tokens that don't have platform API scopes.
     """
 
-    BASE_URL = "https://api.openai.com/v1/chat/completions"
+    BASE_URL = "https://chatgpt.com/backend-api/codex/responses"
     DEFAULT_TOKEN_PATH = "~/.money_mani/openai_oauth_token.json"
 
     def __init__(self):
@@ -33,6 +35,7 @@ class OpenAIOAuthClient(BaseLLMClient):
             oauth_cfg.get("token_path", self.DEFAULT_TOKEN_PATH)
         ).expanduser()
         self._token_data = None
+        self._account_id = None
         self._token_lock = threading.Lock()
         self._load_or_auth()
 
@@ -52,21 +55,26 @@ class OpenAIOAuthClient(BaseLLMClient):
         else:
             self._run_device_flow()
 
+        # Extract account_id from id_token
+        self._account_id = extract_account_id(
+            self._token_data.get("id_token", "")
+        )
+        if not self._account_id:
+            logger.warning("Could not extract account_id from id_token. "
+                           "Re-authentication may be needed.")
+
     def _is_token_expired(self) -> bool:
-        """Check if the current access token is expired (with 60s buffer)."""
         if not self._token_data:
             return True
         expires_at = self._token_data.get("expires_at", 0)
         return time.time() >= (expires_at - 60)
 
     def _run_device_flow(self):
-        """Run device auth flow and save token."""
         from llm.device_auth import run_device_flow
         self._token_data = run_device_flow()
         self._save_token()
 
     def _save_token(self):
-        """Save token to disk with restricted permissions (atomic write)."""
         self._token_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._token_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._token_data, indent=2))
@@ -75,9 +83,7 @@ class OpenAIOAuthClient(BaseLLMClient):
         logger.info(f"Token saved to {self._token_path}")
 
     def _refresh_token(self):
-        """Refresh access token. Falls back to device flow on failure."""
         with self._token_lock:
-            # Double-check after acquiring lock (another thread may have refreshed)
             if not self._is_token_expired():
                 return
             try:
@@ -87,6 +93,9 @@ class OpenAIOAuthClient(BaseLLMClient):
                 )
                 self._token_data.update(new_tokens)
                 self._save_token()
+                # Update account_id if new id_token received
+                if new_tokens.get("id_token"):
+                    self._account_id = extract_account_id(new_tokens["id_token"])
                 logger.info("Token refreshed successfully")
             except Exception as e:
                 logger.warning(f"Token refresh failed: {e}, re-running device flow")
@@ -94,23 +103,54 @@ class OpenAIOAuthClient(BaseLLMClient):
                 self._run_device_flow()
 
     def _notify_reauth_needed(self):
-        """Send Discord notification that re-authentication is needed."""
         try:
             from alerts.discord_webhook import DiscordNotifier
             notifier = DiscordNotifier()
             notifier.send(
-                content="⚠️ OpenAI OAuth 토큰 갱신 실패 — 재인증이 필요합니다. "
-                        "서버에서 `python -m llm.cli_auth` 를 실행하세요."
+                content="⚠️ OpenAI OAuth 토큰 갱신 실패 — /settings 에서 재인증 필요"
             )
         except Exception:
             logger.warning("Failed to send Discord re-auth notification")
 
     def _get_headers(self) -> dict:
-        """Build request headers with current access token."""
-        return {
+        headers = {
             "Authorization": f"Bearer {self._token_data['access_token']}",
             "Content-Type": "application/json",
+            "OpenAI-Beta": "responses=experimental",
         }
+        if self._account_id:
+            headers["chatgpt-account-id"] = self._account_id
+        return headers
+
+    @staticmethod
+    def _convert_messages(messages: list[dict]) -> list[dict]:
+        """Convert Chat Completions messages to Responses API input format."""
+        result = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                content = [{"type": "input_text", "text": content}]
+            result.append({"role": msg["role"], "content": content})
+        return result
+
+    @staticmethod
+    def _parse_sse_response(resp: requests.Response) -> str:
+        """Parse SSE streaming response and extract text content."""
+        full_text = []
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            try:
+                event = json.loads(data_str)
+                event_type = event.get("type", "")
+                if event_type == "response.output_text.delta":
+                    full_text.append(event.get("delta", ""))
+            except json.JSONDecodeError:
+                continue
+        return "".join(full_text)
 
     def chat(
         self,
@@ -119,30 +159,30 @@ class OpenAIOAuthClient(BaseLLMClient):
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> str:
-        """Send chat messages via OpenAI API and return assistant response.
+        """Send chat messages via ChatGPT Backend API and return response.
 
         Args:
             messages: List of {role, content} dicts.
-            model: Model alias ("fast", "deep", "default", "lite") or full model ID.
-            temperature: Sampling temperature. Defaults to config value.
-            max_tokens: Max output tokens. Defaults to config value.
+            model: Model alias or full model ID.
+            temperature: Sampling temperature.
+            max_tokens: Ignored (not supported by this endpoint).
 
         Returns:
             Assistant response as a string.
-
-        Raises:
-            RuntimeError: After all retries are exhausted.
         """
-        # Refresh token if expired before making request
         if self._is_token_expired():
             self._refresh_token()
 
         payload = {
             "model": self._resolve_model(model),
-            "messages": messages,
-            "temperature": temperature if temperature is not None else self._temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self._max_tokens,
+            "stream": True,
+            "store": False,
+            "input": self._convert_messages(messages),
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        elif self._temperature:
+            payload["temperature"] = self._temperature
 
         last_error = None
         retried_auth = False
@@ -153,9 +193,9 @@ class OpenAIOAuthClient(BaseLLMClient):
                     self.BASE_URL,
                     headers=self._get_headers(),
                     json=payload,
-                    timeout=60,
+                    timeout=120,
+                    stream=True,
                 )
-                # Auto-refresh on 401 (once)
                 if resp.status_code == 401 and not retried_auth:
                     logger.info("Got 401, attempting token refresh...")
                     retried_auth = True
@@ -169,13 +209,12 @@ class OpenAIOAuthClient(BaseLLMClient):
                     continue
 
                 resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"]
+                return self._parse_sse_response(resp)
             except requests.exceptions.RequestException as exc:
                 last_error = str(exc)
                 if attempt < self.MAX_RETRIES - 1:
                     time.sleep(2 ** attempt)
 
         raise RuntimeError(
-            f"OpenAI request failed after {self.MAX_RETRIES} retries: {last_error}"
+            f"ChatGPT API request failed after {self.MAX_RETRIES} retries: {last_error}"
         )

@@ -140,8 +140,23 @@ def exchange_code_for_tokens(authorization_code: str, code_verifier: str) -> dic
     return {
         "access_token": data["access_token"],
         "refresh_token": data.get("refresh_token", ""),
+        "id_token": data.get("id_token", ""),
         "expires_at": int(time.time()) + expires_in,
     }
+
+
+def extract_account_id(id_token: str) -> str:
+    """Extract chatgpt_account_id from JWT id_token payload (no signature verification)."""
+    import base64
+    if not id_token:
+        return ""
+    try:
+        payload = id_token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        return data.get("https://api.openai.com/auth", {}).get("chatgpt_account_id", "")
+    except Exception:
+        return ""
 
 
 def refresh_access_token(refresh_token: str) -> dict:
@@ -170,6 +185,7 @@ def refresh_access_token(refresh_token: str) -> dict:
     return {
         "access_token": data["access_token"],
         "refresh_token": data.get("refresh_token", refresh_token),
+        "id_token": data.get("id_token", ""),
         "expires_at": int(time.time()) + expires_in,
     }
 
