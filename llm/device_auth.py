@@ -5,6 +5,7 @@ Used when the server has no browser — displays a URL + code for the user to au
 on a local machine.
 """
 
+import json
 import logging
 import time
 
@@ -78,7 +79,7 @@ def poll_for_authorization(device_auth_id: str, user_code: str,
             )
             if resp.status_code == 200:
                 data = resp.json()
-                logger.info(f"Device auth poll success, keys: {list(data.keys())}")
+                logger.info(f"Device auth poll success, keys: {list(data.keys())}, data: {json.dumps({k: v[:20] + '...' if isinstance(v, str) and len(v) > 20 else v for k, v in data.items()})}")
                 return data
 
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
@@ -131,8 +132,23 @@ def exchange_code_for_tokens(authorization_code: str, code_verifier: str) -> dic
         timeout=30,
     )
     if resp.status_code != 200:
-        logger.error(f"Token exchange failed (HTTP {resp.status_code}): {resp.text[:500]}")
-        resp.raise_for_status()
+        logger.error(f"Token exchange failed (HTTP {resp.status_code}): {resp.text}")
+        # Try without redirect_uri as fallback
+        logger.info("Retrying token exchange without redirect_uri...")
+        resp = requests.post(
+            OAUTH_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "client_id": CLIENT_ID,
+                "code": authorization_code,
+                "code_verifier": code_verifier,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            logger.error(f"Token exchange retry failed (HTTP {resp.status_code}): {resp.text}")
+            resp.raise_for_status()
     data = resp.json()
 
     expires_in = data.get("expires_in", 3600)
