@@ -1,0 +1,44 @@
+<article>
+    <header>
+        <h3>{{ provider }} API 키 입력</h3>
+    </header>
+
+    <p>
+        {% if provider == 'openai' %}
+            OpenAI API 키가 설정되어 있지 않습니다.
+            <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI 대시보드</a>에서 발급받을 수 있습니다.
+        {% else %}
+            OpenRouter API 키가 설정되어 있지 않습니다.
+            <a href="https://openrouter.ai/keys" target="_blank">OpenRouter 대시보드</a>에서 발급받을 수 있습니다.
+        {% endif %}
+    </p>
+
+    <form
+        hx-post="/api/settings/apikey"
+        hx-target="#provider-status"
+        hx-swap="innerHTML"
+    >
+        <input type="hidden" name="provider" value="{{ provider }}">
+        <label>
+            {% if provider == 'openai' %}OPENAI_API_KEY{% else %}OPENROUTER_KEY{% endif %}
+            <input
+                type="password"
+                name="api_key"
+                placeholder="sk-..."
+                required
+                autocomplete="off"
+            >
+        </label>
+        <div style="display: flex; gap: 1rem;">
+            <button type="submit">저장 및 전환</button>
+            <button
+                type="button"
+                class="secondary"
+                hx-get="/settings"
+                hx-target="body"
+                hx-swap="outerHTML"
+                onclick="location.reload()"
+            >취소</button>
+        </div>
+    </form>
+</article>
