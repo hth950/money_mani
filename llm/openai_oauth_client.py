@@ -180,10 +180,6 @@ class OpenAIOAuthClient(BaseLLMClient):
             "instructions": "",
             "input": self._convert_messages(messages),
         }
-        if temperature is not None:
-            payload["temperature"] = temperature
-        elif self._temperature:
-            payload["temperature"] = self._temperature
 
         last_error = None
         retried_auth = False
