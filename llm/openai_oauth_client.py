@@ -177,6 +177,7 @@ class OpenAIOAuthClient(BaseLLMClient):
             "model": self._resolve_model(model),
             "stream": True,
             "store": False,
+            "instructions": "",
             "input": self._convert_messages(messages),
         }
         if temperature is not None:
