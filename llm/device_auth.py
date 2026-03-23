@@ -77,7 +77,9 @@ def poll_for_authorization(device_auth_id: str, user_code: str,
                 timeout=30,
             )
             if resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                logger.info(f"Device auth poll success, keys: {list(data.keys())}")
+                return data
 
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             error_raw = data.get("error", "")
@@ -205,11 +207,25 @@ def run_device_flow() -> dict:
     # Step 3: Poll for authorization
     auth_data = poll_for_authorization(device_auth_id, user_code, interval)
 
-    # Step 4: Exchange for tokens
-    tokens = exchange_code_for_tokens(
-        auth_data["authorization_code"],
-        auth_data["code_verifier"],
-    )
+    # Step 4: Get tokens — either directly from poll or via code exchange
+    if "access_token" in auth_data:
+        # Poll returned tokens directly
+        logger.info("Got tokens directly from device auth poll")
+        expires_in = auth_data.get("expires_in", 3600)
+        tokens = {
+            "access_token": auth_data["access_token"],
+            "refresh_token": auth_data.get("refresh_token", ""),
+            "expires_at": int(time.time()) + expires_in,
+        }
+    elif "authorization_code" in auth_data:
+        # Need to exchange authorization code for tokens
+        logger.info("Exchanging authorization code for tokens")
+        tokens = exchange_code_for_tokens(
+            auth_data["authorization_code"],
+            auth_data.get("code_verifier", ""),
+        )
+    else:
+        raise RuntimeError(f"Unexpected auth response keys: {list(auth_data.keys())}")
 
     logger.info("OpenAI OAuth authentication successful!")
     print("\n  ✓ 인증 성공! 토큰이 저장되었습니다.\n")
