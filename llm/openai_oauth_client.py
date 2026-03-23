@@ -137,16 +137,18 @@ class OpenAIOAuthClient(BaseLLMClient):
     def _parse_sse_response(resp: requests.Response) -> str:
         """Parse SSE streaming response and extract text content."""
         full_text = []
-        for line in resp.iter_lines(decode_unicode=True):
-            if not line or not line.startswith("data: "):
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+            if not line.startswith("data: "):
                 continue
             data_str = line[6:]
             if data_str == "[DONE]":
                 break
             try:
                 event = json.loads(data_str)
-                event_type = event.get("type", "")
-                if event_type == "response.output_text.delta":
+                if event.get("type") == "response.output_text.delta":
                     full_text.append(event.get("delta", ""))
             except json.JSONDecodeError:
                 continue
