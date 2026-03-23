@@ -126,29 +126,14 @@ def exchange_code_for_tokens(authorization_code: str, code_verifier: str) -> dic
             "client_id": CLIENT_ID,
             "code": authorization_code,
             "code_verifier": code_verifier,
-            "redirect_uri": "http://localhost:1455/auth/callback",
+            "redirect_uri": "https://auth.openai.com/deviceauth/callback",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=30,
     )
     if resp.status_code != 200:
         logger.error(f"Token exchange failed (HTTP {resp.status_code}): {resp.text}")
-        # Try without redirect_uri as fallback
-        logger.info("Retrying token exchange without redirect_uri...")
-        resp = requests.post(
-            OAUTH_TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "client_id": CLIENT_ID,
-                "code": authorization_code,
-                "code_verifier": code_verifier,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            logger.error(f"Token exchange retry failed (HTTP {resp.status_code}): {resp.text}")
-            resp.raise_for_status()
+        resp.raise_for_status()
     data = resp.json()
 
     expires_in = data.get("expires_in", 3600)
