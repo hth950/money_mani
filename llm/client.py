@@ -121,6 +121,9 @@ def create_llm_client() -> BaseLLMClient:
     """
     cfg = load_config()
     provider = cfg.get("llm", {}).get("provider", "openrouter")
+    if provider == "openai":
+        from llm.openai_client import OpenAIClient
+        return OpenAIClient()
     if provider == "openai_oauth":
         from llm.openai_oauth_client import OpenAIOAuthClient
         return OpenAIOAuthClient()

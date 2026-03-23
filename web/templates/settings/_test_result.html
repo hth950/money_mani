@@ -1,0 +1,11 @@
+{% if result.ok %}
+<article style="border-left: 4px solid var(--pico-color-green-500); padding: 1rem;">
+    <strong style="color: var(--pico-color-green-500);">연결 성공</strong>
+    <p style="margin-bottom: 0;">Provider: {{ provider }} | 응답: {{ result.response }}</p>
+</article>
+{% else %}
+<article style="border-left: 4px solid var(--pico-color-red-500); padding: 1rem;">
+    <strong style="color: var(--pico-color-red-500);">연결 실패</strong>
+    <p style="margin-bottom: 0;">{{ result.error }}</p>
+</article>
+{% endif %}

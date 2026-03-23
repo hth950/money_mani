@@ -3,13 +3,19 @@
         <h3>현재 Provider: <mark>{{ provider }}</mark></h3>
     </header>
 
+    {% if switched is defined and switched %}
+    <p style="color: var(--pico-color-green-500); font-weight: bold;">
+        {{ provider }}(으)로 전환 완료. 서비스 재시작 중...
+    </p>
+    {% endif %}
+
     <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
         <button
             hx-post="/api/settings/provider"
             hx-vals='{"provider": "openrouter"}'
             hx-target="#provider-status"
             hx-swap="innerHTML"
-            {% if provider == 'openrouter' %}class="outline" disabled aria-busy="false"{% endif %}
+            {% if provider == 'openrouter' %}class="outline" disabled{% endif %}
         >
             OpenRouter
             {% if provider == 'openrouter' %} (활성){% endif %}
@@ -17,51 +23,42 @@
 
         <button
             hx-post="/api/settings/provider"
-            hx-vals='{"provider": "openai_oauth"}'
+            hx-vals='{"provider": "openai"}'
             hx-target="#provider-status"
             hx-swap="innerHTML"
-            {% if provider == 'openai_oauth' %}class="outline" disabled aria-busy="false"{% endif %}
+            {% if provider == 'openai' %}class="outline" disabled{% endif %}
         >
-            OpenAI OAuth
-            {% if provider == 'openai_oauth' %} (활성){% endif %}
+            OpenAI
+            {% if provider == 'openai' %} (활성){% endif %}
         </button>
     </div>
 
     {% if provider == 'openrouter' %}
-    <p>OpenRouter API 키를 사용하여 LLM 호출을 수행합니다.</p>
-    <small>모델: google/gemini-3.1-pro-preview (default), gemini-3-flash-preview (fast)</small>
-
-    {% elif provider == 'openai_oauth' %}
-    <p>OpenAI ChatGPT 계정의 OAuth 인증을 통해 LLM 호출을 수행합니다.</p>
-    <small>모델: gpt-5.4-mini</small>
-
-    <article style="margin-top: 1rem;">
-        <header><h4>OAuth 토큰 상태</h4></header>
-
-        {% if token_status.exists and token_status.valid %}
-            <p style="color: var(--pico-color-green-500);">
-                토큰 유효
-                {% if token_status.expired %}
-                    (access token 만료됨, refresh 가능)
-                {% endif %}
-            </p>
-        {% elif token_status.exists and not token_status.valid %}
-            <p style="color: var(--pico-color-red-500);">
-                토큰이 만료되었습니다. 재인증이 필요합니다.
-            </p>
-        {% else %}
-            <p style="color: var(--pico-color-amber-500);">
-                토큰이 없습니다. 인증이 필요합니다.
-            </p>
-        {% endif %}
-
-        <div id="oauth-flow">
-            {% include "settings/_oauth_flow.html" %}
-        </div>
-    </article>
+    <table>
+        <tr><td>API 키</td><td><code>OPENROUTER_KEY</code> 환경변수</td></tr>
+        <tr><td>Default 모델</td><td>google/gemini-3.1-pro-preview</td></tr>
+        <tr><td>Fast 모델</td><td>google/gemini-3-flash-preview</td></tr>
+        <tr><td>Lite 모델</td><td>google/gemini-3.1-flash-lite-preview</td></tr>
+    </table>
+    {% elif provider == 'openai' %}
+    <table>
+        <tr><td>API 키</td><td><code>OPENAI_API_KEY</code> 환경변수</td></tr>
+        <tr><td>Default 모델</td><td>gpt-5.4-mini</td></tr>
+        <tr><td>Fast 모델</td><td>gpt-5.4-mini</td></tr>
+        <tr><td>Lite 모델</td><td>gpt-5.4-mini</td></tr>
+    </table>
     {% endif %}
 
+    <button
+        hx-post="/api/settings/test"
+        hx-target="#test-result"
+        hx-swap="innerHTML"
+        class="secondary"
+    >
+        연결 테스트
+    </button>
+
     <footer>
-        <small>Provider 변경 및 인증 완료 시 서비스가 자동으로 재시작됩니다.</small>
+        <small>Provider 변경 시 서비스가 자동으로 재시작됩니다.</small>
     </footer>
 </article>
