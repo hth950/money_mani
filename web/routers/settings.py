@@ -2,6 +2,7 @@
 
 import json
 import logging
+import subprocess
 import time
 import threading
 from pathlib import Path
@@ -77,6 +78,20 @@ def _switch_provider(new_provider: str):
     SETTINGS_PATH.write_text(text)
 
 
+def _restart_services():
+    """Restart money-mani services in background."""
+    def _do_restart():
+        try:
+            subprocess.run(
+                ["sudo", "systemctl", "restart", "money-mani", "money-mani-scheduler"],
+                timeout=30, capture_output=True,
+            )
+            logger.info("Services restarted successfully")
+        except Exception as e:
+            logger.error(f"Service restart failed: {e}")
+    threading.Thread(target=_do_restart, daemon=True).start()
+
+
 def _run_device_flow_background():
     """Run device auth flow in background thread."""
     try:
@@ -111,6 +126,7 @@ def _run_device_flow_background():
 
         _active_flow["status"] = "success"
         logger.info("OAuth device flow completed successfully")
+        _restart_services()
 
     except TimeoutError:
         _active_flow["status"] = "error"
@@ -145,6 +161,7 @@ async def switch_provider(request: Request):
         return HTMLResponse('<div class="error">잘못된 provider</div>', status_code=400)
 
     _switch_provider(new_provider)
+    _restart_services()
 
     token_status = _get_token_status()
     return templates.TemplateResponse("settings/_provider_status.html", {
