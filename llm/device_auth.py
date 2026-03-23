@@ -80,18 +80,29 @@ def poll_for_authorization(device_auth_id: str, user_code: str,
                 return resp.json()
 
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            error = data.get("error", "")
+            error_raw = data.get("error", "")
 
-            if error == "authorization_pending":
+            # OpenAI returns error as dict {"code": "...", "message": "..."} or as string
+            if isinstance(error_raw, dict):
+                error_code = error_raw.get("code", "")
+                error_msg = error_raw.get("message", "")
+            else:
+                error_code = str(error_raw)
+                error_msg = data.get("error_description", "")
+
+            if error_code in ("authorization_pending", "deviceauth_authorization_pending"):
                 continue
-            elif error == "slow_down":
+            elif error_code in ("slow_down", "deviceauth_slow_down"):
                 interval += 5
                 logger.debug(f"Slowing down polling to {interval}s")
                 continue
-            elif error == "expired_token":
+            elif error_code in ("expired_token", "deviceauth_expired_token"):
                 raise TimeoutError("Device code expired. Please restart the authentication flow.")
+            elif error_code == "deviceauth_authorization_unknown":
+                # User hasn't entered the code yet, keep waiting
+                continue
             else:
-                raise RuntimeError(f"Device auth polling error: {error} - {data.get('error_description', '')}")
+                raise RuntimeError(f"Device auth polling error: {error_code} - {error_msg}")
         except requests.exceptions.RequestException as e:
             logger.warning(f"Polling request failed: {e}")
             continue
