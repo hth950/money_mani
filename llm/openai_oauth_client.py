@@ -98,9 +98,11 @@ class OpenAIOAuthClient(BaseLLMClient):
                     self._account_id = extract_account_id(new_tokens["id_token"])
                 logger.info("Token refreshed successfully")
             except Exception as e:
-                logger.warning(f"Token refresh failed: {e}, re-running device flow")
+                logger.error(f"Token refresh failed: {e}")
                 self._notify_reauth_needed()
-                self._run_device_flow()
+                raise RuntimeError(
+                    "OAuth 토큰 갱신 실패. /settings 에서 재인증이 필요합니다."
+                ) from e
 
     def _notify_reauth_needed(self):
         try:

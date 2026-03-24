@@ -79,7 +79,7 @@ def poll_for_authorization(device_auth_id: str, user_code: str,
             )
             if resp.status_code == 200:
                 data = resp.json()
-                logger.info(f"Device auth poll success, keys: {list(data.keys())}, data: {json.dumps({k: v[:20] + '...' if isinstance(v, str) and len(v) > 20 else v for k, v in data.items()})}")
+                logger.info(f"Device auth poll success, keys: {list(data.keys())}")
                 return data
 
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}

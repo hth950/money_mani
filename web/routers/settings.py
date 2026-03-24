@@ -76,11 +76,14 @@ def _switch_provider(new_provider: str):
 def _restart_services():
     def _do_restart():
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["sudo", "systemctl", "restart", "money-mani", "money-mani-scheduler"],
-                timeout=30, capture_output=True,
+                timeout=30, capture_output=True, text=True,
             )
-            logger.info("Services restarted successfully")
+            if result.returncode == 0:
+                logger.info("Services restarted successfully")
+            else:
+                logger.error(f"Service restart failed (exit {result.returncode}): {result.stderr}")
         except Exception as e:
             logger.error(f"Service restart failed: {e}")
     threading.Thread(target=_do_restart, daemon=True).start()
