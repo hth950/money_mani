@@ -63,13 +63,20 @@ schedule:
     timezone: "Asia/Seoul"
 
 llm:
-  provider: "openrouter"
+  provider: "openrouter"  # "openrouter" | "openai_oauth"
   api_key: "${OPENROUTER_KEY}"
   default_model: "google/gemini-3.1-pro-preview"
   fast_model: "google/gemini-3-flash-preview"
   deep_model: "google/gemini-3.1-pro-preview"
+  lite_model: "google/gemini-3.1-flash-lite-preview"
   max_tokens: 4096
   temperature: 0.3
+  openai_oauth:
+    default_model: "gpt-5.4-mini"
+    fast_model: "gpt-5.4-mini"
+    deep_model: "gpt-5.4-mini"
+    lite_model: "gpt-5.4-mini"
+    token_path: "~/.money_mani/openai_oauth_token.json"
 
 notifications:
   discord:
@@ -103,7 +110,6 @@ realtime:
 
 market_intel:
   enabled: true
-  model: "google/gemini-3.1-flash-lite-preview"
   max_tokens: 4096
   temperature: 0.2
 

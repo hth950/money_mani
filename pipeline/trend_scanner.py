@@ -6,7 +6,7 @@ import json
 import logging
 
 from youtube_scraper import YouTubeScraper
-from llm.client import OpenRouterClient
+from llm.client import create_llm_client
 from llm.prompts import TREND_EXTRACT_PROMPT, QUERY_GENERATE_PROMPT
 
 logger = logging.getLogger("money_mani.pipeline.trend_scanner")
@@ -26,7 +26,7 @@ class TrendScanner:
 
     def __init__(self, config: dict = None):
         self.scraper = YouTubeScraper()
-        self.llm = OpenRouterClient()
+        self.llm = create_llm_client()
 
     def scan_trends(self, max_videos: int = 20) -> list[dict]:
         """Search YouTube for recent market trend videos and extract hot sectors.

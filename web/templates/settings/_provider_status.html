@@ -1,0 +1,79 @@
+<article>
+    <header>
+        <h3>현재 Provider: <mark>{% if provider == 'openai_oauth' %}OpenAI{% else %}{{ provider }}{% endif %}</mark></h3>
+    </header>
+
+    {% if switched is defined and switched %}
+    <p style="color: var(--pico-color-green-500); font-weight: bold;">
+        전환 완료. 서비스 재시작 중...
+    </p>
+    <script>setTimeout(function(){ window.location.reload(); }, 5000);</script>
+    {% endif %}
+
+    {% if need_auth is defined and need_auth %}
+    <p style="color: var(--pico-color-amber-500); font-weight: bold;">
+        OpenAI 사용을 위해 로그인이 필요합니다.
+    </p>
+    {% endif %}
+
+    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+        <button
+            hx-post="/api/settings/provider"
+            hx-vals='{"provider": "openrouter"}'
+            hx-target="#provider-status"
+            hx-swap="innerHTML"
+            {% if provider == 'openrouter' %}class="outline" disabled{% endif %}
+        >
+            OpenRouter
+            {% if provider == 'openrouter' %} (활성){% endif %}
+        </button>
+
+        <button
+            hx-post="/api/settings/provider"
+            hx-vals='{"provider": "openai_oauth"}'
+            hx-target="#provider-status"
+            hx-swap="innerHTML"
+            {% if provider == 'openai_oauth' %}class="outline" disabled{% endif %}
+        >
+            OpenAI
+            {% if provider == 'openai_oauth' %} (활성){% endif %}
+        </button>
+    </div>
+
+    {% if provider == 'openrouter' %}
+    <table>
+        <tr><td>Default 모델</td><td>google/gemini-3.1-pro-preview</td></tr>
+        <tr><td>Fast 모델</td><td>google/gemini-3-flash-preview</td></tr>
+        <tr><td>Lite 모델</td><td>google/gemini-3.1-flash-lite-preview</td></tr>
+    </table>
+    {% elif provider == 'openai_oauth' %}
+    <table>
+        <tr><td>인증</td><td>OAuth (ChatGPT 계정)
+            {% if token_status.valid %}<span style="color:green;"> 인증됨</span>
+            {% else %}<span style="color:red;"> 미인증</span>{% endif %}
+        </td></tr>
+        <tr><td>Default 모델</td><td>gpt-5.4-mini</td></tr>
+        <tr><td>Fast 모델</td><td>gpt-5.4-mini</td></tr>
+        <tr><td>Lite 모델</td><td>gpt-5.4-mini</td></tr>
+    </table>
+    {% endif %}
+
+    {% if provider == 'openai_oauth' or (need_auth is defined and need_auth) %}
+    <div id="oauth-flow" style="margin: 1rem 0;">
+        {% include "settings/_oauth_flow.html" %}
+    </div>
+    {% endif %}
+
+    <button
+        hx-post="/api/settings/test"
+        hx-target="#test-result"
+        hx-swap="innerHTML"
+        class="secondary"
+    >
+        연결 테스트
+    </button>
+
+    <footer>
+        <small>Provider 변경 및 인증 완료 시 서비스가 자동으로 재시작됩니다.</small>
+    </footer>
+</article>

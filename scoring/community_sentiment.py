@@ -131,13 +131,13 @@ class CommunitySentimentCollector:
         if not titles:
             return 0.5, "게시글 없음"
         try:
-            from llm.client import OpenRouterClient
-            llm = OpenRouterClient()
+            from llm.client import create_llm_client
+            llm = create_llm_client()
             titles_text = "\n".join(f"- {t}" for t in titles[:50])
             prompt = COMMUNITY_SENTIMENT_PROMPT.format(titles=titles_text)
             response = llm.chat(
                 messages=[{"role": "user", "content": prompt}],
-                model="google/gemini-3.1-flash-lite-preview",
+                model="lite",
                 temperature=0.1,
                 max_tokens=80,
             )

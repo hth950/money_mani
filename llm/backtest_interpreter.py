@@ -1,14 +1,14 @@
 """Backtest result interpreter: generates Korean language insights."""
 
-from llm.client import OpenRouterClient
+from llm.client import BaseLLMClient, create_llm_client
 from llm.prompts import BACKTEST_INTERPRET_PROMPT
 
 
 class BacktestInterpreter:
     """Generate Korean-language insights from backtest metrics using LLM."""
 
-    def __init__(self, client: OpenRouterClient | None = None):
-        self._client = client or OpenRouterClient()
+    def __init__(self, client: BaseLLMClient | None = None):
+        self._client = client or create_llm_client()
 
     def interpret(self, metrics: dict) -> str:
         """Generate Korean insight text from backtest result metrics.
