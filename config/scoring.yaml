@@ -31,6 +31,12 @@ transaction_costs:
     round_trip_pct: 0.0
     min_expected_return: 0.0
 
+# Consensus thresholds (asymmetric BUY/SELL to reduce SELL bias)
+consensus:
+  buy_threshold: 5    # BUY는 5개 전략 합의 (완화)
+  sell_threshold: 7   # SELL은 7개 유지
+  min_categories: 2
+
 # Ensemble diversity scoring
 ensemble:
   use_diversity_scorer: true

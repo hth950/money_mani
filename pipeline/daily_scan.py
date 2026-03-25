@@ -621,7 +621,31 @@ class DailyScan:
         except Exception:
             _scoring_cfg = {}
         ensemble_cfg = _scoring_cfg.get("ensemble", {})
+        consensus_cfg = _scoring_cfg.get("consensus", {})
+        buy_threshold = consensus_cfg.get("buy_threshold", ENSEMBLE_CONSENSUS_N)
+        sell_threshold = consensus_cfg.get("sell_threshold", ENSEMBLE_CONSENSUS_N)
         use_diversity = ensemble_cfg.get("use_diversity_scorer", False) and self._diversity_scorer is not None
+
+        # Strategy-level directional bias warning
+        strategy_buy: dict[str, int] = defaultdict(int)
+        strategy_sell: dict[str, int] = defaultdict(int)
+        for sig in signals:
+            name = sig["strategy_name"]
+            if sig["signal_type"] == "BUY":
+                strategy_buy[name] += 1
+            else:
+                strategy_sell[name] += 1
+        all_strategy_names = set(strategy_buy) | set(strategy_sell)
+        for name in all_strategy_names:
+            total = strategy_buy[name] + strategy_sell[name]
+            if total == 0:
+                continue
+            sell_pct = strategy_sell[name] / total
+            buy_pct = strategy_buy[name] / total
+            if sell_pct >= 0.9:
+                logger.warning(f"Strategy bias: {name} has {sell_pct:.0%} SELL signals ({strategy_sell[name]}/{total})")
+            elif buy_pct >= 0.9:
+                logger.warning(f"Strategy bias: {name} has {buy_pct:.0%} BUY signals ({strategy_buy[name]}/{total})")
 
         for ticker, groups in by_ticker.items():
             buy_count = len(groups["buy"])
@@ -654,7 +678,7 @@ class DailyScan:
                     diversity_buy["weighted_score"] >= ensemble_cfg.get("min_weighted_score", 3.0)
                     and diversity_buy["meets_diversity_min"]
                 )
-                passes_fallback = buy_count >= ensemble_cfg.get("fallback_count", ENSEMBLE_CONSENSUS_N)
+                passes_fallback = buy_count >= buy_threshold
 
                 passes_fallback_multi = (
                     passes_fallback and diversity_buy.get("agreeing_categories", 0) >= 2
@@ -672,14 +696,14 @@ class DailyScan:
                         f"categories={diversity_buy['agreeing_categories']}/{diversity_buy['total_categories']}"
                     )
             else:
-                # Original logic (fallback)
-                if buy_count >= ENSEMBLE_CONSENSUS_N:
+                # Original logic (fallback) — use asymmetric buy_threshold
+                if buy_count >= buy_threshold:
                     rep = groups["buy"][0].copy()
                     rep["consensus_count"] = buy_count
                     rep["consensus_strategies"] = buy_names
                     rep["signal_type"] = "BUY"
                     filtered.append(rep)
-                    logger.info(f"ENSEMBLE BUY {ticker}: {buy_count}/{len(buy_names)} strategies agree")
+                    logger.info(f"ENSEMBLE BUY {ticker}: {buy_count}/{len(buy_names)} strategies agree (threshold={buy_threshold})")
 
             # Emit consensus SELL
             if use_diversity:
@@ -688,7 +712,7 @@ class DailyScan:
                     diversity_sell["weighted_score"] >= ensemble_cfg.get("min_weighted_score", 3.0)
                     and diversity_sell["meets_diversity_min"]
                 )
-                passes_fallback_sell = sell_count >= ensemble_cfg.get("fallback_count", ENSEMBLE_CONSENSUS_N)
+                passes_fallback_sell = sell_count >= sell_threshold
 
                 passes_fallback_sell_multi = (
                     passes_fallback_sell and diversity_sell.get("agreeing_categories", 0) >= 2
@@ -706,14 +730,14 @@ class DailyScan:
                         f"categories={diversity_sell['agreeing_categories']}/{diversity_sell['total_categories']}"
                     )
             else:
-                # Original logic (fallback)
-                if sell_count >= ENSEMBLE_CONSENSUS_N:
+                # Original logic (fallback) — use asymmetric sell_threshold
+                if sell_count >= sell_threshold:
                     rep = groups["sell"][0].copy()
                     rep["consensus_count"] = sell_count
                     rep["consensus_strategies"] = sell_names
                     rep["signal_type"] = "SELL"
                     filtered.append(rep)
-                    logger.info(f"ENSEMBLE SELL {ticker}: {sell_count}/{len(sell_names)} strategies agree")
+                    logger.info(f"ENSEMBLE SELL {ticker}: {sell_count}/{len(sell_names)} strategies agree (threshold={sell_threshold})")
 
         logger.info(f"Ensemble filter: {len(signals)} individual -> {len(filtered)} consensus (N>={ENSEMBLE_CONSENSUS_N})")
         return filtered, summary

@@ -10,6 +10,7 @@ logger = logging.getLogger("money_mani.scoring.intel_scorer")
 
 # Module-level cache: persists across IntelScorer instances created per scan
 _intel_accuracy_cache: TTLCache = TTLCache(ttl=3600, maxsize=8)  # 1 hour
+_intel_calibration_cache: TTLCache = TTLCache(ttl=3600, maxsize=8)  # 1 hour
 
 
 class IntelScorer:
@@ -45,6 +46,53 @@ class IntelScorer:
             logger.warning(f"Source accuracy query failed: {e}")
             return {}
 
+    def _get_calibration_factors(self, days: int = 30) -> dict:
+        """카테고리별 calibration factor 계산 (accuracy/confidence 비율)."""
+        cache_key = f"calibration:{days}"
+        hit, cached = _intel_calibration_cache.get(cache_key)
+        if hit:
+            return cached
+        try:
+            cutoff = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+            with get_db() as db:
+                rows = db.execute("""
+                    SELECT category,
+                           AVG(accuracy_score) as avg_accuracy,
+                           AVG(confidence) as avg_confidence,
+                           COUNT(*) as n
+                    FROM market_intel_issues
+                    WHERE accuracy_score IS NOT NULL
+                      AND detection_date >= ?
+                    GROUP BY category
+                    HAVING COUNT(*) >= 3
+                """, (cutoff,)).fetchall()
+            factors = {}
+            all_accuracies = []
+            all_confidences = []
+            for r in rows:
+                avg_acc = r["avg_accuracy"]
+                avg_conf = r["avg_confidence"]
+                if avg_acc is not None and avg_conf and avg_conf > 0:
+                    factor = avg_acc / avg_conf
+                    factor = max(0.3, min(1.0, factor))
+                    factors[r["category"]] = round(factor, 4)
+                    all_accuracies.append(avg_acc)
+                    all_confidences.append(avg_conf)
+            # 전체 평균 factor (데이터 부족 카테고리용 fallback)
+            if all_accuracies and all_confidences:
+                overall_acc = sum(all_accuracies) / len(all_accuracies)
+                overall_conf = sum(all_confidences) / len(all_confidences)
+                default_factor = max(0.3, min(1.0, overall_acc / overall_conf)) if overall_conf > 0 else 0.5
+            else:
+                default_factor = 0.5
+            result = {"_factors": factors, "_default": round(default_factor, 4)}
+            _intel_calibration_cache.set(cache_key, result)
+            logger.info(f"Loaded calibration factors: {factors}, default={default_factor:.4f}")
+            return result
+        except Exception as e:
+            logger.warning(f"Calibration factor query failed: {e}")
+            return {"_factors": {}, "_default": 0.5}
+
     def score(self, ticker: str, market: str = "KRX") -> dict:
         """Calculate intel sentiment score for a ticker.
 
@@ -63,6 +111,9 @@ class IntelScorer:
             used_count = 0
             today = datetime.now(KST).date()
             source_accuracy = self._get_source_accuracy()
+            calibration_data = self._get_calibration_factors()
+            calibration_factors = calibration_data.get("_factors", {})
+            default_calibration = calibration_data.get("_default", 0.5)
 
             for issue in issues:
                 # Temporal decay
@@ -79,7 +130,9 @@ class IntelScorer:
                 confidence = issue.get("confidence", 0.5)
                 category = issue.get("category", "unknown")
                 accuracy_weight = source_accuracy.get(category, 0.5)
-                weight = confidence * decay * accuracy_weight
+                calibration = calibration_factors.get(category, default_calibration)
+                calibrated_confidence = confidence * calibration
+                weight = calibrated_confidence * decay * accuracy_weight
                 direction = issue.get("direction", "neutral")
 
                 if direction == "up":

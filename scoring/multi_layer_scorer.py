@@ -117,6 +117,26 @@ class MultiLayerScorer:
         macro_score = macro_result["score"]
         macro_details = macro_result["details"]
 
+        # Flow neutral detection: redistribute flow weight when KRX supply data unavailable
+        weights = dict(weights)  # work on a copy
+        flow_is_neutral = (
+            market == "KRX"
+            and flow_result.get("score") == 0.5
+            and all(v == 0.5 for v in flow_result.get("details", {}).values())
+        )
+        if flow_is_neutral and weights.get("flow", 0.0) > 0.0:
+            flow_w = weights["flow"]
+            other_axes = [k for k in weights if k != "flow"]
+            other_total = sum(weights[k] for k in other_axes)
+            if other_total > 0:
+                for k in other_axes:
+                    weights[k] += flow_w * (weights[k] / other_total)
+                weights["flow"] = 0.0
+                logger.info(
+                    f"Flow neutral detected for {ticker}({market}): "
+                    f"redistributed flow weight {flow_w:.2f} to {other_axes} → {weights}"
+                )
+
         # Weight-sum validation
         weight_sum = sum(weights.values())
         if abs(weight_sum - 1.0) > 0.01:
