@@ -678,7 +678,7 @@ class DailyScan:
                     diversity_buy["weighted_score"] >= ensemble_cfg.get("min_weighted_score", 3.0)
                     and diversity_buy["meets_diversity_min"]
                 )
-                passes_fallback = buy_count >= ensemble_cfg.get("fallback_count", buy_threshold)
+                passes_fallback = buy_count >= buy_threshold
 
                 passes_fallback_multi = (
                     passes_fallback and diversity_buy.get("agreeing_categories", 0) >= 2
@@ -712,7 +712,7 @@ class DailyScan:
                     diversity_sell["weighted_score"] >= ensemble_cfg.get("min_weighted_score", 3.0)
                     and diversity_sell["meets_diversity_min"]
                 )
-                passes_fallback_sell = sell_count >= ensemble_cfg.get("fallback_count", sell_threshold)
+                passes_fallback_sell = sell_count >= sell_threshold
 
                 passes_fallback_sell_multi = (
                     passes_fallback_sell and diversity_sell.get("agreeing_categories", 0) >= 2
