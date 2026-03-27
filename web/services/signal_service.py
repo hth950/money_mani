@@ -85,13 +85,20 @@ class SignalService:
     def get_actions(self, days: int = 7) -> list[dict]:
         """Return latest scoring-based actions per ticker for the trading dashboard.
 
-        Queries scoring_results directly (no signal_id JOIN required).
+        Queries scoring_results for the latest scan_date (same as /scoring page).
         signal_id is NULL for BLOCKED decisions, so we derive action from composite_score.
-        Returns one entry per ticker (latest by scan_date).
+        Returns one entry per ticker.
         """
         import json as _json
-        since = f"-{days} days"
         with get_db() as db:
+            # Use latest scan_date (same as scoring page) for consistency
+            latest = db.execute(
+                "SELECT MAX(scan_date) FROM scoring_results WHERE source != 'backfill'"
+            ).fetchone()
+            scan_date = latest[0] if latest and latest[0] else None
+            if not scan_date:
+                return []
+
             rows = db.execute(
                 """
                 SELECT
@@ -107,21 +114,17 @@ class SignalService:
                 FROM scoring_results sr
                 LEFT JOIN positions p
                     ON sr.ticker = p.ticker AND p.status = 'open'
-                WHERE sr.scan_date >= DATE('now', ?)
-                ORDER BY sr.scan_date DESC, sr.composite_score DESC
+                WHERE sr.scan_date = ? AND sr.source != 'backfill'
+                ORDER BY sr.composite_score DESC
                 """,
-                (since,),
+                (scan_date,),
             ).fetchall()
 
-        seen: set[str] = set()
         actions: list[dict] = []
         for row in rows:
-            ticker = row["ticker"]
-            if ticker in seen:
-                continue
-            seen.add(ticker)
-
             score = row["composite_score"] or 0.0
+            decision = row["decision"] or ""
+
             if score >= 0.65:
                 conviction = "HIGH"
             elif score >= 0.50:
@@ -129,10 +132,10 @@ class SignalService:
             else:
                 conviction = "LOW"
 
-            # Derive action from score (signal_id may be NULL for BLOCKED decisions)
-            if score >= 0.65:
+            # Map decision to action, consistent with scoring page
+            if decision == "EXECUTE":
                 action = "BUY"
-            elif score <= 0.40:
+            elif decision in ("SKIP", "BLOCKED"):
                 action = "SELL"
             else:
                 action = "WATCH"
