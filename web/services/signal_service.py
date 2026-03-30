@@ -146,8 +146,8 @@ class SignalService:
                 breakdown = {}
 
             actions.append({
-                "ticker": ticker,
-                "ticker_name": row["ticker_name"] or ticker,
+                "ticker": row["ticker"],
+                "ticker_name": row["ticker_name"] or row["ticker"],
                 "market": row["market"] or "KRX",
                 "action": action,
                 "conviction": conviction,
