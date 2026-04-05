@@ -107,6 +107,7 @@ class SignalService:
                     sr.market,
                     sr.composite_score,
                     sr.decision,
+                    sr.block_reason,
                     sr.scan_date,
                     sr.score_breakdown_json,
                     p.status  AS position_status,
@@ -133,10 +134,21 @@ class SignalService:
                 conviction = "LOW"
 
             # Map decision to action, consistent with scoring page
-            if decision == "EXECUTE":
+            block_reason = row.get("block_reason") or ""
+            if decision == "BLOCKED" and "이미 포지션 보유 중" in block_reason:
+                # 보유 중 종목은 composite_score 기반으로 action 결정
+                if score >= 0.65:
+                    action = "BUY"
+                elif score >= 0.40:
+                    action = "WATCH"
+                else:
+                    action = "SELL"
+            elif decision == "EXECUTE":
                 action = "BUY"
-            elif decision in ("SKIP", "BLOCKED"):
+            elif decision == "SKIP":
                 action = "SELL"
+            elif decision == "BLOCKED":
+                action = "WATCH"
             else:
                 action = "WATCH"
 
