@@ -2,7 +2,10 @@ python_cmd: "py -3.14"
 
 schedule:
   daily_scan:
-    cron: "0 9 * * mon-fri"   # 매일 09:00 KST (평일)
+    cron: "0 8 * * mon-fri"   # 매일 08:00 KST (평일)
+    timezone: "Asia/Seoul"
+  research_refresh:
+    cron: "0 22 * * sun"
     timezone: "Asia/Seoul"
 
 backtest:
@@ -54,13 +57,6 @@ pipeline:
   us_targets:
     custom_tickers: ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA"]
 
-schedule:
-  daily_scan:
-    cron: "0 8 * * 1-5"
-    timezone: "Asia/Seoul"
-  research_refresh:
-    cron: "0 22 * * 0"
-    timezone: "Asia/Seoul"
 
 llm:
   provider: "openrouter"  # "openrouter" | "openai_oauth"
