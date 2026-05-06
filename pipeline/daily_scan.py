@@ -627,6 +627,15 @@ class DailyScan:
         buy_threshold = consensus_cfg.get("buy_threshold", ENSEMBLE_CONSENSUS_N)
         sell_threshold = consensus_cfg.get("sell_threshold", ENSEMBLE_CONSENSUS_N)
         use_diversity = ensemble_cfg.get("use_diversity_scorer", False) and self._diversity_scorer is not None
+        # SELL signals on non-held tickers are noise for entry recommendations.
+        # Keep SELL only for held tickers (exit/risk warnings).
+        sell_held_only = ensemble_cfg.get("sell_held_only", True)
+        try:
+            held_tickers = {p["ticker"] for p in self.position_service.get_open_positions()}
+        except Exception as e:
+            logger.warning(f"Failed to load open positions for SELL filter: {e}")
+            held_tickers = set()
+        sell_skipped_unheld = 0
 
         # Strategy-level directional bias warning
         strategy_buy: dict[str, int] = defaultdict(int)
@@ -720,28 +729,47 @@ class DailyScan:
                     passes_fallback_sell and diversity_sell.get("agreeing_categories", 0) >= 2
                 )
                 if passes_diversity_sell or passes_fallback_sell_multi:
-                    rep = groups["sell"][0].copy()
-                    rep["consensus_count"] = sell_count
-                    rep["consensus_strategies"] = sell_names
-                    rep["signal_type"] = "SELL"
-                    rep["diversity_score"] = diversity_sell
-                    filtered.append(rep)
-                    logger.info(
-                        f"ENSEMBLE SELL {ticker}: {sell_count} strategies, "
-                        f"diversity={diversity_sell['weighted_score']:.2f}, "
-                        f"categories={diversity_sell['agreeing_categories']}/{diversity_sell['total_categories']}"
-                    )
+                    if sell_held_only and ticker not in held_tickers:
+                        sell_skipped_unheld += 1
+                        logger.info(
+                            f"SELL SKIP (non-held) {ticker}: {sell_count} strategies — "
+                            f"avoid signal logged but not added to scoring pool"
+                        )
+                    else:
+                        rep = groups["sell"][0].copy()
+                        rep["consensus_count"] = sell_count
+                        rep["consensus_strategies"] = sell_names
+                        rep["signal_type"] = "SELL"
+                        rep["diversity_score"] = diversity_sell
+                        rep["is_holding"] = ticker in held_tickers
+                        filtered.append(rep)
+                        logger.info(
+                            f"ENSEMBLE SELL {ticker} (held): {sell_count} strategies, "
+                            f"diversity={diversity_sell['weighted_score']:.2f}, "
+                            f"categories={diversity_sell['agreeing_categories']}/{diversity_sell['total_categories']}"
+                        )
             else:
                 # Original logic (fallback) — use asymmetric sell_threshold
                 if sell_count >= sell_threshold:
-                    rep = groups["sell"][0].copy()
-                    rep["consensus_count"] = sell_count
-                    rep["consensus_strategies"] = sell_names
-                    rep["signal_type"] = "SELL"
-                    filtered.append(rep)
-                    logger.info(f"ENSEMBLE SELL {ticker}: {sell_count}/{len(sell_names)} strategies agree (threshold={sell_threshold})")
+                    if sell_held_only and ticker not in held_tickers:
+                        sell_skipped_unheld += 1
+                        logger.info(
+                            f"SELL SKIP (non-held) {ticker}: {sell_count}/{len(sell_names)} strategies — "
+                            f"avoid signal logged but not added to scoring pool"
+                        )
+                    else:
+                        rep = groups["sell"][0].copy()
+                        rep["consensus_count"] = sell_count
+                        rep["consensus_strategies"] = sell_names
+                        rep["signal_type"] = "SELL"
+                        rep["is_holding"] = ticker in held_tickers
+                        filtered.append(rep)
+                        logger.info(f"ENSEMBLE SELL {ticker} (held): {sell_count}/{len(sell_names)} strategies agree (threshold={sell_threshold})")
 
-        logger.info(f"Ensemble filter: {len(signals)} individual -> {len(filtered)} consensus (N>={ENSEMBLE_CONSENSUS_N})")
+        logger.info(
+            f"Ensemble filter: {len(signals)} individual -> {len(filtered)} consensus "
+            f"(N>={ENSEMBLE_CONSENSUS_N}, held={len(held_tickers)}, sell_skipped_unheld={sell_skipped_unheld})"
+        )
         return filtered, summary
 
     def _save_scoring_results(self, signals: list[dict], date_str: str):

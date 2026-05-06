@@ -31,5 +31,3 @@ parameters:
   take_profit: 0.12
 timeframe: 1d
 backtest_results: {}
-allowed_signal_types:
-- BUY
