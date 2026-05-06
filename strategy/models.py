@@ -20,6 +20,7 @@ class Strategy:
     market: str = "ALL"  # "KRX", "US", or "ALL"
     timeframe: str = "1d"
     strategy_type: str = "indicator"  # "indicator" | "factor"
+    allowed_signal_types: list = field(default_factory=lambda: ["BUY", "SELL"])
 
     @classmethod
     def from_yaml(cls, data: dict) -> "Strategy":
@@ -36,6 +37,7 @@ class Strategy:
             market=data.get("market", "ALL"),
             timeframe=data.get("timeframe", "1d"),
             strategy_type=data.get("strategy_type", "indicator"),
+            allowed_signal_types=data.get("allowed_signal_types", ["BUY", "SELL"]),
         )
 
     def to_dict(self) -> dict:
@@ -52,4 +54,5 @@ class Strategy:
             "market": self.market,
             "timeframe": self.timeframe,
             "strategy_type": self.strategy_type,
+            "allowed_signal_types": self.allowed_signal_types,
         }

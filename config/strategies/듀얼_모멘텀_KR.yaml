@@ -26,3 +26,5 @@ parameters:
   position_size: 0.9999
   stop_loss: 0.15
 backtest_results: {}
+allowed_signal_types:
+- BUY

@@ -433,6 +433,8 @@ class DailyScan:
                 if last_signal == 0:
                     return None
                 signal_type = "BUY" if last_signal == 1 else "SELL"
+                if signal_type not in getattr(strat, "allowed_signal_types", ["BUY", "SELL"]):
+                    return None
                 last_row = df_ind.iloc[-1]
                 return {
                     "strategy_name": strat.name,

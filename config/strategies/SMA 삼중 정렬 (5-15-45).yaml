@@ -36,3 +36,5 @@ parameters:
   stop_loss: 0.05
 timeframe: 1d
 backtest_results: {}
+allowed_signal_types:
+- BUY
