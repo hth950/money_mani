@@ -225,6 +225,54 @@ def test_owner_login_cookie_me_csrf_origin_and_logout(client):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_viewer_logout_requires_csrf_and_revokes_session(client):
+    service.create_user("guest", PASSWORD, "viewer")
+    assert _login(client, "guest").status_code == 303
+    settings = get_auth_settings()
+    session_token = client.cookies.get(settings.session_cookie_name)
+    csrf_token = client.cookies.get(settings.csrf_cookie_name)
+    assert session_token and csrf_token
+
+    response = client.post(
+        "/logout",
+        headers={
+            "Origin": "https://evil.example",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+    assert response.status_code == 403
+    assert response.json() == {"detail": "invalid request origin"}
+    assert service.authenticate_session(session_token, settings=settings) is not None
+
+    response = client.post(
+        "/logout",
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": "invalid-token",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json() == {"detail": "invalid CSRF token"}
+    assert service.authenticate_session(session_token, settings=settings) is not None
+
+    response = client.post(
+        "/logout",
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": csrf_token,
+        },
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+    assert service.authenticate_session(session_token, settings=settings) is None
+
+    response = client.get(
+        "/api/auth/me",
+        headers={"Cookie": f"{settings.session_cookie_name}={session_token}"},
+    )
+    assert response.status_code == 401
+
+
 def test_viewer_has_explicit_read_only_allowlist(client):
     service.create_user("guest", PASSWORD, "viewer")
     response = _login(client, "guest", next_path="/portfolio")

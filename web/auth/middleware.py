@@ -220,7 +220,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if not context:
                 return self._secure(request, _unauthenticated_response(request))
             if context.user.role == "viewer":
-                if request.method not in SAFE_METHODS or not viewer_path_allowed(path):
+                is_logout = request.method == "POST" and path == "/logout"
+                if not is_logout and (
+                    request.method not in SAFE_METHODS or not viewer_path_allowed(path)
+                ):
                     return self._secure(request, _forbidden_response(request))
 
             if request.method not in SAFE_METHODS:
