@@ -359,6 +359,23 @@ def test_runtime_image_is_non_root():
     assert "USER money-mani" in dockerfile
 
 
+def test_backup_unit_allows_only_required_sqlite_write_paths():
+    unit = (
+        PROJECT_ROOT
+        / "deploy"
+        / "hermes"
+        / "systemd"
+        / "money-mani-backup.service"
+    ).read_text()
+
+    assert "ProtectSystem=strict" in unit
+    assert "NoNewPrivileges=true" in unit
+    assert (
+        "ReadWritePaths=/srv/money-mani/shared/backups "
+        "/srv/money-mani/shared/data"
+    ) in unit
+
+
 def test_layout_rejects_wildcard_allowed_hosts(tmp_path):
     secrets = tmp_path / "secrets"
     secrets.mkdir()

@@ -15,7 +15,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/srv/money-mani/shared/backups
+# SQLite's online Backup API needs the live database directory writable for
+# lock/journal handling even though the source connection itself uses mode=ro.
+ReadWritePaths=/srv/money-mani/shared/backups /srv/money-mani/shared/data
 
 [Install]
 WantedBy=multi-user.target
