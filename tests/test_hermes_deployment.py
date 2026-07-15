@@ -331,6 +331,7 @@ def test_compose_keeps_public_port_on_loopback_and_one_scheduler():
     scheduler = services["scheduler"]
 
     assert web["ports"] == ["127.0.0.1:32777:31234"]
+    assert web["command"] == ["python", "-m", "deploy.hermes.run_web"]
     assert web["read_only"] is True
     assert web["cap_drop"] == ["ALL"]
     assert web["healthcheck"]["test"][1] == "python"

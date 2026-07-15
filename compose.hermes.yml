@@ -40,7 +40,7 @@ x-app-service: &app-service
 services:
   web:
     <<: *app-service
-    command: ["python", "deploy/hermes/run_web.py"]
+    command: ["python", "-m", "deploy.hermes.run_web"]
     ports:
       - "127.0.0.1:32777:31234"
     healthcheck:
