@@ -31,6 +31,17 @@ transaction_costs:
     round_trip_pct: 0.0
     min_expected_return: 0.0
 
+# Manual paper-trading fees are decimal rates (0.00015 = 0.015%).  They are
+# separate from the strategy backtest round-trip percentages above.
+paper_trading:
+  fees:
+    KRX:
+      buy: 0.00015
+      sell: 0.00195
+    US:
+      buy: 0.0
+      sell: 0.0
+
 # Consensus thresholds (asymmetric BUY/SELL to reduce SELL bias)
 consensus:
   buy_threshold: 5    # BUY는 5개 전략 합의 (완화)
@@ -96,6 +107,17 @@ sector_benchmarks:
       per: 18.0
       roe: 0.10
       pbr: 1.3
+
+# KRX fundamental component policy. Missing individual metrics contribute a
+# neutral value, while an entirely unavailable payload remains explicitly
+# marked unavailable by FundamentalCollector.
+fundamental_scoring:
+  missing_metric_score: 0.5
+  components:
+    per: 0.35
+    pbr: 0.25
+    roe: 0.25
+    dividend: 0.15
 
 # Exit/sell timing strategy
 exit_strategy:

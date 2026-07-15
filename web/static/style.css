@@ -8,6 +8,12 @@ nav a {
     font-size: 0.85rem;
 }
 
+nav.container-fluid > ul:last-child {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 0.15rem;
+}
+
 .error {
     color: var(--pico-color-red-500, #e53935);
     padding: 1rem;
@@ -34,4 +40,154 @@ table { font-size: 0.9rem; }
 }
 .htmx-request .htmx-indicator {
     display: inline;
+}
+
+/* Paper trading */
+.paper-page-header,
+.paper-section-header,
+.paper-dialog-header,
+.paper-dialog-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.paper-page-header { margin-bottom: 1rem; }
+.paper-page-header h1,
+.paper-section-header h2,
+.paper-dialog-header h3 { margin: 0; }
+
+.paper-disclaimer {
+    border-left: 4px solid var(--primary);
+    background: var(--pico-card-background-color, #fff);
+    padding: 0.8rem 1rem;
+    margin-bottom: 1rem;
+}
+
+.paper-summary-grid,
+.paper-recommendation-grid,
+.paper-card-grid {
+    display: grid;
+    gap: 1rem;
+}
+
+.paper-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.paper-recommendation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.paper-card-grid { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+
+.paper-panel,
+.paper-recommendation-card {
+    border: 1px solid var(--pico-muted-border-color, #d8dee4);
+    border-radius: 10px;
+    padding: 1rem;
+    background: var(--pico-card-background-color, #fff);
+}
+
+.paper-panel h3,
+.paper-recommendation-card h3 { margin-top: 0; }
+
+.paper-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+    margin: 0;
+}
+
+.paper-metrics div {
+    min-width: 0;
+    padding: 0.55rem;
+    border-radius: 8px;
+    background: var(--pico-code-background-color, #f5f7fa);
+}
+
+.paper-metrics dt {
+    color: var(--pico-muted-color, #667085);
+    font-size: 0.75rem;
+}
+
+.paper-metrics dd {
+    margin: 0.15rem 0 0;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.paper-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.paper-badge.ok { color: #176b3a; background: #dff5e8; }
+.paper-badge.warn { color: #8a4b08; background: #fff0cf; }
+.paper-badge.error { color: #a42828; background: #fde1e1; }
+.paper-badge.info { color: #174ea6; background: #e1ecff; }
+.paper-badge.muted { color: #4b5563; background: #eceff3; }
+
+.paper-positive { color: #198754; }
+.paper-negative { color: #c93c37; }
+.paper-muted { color: var(--pico-muted-color, #667085); }
+
+.paper-table-wrap { overflow-x: auto; }
+.paper-table-wrap table { min-width: 880px; }
+.paper-table-wrap td,
+.paper-table-wrap th { white-space: nowrap; vertical-align: middle; }
+.paper-table-wrap td.paper-wrap { white-space: normal; min-width: 150px; }
+
+.paper-inline-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.paper-inline-actions button,
+.paper-compact-button {
+    width: auto;
+    margin: 0;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.78rem;
+}
+
+.paper-status-line {
+    min-height: 1.5rem;
+    margin: 0.5rem 0;
+    font-size: 0.86rem;
+}
+
+.paper-empty {
+    text-align: center;
+    color: var(--pico-muted-color, #667085);
+    padding: 1.5rem;
+}
+
+.paper-error-box,
+.paper-success-box,
+.paper-preview-box {
+    border-radius: 8px;
+    padding: 0.75rem;
+    margin: 0.75rem 0;
+}
+
+.paper-error-box { color: #8f2525; background: #fde8e8; }
+.paper-success-box { color: #176b3a; background: #e1f5e8; }
+.paper-preview-box { background: var(--pico-code-background-color, #f5f7fa); }
+
+.paper-loading { opacity: 0.62; pointer-events: none; }
+
+dialog.paper-dialog { width: min(680px, calc(100vw - 2rem)); }
+dialog.paper-chart-dialog { width: min(900px, calc(100vw - 2rem)); }
+.paper-chart-wrap { position: relative; min-height: 320px; }
+
+@media (max-width: 760px) {
+    .paper-summary-grid,
+    .paper-recommendation-grid { grid-template-columns: 1fr; }
+    .paper-metrics { grid-template-columns: 1fr 1fr; }
+    nav.container-fluid { overflow-x: auto; }
 }

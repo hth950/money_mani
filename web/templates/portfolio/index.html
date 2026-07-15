@@ -10,22 +10,39 @@
     <div id="holdings-table"><p>로딩 중...</p></div>
 </article>
 
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml, escapeAttr } = window.MoneyManiSafe;
+
+// Rendering helpers
+function renderHoldingsTable(data) {
+    if (!data.length) return '<p>보유 종목이 없습니다. 새로고침을 눌러주세요.</p>';
+    let html = '<table><thead><tr><th>종목</th><th>이름</th><th>시장</th><th>수량</th><th>평균가</th><th>현재가</th><th>수익률</th></tr></thead><tbody>';
+    data.forEach(h => {
+        const pnlPct = Number(h.pnl_pct);
+        const cls = pnlPct >= 0 ? 'signal-buy' : 'signal-sell';
+        html += '<tr><td>' + escapeHtml(h.ticker) + '</td><td>' + escapeHtml(h.name || '') + '</td><td>' + escapeHtml(h.market) + '</td>'
+            + '<td>' + escapeHtml(h.quantity) + '</td><td>' + escapeHtml(Number(h.avg_price).toLocaleString()) + '</td>'
+            + '<td>' + escapeHtml(Number(h.current_price).toLocaleString()) + '</td>'
+            + '<td class="' + escapeAttr(cls) + '">' + escapeHtml(pnlPct.toFixed(2)) + '%</td></tr>';
+    });
+    return html + '</tbody></table>';
+}
+
+function updateRefreshStatus(message, isError = false) {
+    const paragraph = document.createElement('p');
+    if (isError) paragraph.className = 'error';
+    paragraph.textContent = (isError ? '오류: ' : '') + String(message ?? '');
+    document.getElementById('refresh-status').replaceChildren(paragraph);
+}
+
+// API data loading
 function loadHoldings() {
     fetch('/api/portfolio/live')
         .then(r => r.json())
         .then(data => {
             const div = document.getElementById('holdings-table');
-            if (!data.length) { div.innerHTML = '<p>보유 종목이 없습니다. 새로고침을 눌러주세요.</p>'; return; }
-            let html = '<table><thead><tr><th>종목</th><th>이름</th><th>시장</th><th>수량</th><th>평균가</th><th>현재가</th><th>수익률</th></tr></thead><tbody>';
-            data.forEach(h => {
-                const cls = h.pnl_pct >= 0 ? 'signal-buy' : 'signal-sell';
-                html += '<tr><td>' + h.ticker + '</td><td>' + (h.name||'') + '</td><td>' + h.market + '</td>'
-                    + '<td>' + h.quantity + '</td><td>' + Number(h.avg_price).toLocaleString() + '</td>'
-                    + '<td>' + Number(h.current_price).toLocaleString() + '</td>'
-                    + '<td class="' + cls + '">' + h.pnl_pct.toFixed(2) + '%</td></tr>';
-            });
-            div.innerHTML = html + '</tbody></table>';
+            div.innerHTML = renderHoldingsTable(data);
         });
 }
 loadHoldings();
@@ -36,11 +53,11 @@ function refreshPortfolio() {
     fetch('/api/portfolio/refresh', {method: 'POST'})
         .then(r => r.json())
         .then(data => {
-            document.getElementById('refresh-status').innerHTML = '<p>' + data.message + '</p>';
+            updateRefreshStatus(data.message);
             setTimeout(loadHoldings, 3000);
         })
         .catch(err => {
-            document.getElementById('refresh-status').innerHTML = '<p class="error">오류: ' + err.message + '</p>';
+            updateRefreshStatus(err.message, true);
         })
         .finally(() => { btn.disabled = false; btn.textContent = '새로고침 (KIS API)'; });
 }

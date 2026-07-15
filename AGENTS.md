@@ -8,9 +8,9 @@
 ## 프로젝트 개요
 
 - **목적**: KRX(국내) + US(미국) 주식 대상 5축 스코어링 → 매수/관망/스킵 결정 → Discord 알림
-- **서버**: `168.107.42.41:8000` (SSH alias: `money-mani`, key: `~/.ssh/ssh-key-2026-03-08.key`)
-- **배포**: git 미사용. `rsync -avz ... money-mani:~/money_mani/` 로 동기화
-- **Python**: `.venv/bin/python` (서버에서 반드시 이 venv 사용)
+- **현재 운영**: 로컬 PC `http://localhost:31234` (`config/settings.yaml`의 `web` 설정)
+- **레거시 원격 서버**: `168.107.42.41:8000` (현재 운영 대상 아님)
+- **Python**: 로컬·원격 모두 프로젝트 `.venv/bin/python` 사용
 
 ---
 
@@ -36,7 +36,7 @@ YouTube / Web 검색
  ├── IntelScorer (10% KRX / 25% US)
  └── MacroCollector (10% KRX / 15% US)
        ↓
-[web/] FastAPI + HTMX UI (168.107.42.41:8000)
+[web/] FastAPI + HTMX UI (http://localhost:31234)
 [alerts/discord_webhook.py] Discord 알림
 ```
 
@@ -53,7 +53,7 @@ YouTube / Web 검색
 | **macro** | 10% | 15% | VIX 기반 (VIX≤15 → 0.80, VIX≥35 → 0.15) |
 
 **결정 임계값**:
-- EXECUTE: composite ≥ 0.60
+- EXECUTE: composite ≥ 0.65
 - WATCH: composite ≥ 0.40
 - SKIP: composite < 0.40
 
@@ -111,7 +111,7 @@ YouTube / Web 검색
 | 파일 | 역할 |
 |---|---|
 | `app.py` | FastAPI 앱 (시작 시 DB 초기화 + YAML 마이그레이션) |
-| `db/schema.sql` | SQLite 스키마 (14개 테이블) |
+| `db/schema.sql` | SQLite 스키마 (현재 21개 업무 테이블) |
 | `db/migrate.py` | 스키마 마이그레이션 |
 | `routers/` | 14개 라우터 (pages, strategies, backtest, signals, scoring 등) |
 | `services/` | 비즈니스 로직 레이어 |
@@ -126,6 +126,9 @@ YouTube / Web 검색
 | `backtest_results` | 종목별 백테스트 결과 |
 | `signals` | 감지된 매수/매도 신호 |
 | `scoring_results` | 5축 점수 + composite + decision |
+| `decision_events` | append-only 판단 스냅샷과 실행 상태 |
+| `decision_outcomes` | 판단별 1/5/10/20 거래일 사후 성과 |
+| `walk_forward_results` | 전략별 워크포워드 검증 근거 |
 | `positions` | 오픈/클로즈 포지션 |
 | `market_intel_issues` | LLM 감지 시장 이슈 (direction/confidence/accuracy_score) |
 | `knowledge_entries` | 지속적 지식 베이스 |
@@ -139,15 +142,17 @@ YouTube / Web 검색
 | 시간 | 작업 |
 |---|---|
 | 08:00 | daily_scan (전략×종목 스캔) |
-| 08:50 | 실시간 모니터 시작 (KRX) |
+| 08:50 | 실시간 모니터 시작 작업 — 현재 안전 잠금으로 미등록 |
 | 09:00–15:00 | 매시 인텔 스캔 + 즉시 재스코어링 |
 | 09:30/11:30/13:30/15:30 | 전체 재스코어링 |
-| 15:35 | 실시간 모니터 종료 (KRX) |
+| 15:35 | 실시간 모니터 종료 안전 작업 |
 | 16:00 | 인텔 가격 추적 |
 | 16:10 | 수급 캐시 초기화 + 재스코어링 |
 | 18:00 | 인텔-신호 상관관계 로깅 |
 | 19:00 | 야간 리포트 |
-| 22:50 | 실시간 모니터 시작 (US) |
+| 22:50 | 실시간 모니터 시작 작업 — 현재 안전 잠금으로 미등록 |
+
+> `realtime.enabled: false`: 일봉과 60초 스냅샷이 섞이는 기존 버퍼 구조 및 재시작 알림 폭주를 제거하기 전까지 수동·자동 시작을 모두 fail-closed로 차단합니다.
 
 ---
 
@@ -229,20 +234,30 @@ Stochastic RSI 반전, Williams %R 반전, 볼린저 밴드 수축 돌파, 볼�
 | 버그 | 수정 상태 | 파일 |
 |---|---|---|
 | engine.py: `buy(size=1.0)` = 1주 (백테스트 수익률 0.8% → 실제 44.9%) | ✅ 수정 (0.9999 사용) | `backtester/engine.py` |
-| pykrx OCI 서버 IP 차단 → OHLCV 빈 DataFrame | ✅ yfinance .KS fallback 추가 | `market_data/krx_fetcher.py` |
+| pykrx OCI 서버 IP 차단 → OHLCV 빈 DataFrame | ✅ yfinance KOSPI/KOSDAQ EQUITY 심볼 판별 fallback | `market_data/krx_fetcher.py` |
 | KRX 펀더멘털 점수 50 고정 (pykrx 차단) | ✅ DART fallback + yfinance 섹터 추가 | `scoring/data_collectors.py` |
 | rescore 오늘 데이터 없으면 0 업데이트 | ✅ MAX(scan_date) fallback 추가 | `pipeline/rescore.py` |
 | rescore decision/block_reason 재평가 안됨 | ✅ PortfolioRiskManager 재평가 추가 | `pipeline/rescore.py` |
+| 실시간 모니터 일봉+60초 봉 혼합 및 시작 알림 폭주 | ⚠️ 재설계 전 안전 잠금 (`realtime.enabled: false`) | `config/settings.yaml`, `web/services/monitor_service.py` |
 | CVX BLOCKED (max_positions 초과) | ✅ risk.yaml → 9999, rescore로 해결 | `config/risk.yaml` |
 | strategies.status CHECK에 validated_v2 없음 | ✅ 수정 (자동 마이그레이션) | `web/db/schema.sql`, `web/db/migrate.py` |
 | get_validated()이 validated_v2 미인식 | ✅ 수정 (validated_v2 포함) | `strategy/registry.py` |
 
 ---
 
-## 서버 배포 방법
+## 현재 로컬 운영 방법
 
 ```bash
-# 로컬 → 서버 파일 동기화
+# 웹 UI (config/settings.yaml의 기본 포트 31234)
+.venv/bin/python run_web.py
+
+# 스케줄러
+.venv/bin/python -c 'from pipeline.scheduler import start_scheduler; start_scheduler()'
+```
+
+## 레거시 원격 배포 방법 (현재 운영 대상 아님)
+
+```bash
 rsync -avz --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
   --exclude='output/' --exclude='.venv/' \
   /Users/hwangtaehwan/Desktop/project/money_mani/ \

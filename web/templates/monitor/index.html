@@ -17,7 +17,8 @@
         </div>
         <div>
             <p>상태: <strong id="monitor-status">확인 중...</strong></p>
-            <button id="start-btn" onclick="startMonitor()">모니터 시작</button>
+            <p id="disabled-reason" role="alert" hidden></p>
+            <button id="start-btn" onclick="startMonitor()" disabled>모니터 시작</button>
             <button id="stop-btn" onclick="stopMonitor()" disabled>모니터 중지</button>
         </div>
     </div>
@@ -30,7 +31,22 @@
     </div>
 </article>
 
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml, escapeAttr } = window.MoneyManiSafe;
+
+// Rendering helpers
+function renderSignalItem(sig) {
+    const cls = sig.signal_type === 'BUY' ? 'signal-buy' : 'signal-sell';
+    const ticker = sig.ticker || '';
+    return '<strong class="' + escapeAttr(cls) + '">' + escapeHtml(sig.signal_type || '') + '</strong> '
+        + escapeHtml(sig.ticker_name || ticker) + ' (' + escapeHtml(ticker) + ') @ '
+        + escapeHtml(Number(sig.price).toLocaleString()) + ' '
+        + '<small>[' + escapeHtml(sig.strategy_name || '') + '] '
+        + escapeHtml(sig.timestamp || sig.market || '') + '</small>';
+}
+
+// API data loading
 let evtSource = null;
 
 function checkStatus() {
@@ -38,19 +54,34 @@ function checkStatus() {
         .then(r => r.json())
         .then(data => {
             const status = document.getElementById('monitor-status');
+            const disabledReason = document.getElementById('disabled-reason');
             const startBtn = document.getElementById('start-btn');
             const stopBtn = document.getElementById('stop-btn');
-            if (data.running) {
+            const marketFilter = document.getElementById('market-filter');
+            if (!data.enabled) {
+                status.textContent = data.running ? '비활성화됨 (현재 실행 중)' : '비활성화됨';
+                status.style.color = 'var(--pico-color-red-500, #b42318)';
+                disabledReason.textContent = data.disabled_reason || '안전을 위해 시작이 차단되었습니다.';
+                disabledReason.hidden = false;
+                startBtn.disabled = true;
+                stopBtn.disabled = !data.running;
+                marketFilter.disabled = true;
+                if (evtSource) { evtSource.close(); evtSource = null; }
+            } else if (data.running) {
                 status.textContent = '실행 중';
                 status.style.color = 'var(--pico-color-green-500, green)';
+                disabledReason.hidden = true;
                 startBtn.disabled = true;
                 stopBtn.disabled = false;
+                marketFilter.disabled = false;
                 if (!evtSource) connectSSE();
             } else {
                 status.textContent = '중지됨';
                 status.style.color = '';
+                disabledReason.hidden = true;
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
+                marketFilter.disabled = false;
             }
         });
 }
@@ -60,7 +91,10 @@ function startMonitor() {
     const params = filter ? '?market_filter=' + filter : '';
     fetch('/api/monitor/start' + params, {method: 'POST'})
         .then(r => r.json())
-        .then(() => { checkStatus(); connectSSE(); });
+        .then(data => {
+            checkStatus();
+            if (data.enabled && data.status !== 'disabled') connectSSE();
+        });
 }
 
 function stopMonitor() {
@@ -79,15 +113,11 @@ function connectSSE() {
     evtSource.addEventListener('signal', (e) => {
         const sig = JSON.parse(e.data);
         const feed = document.getElementById('signal-feed');
-        const cls = sig.signal_type === 'BUY' ? 'signal-buy' : 'signal-sell';
         const item = document.createElement('div');
         item.className = 'signal-item';
-        item.innerHTML = '<strong class="' + cls + '">' + sig.signal_type + '</strong> '
-            + (sig.ticker_name || sig.ticker) + ' (' + sig.ticker + ') @ '
-            + Number(sig.price).toLocaleString() + ' '
-            + '<small>[' + sig.strategy_name + '] ' + (sig.timestamp || sig.market || '') + '</small>';
+        item.innerHTML = renderSignalItem(sig);
 
-        if (feed.querySelector('p')) feed.innerHTML = '';
+        if (feed.querySelector('p')) feed.textContent = '';
         feed.insertBefore(item, feed.firstChild);
     });
 

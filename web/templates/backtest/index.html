@@ -3,6 +3,34 @@
 {% block content %}
 <h1>백테스트</h1>
 
+<section>
+    <h2>검증 증거 현황</h2>
+    <div class="grid">
+        <article>
+            <header>검증 상태 주장</header>
+            <strong id="evidence-claims">-</strong>개
+        </article>
+        <article>
+            <header>증거 READY</header>
+            <strong id="evidence-ready">-</strong>개
+        </article>
+        <article>
+            <header>점검 필요</header>
+            <strong id="evidence-attention">-</strong>개
+        </article>
+        <article>
+            <header>워크포워드 미완료</header>
+            <strong id="evidence-wf-missing">-</strong>개
+        </article>
+    </div>
+    <p id="evidence-note"><small>저장된 백테스트·워크포워드 증거를 확인하는 중입니다.</small></p>
+    <details>
+        <summary>점검이 필요한 전략 보기</summary>
+        <ul id="evidence-attention-list"><li>로딩 중...</li></ul>
+    </details>
+</section>
+
+{% if request.state.user.role == 'owner' %}
 <article>
     <header>백테스트 실행</header>
     <form id="backtest-form">
@@ -34,13 +62,27 @@
     </form>
     <div id="job-status"></div>
 </article>
+{% endif %}
 
 <article>
     <header>백테스트 결과</header>
     <div id="results-table"><p>로딩 중...</p></div>
 </article>
 
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml, escapeAttr } = window.MoneyManiSafe;
+
+function finiteNumber(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function numericDetailPath(prefix, id) {
+    const value = String(id ?? '');
+    return /^\d+$/.test(value) ? prefix + encodeURIComponent(value) : '';
+}
+
 const TICKERS = {
     KRX: [
         {code: '005930', name: '삼성전자'},
@@ -122,6 +164,53 @@ const TICKERS = {
 const tickerNames = {};
 Object.values(TICKERS).forEach(list => list.forEach(t => { tickerNames[t.code] = t.name; }));
 
+function loadValidationEvidence() {
+    fetch('/api/backtest/evidence?include_unclaimed=false')
+        .then(r => {
+            if (!r.ok) throw new Error('검증 증거 API 오류');
+            return r.json();
+        })
+        .then(data => {
+            const summary = data.summary || {};
+            document.getElementById('evidence-claims').textContent = summary.validation_claims ?? 0;
+            document.getElementById('evidence-ready').textContent = summary.evidence_ready ?? 0;
+            document.getElementById('evidence-attention').textContent = summary.attention_required ?? 0;
+            document.getElementById('evidence-wf-missing').textContent = (data.strategies || [])
+                .filter(item => item.claims_validation && (item.walk_forward?.latest_results ?? 0) === 0)
+                .length;
+
+            const ready = summary.evidence_ready ?? 0;
+            const claims = summary.validation_claims ?? 0;
+            document.getElementById('evidence-note').textContent = ready === claims && claims > 0
+                ? '모든 검증 상태 전략이 현재 증거 정책을 충족합니다.'
+                : '전략 상태는 자동 변경하지 않습니다. READY가 아닌 전략은 재검증 증거가 필요합니다.';
+
+            const list = document.getElementById('evidence-attention-list');
+            const attention = (data.strategies || []).filter(item => item.claims_validation && !item.evidence_ready);
+            list.replaceChildren();
+            if (!attention.length) {
+                const li = document.createElement('li');
+                li.textContent = '점검이 필요한 전략이 없습니다.';
+                list.appendChild(li);
+                return;
+            }
+            attention.slice(0, 20).forEach(item => {
+                const li = document.createElement('li');
+                li.textContent = item.name + ' — ' + item.evidence_state;
+                list.appendChild(li);
+            });
+            if (attention.length > 20) {
+                const li = document.createElement('li');
+                li.textContent = '외 ' + (attention.length - 20) + '개';
+                list.appendChild(li);
+            }
+        })
+        .catch(err => {
+            document.getElementById('evidence-note').textContent = '검증 증거를 불러오지 못했습니다: ' + err.message;
+            document.getElementById('evidence-attention-list').replaceChildren();
+        });
+}
+
 function updateTickerList() {
     const market = document.getElementById('market-select').value;
     const list = TICKERS[market] || [];
@@ -157,44 +246,60 @@ function clearTickers() {
     document.getElementById('tickers-input').value = '';
 }
 
-// Load strategies for select
-fetch('/api/strategies')
-    .then(r => r.json())
-    .then(data => {
-        const sel = document.getElementById('strategy-select');
-        data.forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s.id;
-            opt.textContent = s.name + ' (' + s.status + ')';
-            sel.appendChild(opt);
+// Load strategies only when the owner-only execution form is present.
+const backtestForm = document.getElementById('backtest-form');
+if (backtestForm) {
+    fetch('/api/strategies')
+        .then(r => r.json())
+        .then(data => {
+            const sel = document.getElementById('strategy-select');
+            data.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = s.name + ' (' + s.status + ')';
+                sel.appendChild(opt);
+            });
         });
-    });
+}
 
 function loadResults() {
     fetch('/api/backtest/results')
         .then(r => r.json())
         .then(data => {
             const div = document.getElementById('results-table');
-            if (!data.length) { div.innerHTML = '<p>백테스트 결과가 없습니다.</p>'; return; }
-            let html = '<table><thead><tr><th>전략</th><th>종목</th><th>시장</th><th>수익률</th><th>샤프</th><th>최대낙폭</th><th>승률</th><th>거래수</th><th>유효</th><th>실행일</th></tr></thead><tbody>';
-            data.forEach(r => {
-                const cls = r.total_return >= 0 ? 'signal-buy' : 'signal-sell';
-                const name = tickerNames[r.ticker] || '';
-                const tickerDisplay = name ? r.ticker + ' ' + name : r.ticker;
-                html += '<tr><td>' + r.strategy_name + '</td><td>' + tickerDisplay + '</td><td>' + r.market + '</td>'
-                    + '<td class="' + cls + '">' + (r.total_return * 100).toFixed(2) + '%</td>'
-                    + '<td>' + r.sharpe_ratio.toFixed(2) + '</td><td>' + (r.max_drawdown * 100).toFixed(2) + '%</td>'
-                    + '<td>' + (r.win_rate * 100).toFixed(1) + '%</td><td>' + r.num_trades + '</td>'
-                    + '<td>' + (r.is_valid ? '유효' : '무효') + '</td>'
-                    + '<td><a href="/backtest/' + r.id + '">' + (r.created_at||'').substring(0,16) + '</a></td></tr>';
-            });
-            div.innerHTML = html + '</tbody></table>';
+            div.innerHTML = renderBacktestResults(data);
         });
 }
-loadResults();
-updateTickerList();
 
-document.getElementById('backtest-form').addEventListener('submit', async (e) => {
+function renderBacktestResults(data) {
+    if (!Array.isArray(data) || !data.length) return '<p>백테스트 결과가 없습니다.</p>';
+    let html = '<table><thead><tr><th>전략</th><th>종목</th><th>시장</th><th>수익률</th><th>샤프</th><th>최대낙폭</th><th>승률</th><th>거래수</th><th>유효</th><th>실행일</th></tr></thead><tbody>';
+    data.forEach(r => {
+        const totalReturn = finiteNumber(r?.total_return);
+        const cls = totalReturn >= 0 ? 'signal-buy' : 'signal-sell';
+        const ticker = String(r?.ticker || '-');
+        const name = typeof tickerNames[ticker] === 'string' ? tickerNames[ticker] : '';
+        const tickerDisplay = name ? ticker + ' ' + name : ticker;
+        const detailPath = numericDetailPath('/backtest/', r?.id);
+        const created = escapeHtml(String(r?.created_at || '').substring(0, 16));
+        const createdMarkup = detailPath
+            ? '<a href="' + escapeAttr(detailPath) + '">' + created + '</a>'
+            : created;
+        html += '<tr><td>' + escapeHtml(r?.strategy_name || '-') + '</td><td>' + escapeHtml(tickerDisplay) + '</td><td>' + escapeHtml(r?.market || '-') + '</td>'
+            + '<td class="' + cls + '">' + (totalReturn * 100).toFixed(2) + '%</td>'
+            + '<td>' + finiteNumber(r?.sharpe_ratio).toFixed(2) + '</td><td>' + (finiteNumber(r?.max_drawdown) * 100).toFixed(2) + '%</td>'
+            + '<td>' + (finiteNumber(r?.win_rate) * 100).toFixed(1) + '%</td><td>' + escapeHtml(r?.num_trades ?? 0) + '</td>'
+            + '<td>' + (r?.is_valid ? '유효' : '무효') + '</td>'
+            + '<td>' + createdMarkup + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+}
+// Initial load
+loadResults();
+loadValidationEvidence();
+if (backtestForm) updateTickerList();
+
+backtestForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = document.getElementById('run-btn');
     btn.disabled = true;
@@ -209,10 +314,10 @@ document.getElementById('backtest-form').addEventListener('submit', async (e) =>
             method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
         });
         const result = await resp.json();
-        document.getElementById('job-status').innerHTML = '<p>작업 ID: ' + result.job_id + ' - ' + result.message + '</p>';
+        document.getElementById('job-status').innerHTML = '<p>작업 ID: ' + escapeHtml(result.job_id) + ' - ' + escapeHtml(result.message) + '</p>';
         setTimeout(loadResults, 5000);
     } catch (err) {
-        document.getElementById('job-status').innerHTML = '<p class="error">오류: ' + err.message + '</p>';
+        document.getElementById('job-status').innerHTML = '<p class="error">오류: ' + escapeHtml(err.message) + '</p>';
     } finally {
         btn.disabled = false;
         btn.textContent = '백테스트 실행';

@@ -76,13 +76,23 @@ class BacktestService:
 
     def _store_result(self, strategy_id: int, result, market: str) -> int:
         """Insert BacktestResult into backtest_results table."""
+        try:
+            from utils.config_loader import load_config
+
+            validation_policy = load_config().get("backtest", {}).get(
+                "validation_thresholds", {}
+            )
+        except Exception:
+            validation_policy = {}
+
         with get_db() as db:
             cursor = db.execute(
                 """INSERT INTO backtest_results
                    (strategy_id, strategy_name, ticker, market, period,
                     total_return, sharpe_ratio, max_drawdown, win_rate,
-                    num_trades, is_valid, trades_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    num_trades, is_valid, trades_json, avg_holding_days,
+                    annual_trade_rate, validation_policy_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     strategy_id,
                     result.strategy_name,
@@ -96,6 +106,9 @@ class BacktestService:
                     result.num_trades,
                     1 if result.is_valid else 0,
                     json.dumps(result.trades, ensure_ascii=False, default=str),
+                    getattr(result, "avg_holding_days", None),
+                    getattr(result, "annual_trade_rate", None),
+                    json.dumps(validation_policy, ensure_ascii=False, sort_keys=True),
                 ),
             )
             return cursor.lastrowid

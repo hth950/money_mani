@@ -33,7 +33,9 @@
 
 <!-- Refresh button + timestamp -->
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem">
+    {% if request.state.user.role == 'owner' %}
     <button id="refresh-btn" onclick="doRefresh()" style="width:auto">새로고침</button>
+    {% endif %}
     <small id="last-updated" style="color:#888">마지막 업데이트: --</small>
 </div>
 
@@ -50,8 +52,11 @@
     <div id="posts-table">로딩 중...</div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+        integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml, escapeAttr, safeHttpUrl } = window.MoneyManiSafe;
 let macroChart = null;
 
 function scoreColor(score) {
@@ -213,8 +218,51 @@ async function loadHistory() {
         });
     } catch (e) {
         document.getElementById('macro-chart').parentElement.innerHTML +=
-            '<p style="color:red">차트 로딩 실패: ' + e.message + '</p>';
+            '<p style="color:red">차트 로딩 실패: ' + escapeHtml(e.message) + '</p>';
     }
+}
+
+function renderPostsMeta(data) {
+    const parts = [];
+    if (data.dcinside_posts !== null && data.dcinside_posts !== undefined)
+        parts.push('DCInside: ' + escapeHtml(data.dcinside_posts) + '건');
+    if (data.fmkorea_posts !== null && data.fmkorea_posts !== undefined)
+        parts.push('FMKorea: ' + escapeHtml(data.fmkorea_posts) + '건');
+    if (data.post_count !== null && data.post_count !== undefined)
+        parts.push('총 분석: ' + escapeHtml(data.post_count) + '건');
+    if (data.community_score !== null && data.community_score !== undefined) {
+        const cs = Number(data.community_score);
+        if (Number.isFinite(cs)) {
+            parts.push('커뮤니티 점수: <span style="color:' + scoreColor(cs) + ';font-weight:bold">' + escapeHtml(cs.toFixed(2)) + '</span>');
+        }
+    }
+    if (data.snapshot_at)
+        parts.push('기준시각: ' + escapeHtml(toKST(String(data.snapshot_at))));
+    return parts.join(' &nbsp;|&nbsp; ');
+}
+
+function renderCommunityPost(post) {
+    const isString = typeof post === 'string';
+    const title = isString ? post : (post?.title || post?.text || '-');
+    const source = isString ? 'DCInside' : (post?.source || post?.platform || '-');
+    const url = isString ? '' : safeHttpUrl(post?.url || post?.link || '');
+    const titleMarkup = url
+        ? '<a href="' + escapeAttr(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(title) + '</a>'
+        : escapeHtml(title);
+    return '<tr><td><small>' + escapeHtml(source) + '</small></td><td>' + titleMarkup + '</td></tr>';
+}
+
+function renderPostsContent(data) {
+    let html = data.llm_comment
+        ? '<p style="background:#f0f4ff;padding:0.6rem 1rem;border-left:3px solid #6c5ce7;margin-bottom:1rem;">' +
+          '<strong>AI 분석:</strong> ' + escapeHtml(data.llm_comment) + '</p>'
+        : '';
+    const posts = Array.isArray(data.posts_sample) ? data.posts_sample : [];
+    if (!posts.length) return html + '<p>포스트 샘플이 없습니다.</p>';
+
+    html += '<table role="grid"><thead><tr><th>출처</th><th>제목</th></tr></thead><tbody>';
+    html += posts.map(renderCommunityPost).join('');
+    return html + '</tbody></table>';
 }
 
 async function loadPosts() {
@@ -229,54 +277,16 @@ async function loadPosts() {
         }
 
         // Meta info
-        const parts = [];
-        if (data.dcinside_posts !== null && data.dcinside_posts !== undefined)
-            parts.push('DCInside: ' + data.dcinside_posts + '건');
-        if (data.fmkorea_posts !== null && data.fmkorea_posts !== undefined)
-            parts.push('FMKorea: ' + data.fmkorea_posts + '건');
-        if (data.post_count !== null && data.post_count !== undefined)
-            parts.push('총 분석: ' + data.post_count + '건');
-        if (data.community_score !== null && data.community_score !== undefined) {
-            const cs = data.community_score;
-            parts.push('커뮤니티 점수: <span style="color:' + scoreColor(cs) + ';font-weight:bold">' + cs.toFixed(2) + '</span>');
-        }
-        if (data.snapshot_at)
-            parts.push('기준시각: ' + toKST(data.snapshot_at));
-        metaEl.innerHTML = parts.join(' &nbsp;|&nbsp; ');
-
-        // LLM 분석 코멘트
-        if (data.llm_comment) {
-            el.innerHTML = '<p style="background:#f0f4ff;padding:0.6rem 1rem;border-left:3px solid #6c5ce7;margin-bottom:1rem;">' +
-                '<strong>AI 분석:</strong> ' + data.llm_comment + '</p>';
-        }
-
-        const posts = data.posts_sample || [];
-        if (!posts.length) {
-            el.innerHTML += '<p>포스트 샘플이 없습니다.</p>';
-            return;
-        }
-
-        let html = '<table role="grid"><thead><tr>' +
-            '<th>출처</th><th>제목</th>' +
-            '</tr></thead><tbody>';
-        for (const p of posts) {
-            const isStr = typeof p === 'string';
-            const title = isStr ? p : (p.title || p.text || '-');
-            const source = isStr ? 'DCInside' : (p.source || p.platform || '-');
-            html += '<tr>' +
-                '<td><small>' + source + '</small></td>' +
-                '<td>' + title + '</td>' +
-                '</tr>';
-        }
-        html += '</tbody></table>';
-        el.innerHTML = html;
+        metaEl.innerHTML = renderPostsMeta(data);
+        el.innerHTML = renderPostsContent(data);
     } catch (e) {
-        el.innerHTML = '<p style="color:red">포스트 로딩 실패: ' + e.message + '</p>';
+        el.innerHTML = '<p style="color:red">포스트 로딩 실패: ' + escapeHtml(e.message) + '</p>';
     }
 }
 
 async function doRefresh() {
     const btn = document.getElementById('refresh-btn');
+    if (!btn) return;
     btn.setAttribute('aria-busy', 'true');
     btn.disabled = true;
     document.getElementById('last-updated').textContent = '갱신 중...';

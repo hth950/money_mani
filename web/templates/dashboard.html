@@ -39,22 +39,30 @@
     </article>
 </div>
 
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml, escapeAttr } = window.MoneyManiSafe;
+
+// Rendering helpers
+function renderRecentSignals(signals) {
+    return signals.slice(0, 3).map(signal => {
+        const cls = signal.signal_type === 'BUY' ? 'signal-buy' : 'signal-sell';
+        const name = signal.ticker_name ? ' (' + escapeHtml(signal.ticker_name) + ')' : '';
+        return '<span class="' + escapeAttr(cls) + '">' + escapeHtml(signal.signal_type) + '</span> '
+            + escapeHtml(signal.ticker) + name + ' ';
+    }).join('');
+}
+
+// API data loading
 fetch('/api/strategies').then(r=>r.json()).then(d => {
     const total = d.length;
-    const validated = d.filter(s => s.status === 'validated').length;
+    const validated = d.filter(s => ['validated', 'validated_v2'].includes(s.status)).length;
     document.getElementById('stat-strategies').textContent = '총 ' + total + '개 (검증됨: ' + validated + '개)';
 }).catch(() => { document.getElementById('stat-strategies').textContent = '-'; });
 
 fetch('/api/signals?limit=5').then(r=>r.json()).then(d => {
     if (!d.length) { document.getElementById('stat-signals').textContent = '최근 신호 없음'; return; }
-    let html = '';
-    d.slice(0, 3).forEach(s => {
-        const cls = s.signal_type === 'BUY' ? 'signal-buy' : 'signal-sell';
-        const name = s.ticker_name ? ' (' + s.ticker_name + ')' : '';
-        html += '<span class="' + cls + '">' + s.signal_type + '</span> ' + s.ticker + name + ' ';
-    });
-    document.getElementById('stat-signals').innerHTML = html;
+    document.getElementById('stat-signals').innerHTML = renderRecentSignals(d);
 }).catch(() => { document.getElementById('stat-signals').textContent = '-'; });
 
 fetch('/api/portfolio/live').then(r=>r.json()).then(d => {
@@ -72,7 +80,7 @@ fetch('/api/scan/history').then(r=>r.json()).then(d => {
 }).catch(() => { document.getElementById('stat-scan').textContent = '-'; });
 
 fetch('/api/monitor/status').then(r=>r.json()).then(d => {
-    document.getElementById('stat-monitor').textContent = d.running ? '실행 중' : '중지됨';
+    document.getElementById('stat-monitor').textContent = !d.enabled ? '비활성화됨' : (d.running ? '실행 중' : '중지됨');
 }).catch(() => { document.getElementById('stat-monitor').textContent = '-'; });
 </script>
 {% endblock %}

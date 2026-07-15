@@ -31,6 +31,18 @@ class NightlyOrchestrator:
         # Step 1: Evening P&L report
         report_result = self.evening_report.run(target_date)
 
+        # Step 1.5: Refresh bounded forward-return labels for decision events.
+        # The labeler processes oldest events first and is idempotent, so a
+        # nightly run gradually catches up without an unbounded fetch burst.
+        try:
+            from web.services.outcome_service import DecisionOutcomeService
+            outcome_result = DecisionOutcomeService().label_pending(limit=200, as_of=target_date)
+            if isinstance(report_result, dict):
+                report_result["decision_outcomes"] = outcome_result
+            logger.info("Decision outcome labeling: %s", outcome_result)
+        except Exception as e:
+            logger.error(f"Failed to label decision outcomes: {e}")
+
         # Step 2: Close expired positions
         try:
             closed = self.position_service.close_expired_positions(

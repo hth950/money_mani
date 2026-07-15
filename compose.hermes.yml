@@ -1,0 +1,101 @@
+name: money-mani
+
+x-app-service: &app-service
+  image: "money-mani:${APP_GIT_SHA:-local}"
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      APP_GIT_SHA: "${APP_GIT_SHA:-unknown}"
+      APP_GID: "${MONEY_MANI_GID:-1000}"
+      APP_UID: "${MONEY_MANI_UID:-1000}"
+  env_file:
+    - "${MONEY_MANI_ENV_FILE:-/srv/money-mani/secrets/app.env}"
+  environment:
+    HOME: /home/money-mani
+    MONEY_MANI_CONTAINERIZED: "1"
+    MONEY_MANI_DB_PATH: /app/data/money_mani.db
+    MONEY_MANI_ENV: production
+    MONEY_MANI_SESSION_SECURE: "true"
+    MONEY_MANI_FORWARDED_ALLOW_IPS: "${MONEY_MANI_FORWARDED_ALLOW_IPS:-172.30.77.1,127.0.0.1,::1}"
+    MONEY_MANI_WEB_BASE_URL: http://web:31234
+    TZ: Asia/Seoul
+  user: "${MONEY_MANI_UID:-1000}:${MONEY_MANI_GID:-1000}"
+  init: true
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=256m
+  volumes:
+    - "${MONEY_MANI_STATE_DIR:-/srv/money-mani/shared}/data:/app/data"
+    - "${MONEY_MANI_STATE_DIR:-/srv/money-mani/shared}/output:/app/output"
+    - "${MONEY_MANI_STATE_DIR:-/srv/money-mani/shared}/config:/app/config"
+    - "${MONEY_MANI_STATE_DIR:-/srv/money-mani/shared}/MEMORY.md:/app/MEMORY.md"
+    - "${MONEY_MANI_STATE_DIR:-/srv/money-mani/shared}/home:/home/money-mani"
+
+services:
+  web:
+    <<: *app-service
+    command: ["python", "deploy/hermes/run_web.py"]
+    ports:
+      - "127.0.0.1:32777:31234"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:31234/healthz', timeout=3).read()
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 45s
+
+  scheduler:
+    <<: *app-service
+    command: ["python", "main.py", "schedule"]
+    depends_on:
+      web:
+        condition: service_healthy
+        restart: true
+    stop_grace_period: 60s
+
+  backup:
+    image: "money-mani:${APP_GIT_SHA:-local}"
+    profiles: ["ops"]
+    command:
+      - python
+      - deploy/hermes/sqlite_backup.py
+      - --db
+      - /app/data/money_mani.db
+      - --destination
+      - /app/backups
+      - --kind
+      - auto
+    user: "${MONEY_MANI_UID:-1000}:${MONEY_MANI_GID:-1000}"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    volumes:
+      - "${MONEY_MANI_STATE_DIR:-/srv/money-mani/shared}/data:/app/data:ro"
+      - "${MONEY_MANI_STATE_DIR:-/srv/money-mani/shared}/backups:/app/backups"
+    restart: "no"
+
+networks:
+  default:
+    name: money-mani-internal
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "${MONEY_MANI_DOCKER_SUBNET:-172.30.77.0/24}"
+          gateway: "${MONEY_MANI_DOCKER_GATEWAY:-172.30.77.1}"

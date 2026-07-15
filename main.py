@@ -46,9 +46,8 @@ def cmd_backtest(args):
 
 def cmd_scan(args):
     """Run daily scan."""
-    from pipeline.daily_scan import DailyScan
-    scan = DailyScan()
-    result = scan.run()
+    from web.services.scan_service import ScanService
+    result = ScanService().run_scan(include_signals=True)
     n = len(result.get("signals", []))
     print(f"\nScan complete: {n} signal(s) found on {result['date']}")
     for s in result.get("signals", []):

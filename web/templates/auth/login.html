@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>로그인 - Money Mani</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css"
+          integrity="sha384-L1dWfspMTHU/ApYnFiMz2QID/PlP1xCW9visvBdbEkOLkSSWsP6ZJWhPw6apiXxU" crossorigin="anonymous">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <main class="container" style="max-width: 30rem; padding-top: 10vh;">
+        <article>
+            <header>
+                <h1 style="margin-bottom:.35rem;">Money Mani</h1>
+                <p style="margin:0;">발급받은 계정으로 로그인하세요.</p>
+            </header>
+            {% if error %}
+            <div role="alert" style="color:var(--pico-del-color);margin-bottom:1rem;">{{ error }}</div>
+            {% endif %}
+            <form method="post" action="/login">
+                <input type="hidden" name="next" value="{{ next }}">
+                <input type="hidden" name="login_csrf" value="{{ login_csrf }}">
+                <label>
+                    아이디
+                    <input name="username" required autofocus autocomplete="username" maxlength="64">
+                </label>
+                <label>
+                    비밀번호
+                    <input name="password" type="password" required autocomplete="current-password" maxlength="256">
+                </label>
+                <button type="submit">로그인</button>
+            </form>
+        </article>
+    </main>
+</body>
+</html>

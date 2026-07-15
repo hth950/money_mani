@@ -31,8 +31,9 @@
     <pre><code>{{ strategy.parameters_json }}</code></pre>
 </article>
 
+{% if request.state.user.role == 'owner' %}
 <div style="display: flex; gap: 0.5rem;">
-    {% if strategy.status != 'validated' %}
+    {% if strategy.status not in ['validated', 'validated_v2'] %}
     <button hx-post="/api/strategies/{{ strategy.id }}/validate"
             hx-swap="none"
             hx-on::after-request="location.reload()">검증 완료</button>
@@ -49,6 +50,7 @@
             hx-on::after-request="window.location='/strategies'"
             class="contrast">삭제</button>
 </div>
+{% endif %}
 
 <p><small>생성: {{ strategy.created_at }} | 수정: {{ strategy.updated_at }}</small></p>
 

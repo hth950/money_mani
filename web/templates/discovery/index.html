@@ -29,23 +29,37 @@
     <div id="reports-table"><p>로딩 중...</p></div>
 </article>
 
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml, escapeAttr } = window.MoneyManiSafe;
+
+function discoveryDetailPath(id) {
+    const value = String(id ?? '');
+    return /^\d+$/.test(value) ? '/discovery/' + encodeURIComponent(value) : '';
+}
+
+function renderDiscoveryReports(data) {
+    if (!Array.isArray(data) || !data.length) return '<p>탐색 리포트가 없습니다.</p>';
+    let html = '<table><thead><tr><th>날짜</th><th>시장</th><th>영상</th><th>추출</th><th>순위</th><th>검증</th><th>상세</th></tr></thead><tbody>';
+    data.forEach(r => {
+        const detailPath = discoveryDetailPath(r?.id);
+        html += '<tr><td>' + escapeHtml(r?.run_date || '-') + '</td><td>' + escapeHtml(r?.market || '-') + '</td>'
+            + '<td>' + escapeHtml(r?.videos_found ?? 0) + '</td><td>' + escapeHtml(r?.strategies_extracted ?? 0) + '</td>'
+            + '<td>' + escapeHtml(r?.strategies_ranked ?? 0) + '</td><td>' + escapeHtml(r?.strategies_validated ?? 0) + '</td>'
+            + '<td>' + (detailPath ? '<a href="' + escapeAttr(detailPath) + '">보기</a>' : '-') + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+}
+
 function loadReports() {
     fetch('/api/discovery/reports')
         .then(r => r.json())
         .then(data => {
             const div = document.getElementById('reports-table');
-            if (!data.length) { div.innerHTML = '<p>탐색 리포트가 없습니다.</p>'; return; }
-            let html = '<table><thead><tr><th>날짜</th><th>시장</th><th>영상</th><th>추출</th><th>순위</th><th>검증</th><th>상세</th></tr></thead><tbody>';
-            data.forEach(r => {
-                html += '<tr><td>' + r.run_date + '</td><td>' + r.market + '</td>'
-                    + '<td>' + r.videos_found + '</td><td>' + r.strategies_extracted + '</td>'
-                    + '<td>' + r.strategies_ranked + '</td><td>' + r.strategies_validated + '</td>'
-                    + '<td><a href="/discovery/' + r.id + '">보기</a></td></tr>';
-            });
-            div.innerHTML = html + '</tbody></table>';
+            div.innerHTML = renderDiscoveryReports(data);
         });
 }
+// Initial load
 loadReports();
 
 document.getElementById('discovery-form').addEventListener('submit', async (e) => {
@@ -64,10 +78,10 @@ document.getElementById('discovery-form').addEventListener('submit', async (e) =
             method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
         });
         const result = await resp.json();
-        document.getElementById('disc-status').innerHTML = '<p>작업 ID: ' + result.job_id + ' - ' + result.message + '</p>';
+        document.getElementById('disc-status').innerHTML = '<p>작업 ID: ' + escapeHtml(result.job_id) + ' - ' + escapeHtml(result.message) + '</p>';
         setTimeout(loadReports, 10000);
     } catch (err) {
-        document.getElementById('disc-status').innerHTML = '<p class="error">오류: ' + err.message + '</p>';
+        document.getElementById('disc-status').innerHTML = '<p class="error">오류: ' + escapeHtml(err.message) + '</p>';
     } finally { btn.disabled = false; btn.textContent = '탐색 시작'; }
 });
 </script>

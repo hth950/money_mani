@@ -1,12 +1,25 @@
 """SQLite database connection management."""
 import logging
+import os
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
 
 logger = logging.getLogger("money_mani.web.db.connection")
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "money_mani.db"
+
+def _resolve_db_path() -> Path:
+    """Resolve the database path, allowing production to use a bind mount."""
+    configured = os.getenv("MONEY_MANI_DB_PATH", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = Path(__file__).parent.parent.parent / path
+        return path.resolve()
+    return Path(__file__).parent.parent.parent / "data" / "money_mani.db"
+
+
+DB_PATH = _resolve_db_path()
 
 def init_db():
     """Create all tables if they don't exist. Set WAL mode."""

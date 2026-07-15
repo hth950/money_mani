@@ -2,6 +2,7 @@
 {% block title %}매매 대시보드 - Money Mani{% endblock %}
 
 {% block content %}
+{% set can_paper_trade = request.state.user.role == 'owner' %}
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
   <h1 style="margin:0;">💹 매매 대시보드</h1>
   <div style="display:flex; gap:0.5rem; align-items:center;">
@@ -31,7 +32,42 @@
   <p style="font-size:0.9rem;">일일 스캔(장 마감 후)이 실행되면 여기에 표시됩니다.</p>
 </div>
 
+<dialog id="signals-paper-dialog" class="paper-dialog">
+  <article>
+    <header class="paper-dialog-header">
+      <div>
+        <h3 id="signals-paper-title">모의 주문</h3>
+        <small id="signals-paper-subtitle" class="paper-muted"></small>
+      </div>
+      <button id="signals-paper-close" type="button" class="outline paper-compact-button">닫기</button>
+    </header>
+    <form id="signals-paper-form">
+      <div class="grid">
+        <label>
+          구분
+          <input id="signals-paper-side" type="text" readonly>
+        </label>
+        <label>
+          수량
+          <input id="signals-paper-quantity" type="number" min="1" step="1" value="1" required>
+        </label>
+      </div>
+      <div id="signals-paper-error" class="paper-error-box" role="alert" hidden></div>
+      <div id="signals-paper-preview" class="paper-preview-box" hidden></div>
+      <footer class="paper-dialog-actions">
+        <a href="/paper-trading"><small>모의 계좌 전체 보기</small></a>
+        <div class="paper-inline-actions">
+          <button id="signals-paper-preview-button" type="submit" class="outline">예상 주문 확인</button>
+          <button id="signals-paper-confirm-button" type="button" disabled>모의 주문 확정</button>
+        </div>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
 <script>
+const SIGNALS_CAN_PAPER_TRADE = {{ 'true' if can_paper_trade else 'false' }};
+const SIGNALS_CAN_AI_SUMMARY = {{ 'true' if can_paper_trade else 'false' }};
 function convictionColor(c) {
   if (c === 'HIGH') return '#2d9e5f';
   if (c === 'MED') return '#e09820';
@@ -50,6 +86,42 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = String(s || '');
   return d.innerHTML;
+}
+
+function escAttr(s) {
+  return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function paperKey(market, ticker) {
+  return `${String(market || '').toUpperCase()}:${String(ticker || '').toUpperCase()}`;
+}
+
+function paperNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function paperFlag(value) {
+  return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true';
+}
+
+function paperQuantity(position) {
+  return paperNumber(position?.quantity ?? position?.qty ?? position?.shares) || 0;
+}
+
+function paperErrorDetail(payload, fallback) {
+  const detail = payload?.detail ?? payload?.error ?? payload?.message;
+  if (Array.isArray(detail)) return detail.map(item => item?.msg || item?.message || JSON.stringify(item)).join(', ');
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  return String(detail || fallback);
+}
+
+async function paperRequest(path, options = {}) {
+  const response = await fetch('/api/paper-trading' + path, options);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(paperErrorDetail(payload, `요청 실패 (HTTP ${response.status})`));
+  return payload || {};
 }
 
 function exitBadge(item) {
@@ -89,32 +161,55 @@ async function showSummary(ticker, market, btn) {
 
 function renderCard(item) {
   const holdBadge = item.is_holding
-    ? `<span style="background:#3b82f6;color:#fff;padding:1px 6px;border-radius:4px;font-size:0.75rem;margin-left:4px;">보유중${item.pnl_pct != null ? ' ' + (item.pnl_pct >= 0 ? '+' : '') + item.pnl_pct.toFixed(1) + '%' : ''}</span>`
+    ? `<span style="background:#3b82f6;color:#fff;padding:1px 6px;border-radius:4px;font-size:0.75rem;margin-left:4px;">전략 추적 보유${item.pnl_pct != null ? ' ' + (item.pnl_pct >= 0 ? '+' : '') + item.pnl_pct.toFixed(1) + '%' : ''}</span>`
     : '';
   const eBadge = item.is_holding ? exitBadge(item) : '';
+  const paperPosition = _paperPositions.get(paperKey(item.market, item.ticker));
+  const virtualQuantity = paperQuantity(paperPosition);
+  const virtualPnl = paperNumber(paperPosition?.unrealized_pnl_pct ?? paperPosition?.pnl_pct);
+  const paperBadge = paperPosition
+    ? `<span class="paper-badge info">모의 보유 ${esc(virtualQuantity.toLocaleString('ko-KR'))}주${virtualPnl == null ? '' : ` · ${virtualPnl >= 0 ? '+' : ''}${virtualPnl.toFixed(1)}%`}</span>`
+    : '';
+  const paperExit = paperPosition?.exit_decision;
+  const paperExitBadge = paperExit
+    ? `<span class="paper-badge ${paperExit === 'SELL_EXECUTE' ? 'error' : paperExit === 'SELL_WATCH' ? 'warn' : 'muted'}">모의 Exit ${esc(paperExit)}</span>`
+    : '';
+  const paperOnlyBadge = item._paperOnly ? '<span class="paper-badge muted">모의 보유 추적</span>' : '';
   const mktBadge = `<span style="font-size:0.75rem;color:#888;">${esc(item.market)}</span>`;
   const scoreDisplay = scoreBar(item.composite_score);
   const conviction = item.conviction || '-';
   const convColor = convictionColor(conviction);
   const date = item.last_signal_date || '-';
   const price = item.signal_price ? item.signal_price.toLocaleString() : '-';
+  const buyButton = SIGNALS_CAN_PAPER_TRADE && item.action === 'BUY'
+    ? `<button type="button" class="paper-compact-button" data-paper-order data-side="BUY"
+        data-market="${escAttr(item.market)}" data-ticker="${escAttr(item.ticker)}" data-name="${escAttr(item.ticker_name || item.ticker)}">모의 매수</button>`
+    : '';
+  const sellButton = SIGNALS_CAN_PAPER_TRADE && (item.action === 'SELL' || paperPosition)
+    ? `<button type="button" class="secondary paper-compact-button" data-paper-order data-side="SELL"
+        data-market="${escAttr(item.market)}" data-ticker="${escAttr(item.ticker)}" data-name="${escAttr(item.ticker_name || item.ticker)}"
+        data-position-id="${escAttr(paperPosition?.id ?? paperPosition?.position_id ?? '')}" data-max-quantity="${escAttr(virtualQuantity || '')}"
+        ${paperPosition ? '' : 'disabled'}>모의 매도</button>`
+    : '';
 
   return `<div data-card="1" style="border:1px solid #ddd; border-radius:8px; padding:0.75rem; margin-bottom:0.5rem; background:#fff; transition:box-shadow 0.2s;"
     onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'"
     onmouseout="this.style.boxShadow='none'">
-    <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="window.location='/scoring?ticker=${esc(item.ticker)}'">
+    <a href="/scoring?ticker=${encodeURIComponent(item.ticker || '')}" style="display:flex; justify-content:space-between; align-items:center; text-decoration:none;color:inherit;">
       <span style="font-weight:600;">${esc(item.ticker_name)}</span>
       <span style="font-size:0.8rem; color:#888;">${esc(item.ticker)}</span>
-    </div>
-    <div style="margin:2px 0;">${mktBadge}${holdBadge}${eBadge}</div>
+    </a>
+    <div style="margin:2px 0;display:flex;gap:4px;align-items:center;flex-wrap:wrap;">${mktBadge}${holdBadge}${paperBadge}${paperExitBadge}${paperOnlyBadge}${eBadge}</div>
     ${scoreDisplay}
     <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
-      <span style="color:${convColor}; font-weight:600;">${conviction}</span>
-      <span style="color:#888;">${date}</span>
+      <span style="color:${convColor}; font-weight:600;">${esc(conviction)}</span>
+      <span style="color:#888;">${esc(date)}</span>
     </div>
-    <div style="font-size:0.8rem; color:#aaa;">신호가: ${price}</div>
+    <div style="font-size:0.8rem; color:#aaa;">신호가: ${esc(price)}</div>
     <div style="margin-top:6px; display:flex; align-items:flex-start; gap:6px; flex-wrap:wrap;">
-      <button class="outline" style="font-size:0.75rem;padding:2px 8px;" onclick="showSummary('${esc(item.ticker)}','${esc(item.market)}',this)">AI 요약</button>
+      ${SIGNALS_CAN_AI_SUMMARY ? `<button type="button" class="outline" style="font-size:0.75rem;padding:2px 8px;" data-signal-summary
+        data-ticker="${escAttr(item.ticker)}" data-market="${escAttr(item.market)}">AI 요약</button>` : ''}
+      ${buyButton}${sellButton}
       <span class="summary-text" style="font-size:0.8rem;color:#555;display:none;flex:1;"></span>
     </div>
   </div>`;
@@ -122,12 +217,35 @@ function renderCard(item) {
 
 // Merge exit score data into actions list
 let _exitScores = {};
+let _paperPositions = new Map();
+let _paperOrder = null;
+let _paperPreview = null;
 
 async function loadExitScores() {
   try {
     const res = await fetch('/api/signals/exit-scores');
     if (!res.ok) return;
-    const data = await res.json();
+    const payload = await res.json();
+    const data = Array.isArray(payload) ? payload : [];
+
+    // Keep every open paper position reachable even when it has fallen out of
+    // the latest seven-day signal action list.
+    const actionKeys = new Set(data.map(item => paperKey(item.market, item.ticker)));
+    for (const position of _paperPositions.values()) {
+      const key = paperKey(position.market, position.ticker);
+      if (actionKeys.has(key)) continue;
+      data.push({
+        ticker: position.ticker,
+        ticker_name: position.ticker_name || position.ticker,
+        market: position.market,
+        action: 'WATCH',
+        composite_score: position.composite_score,
+        conviction: '-',
+        last_signal_date: position.marked_at || position.price_at || '-',
+        signal_price: position.current_price,
+        _paperOnly: true,
+      });
+    }
     _exitScores = {};
     for (const row of data) {
       _exitScores[row.ticker] = row;
@@ -135,9 +253,138 @@ async function loadExitScores() {
   } catch (e) { /* non-critical */ }
 }
 
+async function loadPaperOverview() {
+  try {
+    const overview = await paperRequest('/overview');
+    _paperPositions = new Map();
+    for (const position of Array.isArray(overview.positions) ? overview.positions : []) {
+      if (String(position?.status || 'open').toLowerCase() === 'closed') continue;
+      _paperPositions.set(paperKey(position.market, position.ticker), position);
+    }
+  } catch (e) {
+    // The signal recommendations remain usable when the paper ledger is unavailable.
+    _paperPositions = new Map();
+  }
+}
+
+function openPaperOrder(button) {
+  const side = String(button.dataset.side || '').toUpperCase();
+  const maxQuantity = paperNumber(button.dataset.maxQuantity);
+  _paperOrder = {
+    side,
+    market: String(button.dataset.market || '').toUpperCase(),
+    ticker: button.dataset.ticker || '',
+    ticker_name: button.dataset.name || button.dataset.ticker || '',
+    max_quantity: maxQuantity,
+    idempotency_key: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  };
+  _paperPreview = null;
+  document.getElementById('signals-paper-title').textContent = `모의 ${side === 'BUY' ? '매수' : '매도'} 주문`;
+  document.getElementById('signals-paper-subtitle').textContent = `${_paperOrder.market} · ${_paperOrder.ticker_name} (${_paperOrder.ticker})`;
+  document.getElementById('signals-paper-side').value = side === 'BUY' ? '매수' : '매도';
+  const quantity = document.getElementById('signals-paper-quantity');
+  quantity.value = side === 'SELL' && maxQuantity ? String(maxQuantity) : '1';
+  if (side === 'SELL' && maxQuantity) quantity.max = String(maxQuantity);
+  else quantity.removeAttribute('max');
+  document.getElementById('signals-paper-error').hidden = true;
+  document.getElementById('signals-paper-preview').hidden = true;
+  document.getElementById('signals-paper-preview').innerHTML = '';
+  document.getElementById('signals-paper-confirm-button').disabled = true;
+  document.getElementById('signals-paper-preview-button').disabled = false;
+  document.getElementById('signals-paper-dialog').showModal();
+}
+
+function signalOrderPayload(includeIdempotency = false) {
+  const quantity = Number(document.getElementById('signals-paper-quantity').value);
+  if (!Number.isInteger(quantity) || quantity < 1) throw new Error('수량은 1 이상의 정수여야 합니다.');
+  if (_paperOrder.side === 'SELL' && _paperOrder.max_quantity && quantity > _paperOrder.max_quantity) {
+    throw new Error(`모의 보유 수량 ${_paperOrder.max_quantity.toLocaleString('ko-KR')}주를 초과할 수 없습니다.`);
+  }
+  const payload = { side: _paperOrder.side, market: _paperOrder.market, ticker: _paperOrder.ticker, quantity };
+  if (includeIdempotency) {
+    payload.idempotency_key = _paperOrder.idempotency_key;
+    if (_paperPreview?.estimated_price !== undefined && _paperPreview?.estimated_price !== null) {
+      payload.preview_price = _paperPreview.estimated_price;
+      payload.preview_price_at = _paperPreview.price_at || null;
+    }
+  }
+  return payload;
+}
+
+function showSignalOrderError(message) {
+  const element = document.getElementById('signals-paper-error');
+  element.textContent = message;
+  element.hidden = false;
+}
+
+async function previewSignalOrder(event) {
+  event.preventDefault();
+  const previewButton = document.getElementById('signals-paper-preview-button');
+  const confirmButton = document.getElementById('signals-paper-confirm-button');
+  document.getElementById('signals-paper-error').hidden = true;
+  confirmButton.disabled = true;
+  previewButton.disabled = true;
+  previewButton.setAttribute('aria-busy', 'true');
+  try {
+    const payload = signalOrderPayload(false);
+    _paperPreview = await paperRequest('/orders/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const preview = _paperPreview;
+    const market = preview.market || payload.market;
+    const money = (value) => {
+      const number = paperNumber(value);
+      if (number === null) return '-';
+      return new Intl.NumberFormat('ko-KR', {
+        style: 'currency', currency: market === 'US' ? 'USD' : 'KRW', maximumFractionDigits: market === 'US' ? 2 : 0,
+      }).format(number);
+    };
+    const box = document.getElementById('signals-paper-preview');
+    const isDelayed = paperFlag(preview.is_delayed);
+    box.innerHTML = `<div class="paper-section-header"><strong>예상 주문</strong><span class="paper-badge ${isDelayed ? 'warn' : 'ok'}">${isDelayed ? '지연 시세' : '시세 확인'}</span></div>
+      <dl class="paper-metrics" style="margin-top:0.65rem;">
+        <div><dt>예상 가격</dt><dd>${esc(money(preview.estimated_price))}</dd></div>
+        <div><dt>예상 수수료</dt><dd>${esc(money(preview.fee))}</dd></div>
+        <div><dt>수량</dt><dd>${esc(preview.quantity ?? payload.quantity)}주</dd></div>
+        <div><dt>예상 합계</dt><dd>${esc(money(preview.estimated_total))}</dd></div>
+      </dl>
+      <small class="paper-muted">${esc(preview.price_source || '출처 미상')} · ${esc(preview.price_at ? new Date(preview.price_at).toLocaleString('ko-KR') : '시각 미상')}</small>`;
+    box.hidden = false;
+    confirmButton.disabled = false;
+  } catch (error) {
+    _paperPreview = null;
+    showSignalOrderError(error.message);
+  } finally {
+    previewButton.disabled = false;
+    previewButton.removeAttribute('aria-busy');
+  }
+}
+
+async function confirmSignalOrder() {
+  if (!_paperPreview) return;
+  const button = document.getElementById('signals-paper-confirm-button');
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  document.getElementById('signals-paper-error').hidden = true;
+  try {
+    const result = await paperRequest('/orders', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(signalOrderPayload(true)),
+    });
+    document.getElementById('signals-paper-preview').innerHTML = `<div class="paper-success-box" style="margin:0;"><strong>모의 주문이 체결되었습니다.</strong>${result.quote_changed ? '<br><small>확정 시 최신 가격으로 다시 계산했습니다.</small>' : ''}</div>`;
+    _paperPreview = null;
+    await loadActions();
+    setTimeout(() => document.getElementById('signals-paper-dialog').close(), 900);
+  } catch (error) {
+    showSignalOrderError(error.message);
+    button.disabled = false;
+  } finally {
+    button.removeAttribute('aria-busy');
+  }
+}
+
 async function loadActions() {
   try {
-    await loadExitScores();
+    await Promise.all([loadExitScores(), loadPaperOverview()]);
     const res = await fetch('/api/signals/actions?days=7');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
@@ -153,13 +400,15 @@ async function loadActions() {
 
     const buy = data.filter(d => d.action === 'BUY');
     const sell = data.filter(d => d.action === 'SELL');
-    const watch = data.filter(d => d.action === 'WATCH');
+    const watch = data.filter(d => d.action === 'WATCH' || (
+      ['NONE', 'SKIP'].includes(d.action) && _paperPositions.has(paperKey(d.market, d.ticker))
+    ));
 
     document.getElementById('buy-list').innerHTML = buy.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
     document.getElementById('sell-list').innerHTML = sell.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
     document.getElementById('watch-list').innerHTML = watch.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
 
-    if (data.length === 0) {
+    if (buy.length + sell.length + watch.length === 0) {
       document.getElementById('no-data').style.display = 'block';
       document.getElementById('action-columns').style.display = 'none';
     } else {
@@ -170,10 +419,30 @@ async function loadActions() {
     const now = new Date().toLocaleTimeString('ko-KR');
     document.getElementById('last-updated').textContent = `최근 업데이트: ${now}`;
   } catch (err) {
-    document.getElementById('action-columns').innerHTML =
-      '<p style="color:var(--pico-del-color,red);text-align:center;">데이터 로딩 실패: ' + err.message + '</p>';
+    const message = '<p style="color:var(--pico-del-color,red);text-align:center;">데이터 로딩 실패: ' + esc(err.message) + '</p>';
+    document.getElementById('buy-list').innerHTML = message;
+    document.getElementById('sell-list').innerHTML = message;
+    document.getElementById('watch-list').innerHTML = message;
+    document.getElementById('action-columns').style.display = 'grid';
+    document.getElementById('no-data').style.display = 'none';
   }
 }
+
+document.addEventListener('click', (event) => {
+  const summaryButton = event.target.closest('[data-signal-summary]');
+  if (summaryButton) showSummary(summaryButton.dataset.ticker, summaryButton.dataset.market, summaryButton);
+  const orderButton = event.target.closest('[data-paper-order]');
+  if (SIGNALS_CAN_PAPER_TRADE && orderButton && !orderButton.disabled) openPaperOrder(orderButton);
+});
+
+document.getElementById('signals-paper-form')?.addEventListener('submit', previewSignalOrder);
+document.getElementById('signals-paper-confirm-button')?.addEventListener('click', confirmSignalOrder);
+document.getElementById('signals-paper-close')?.addEventListener('click', () => document.getElementById('signals-paper-dialog').close());
+document.getElementById('signals-paper-quantity')?.addEventListener('input', () => {
+  _paperPreview = null;
+  document.getElementById('signals-paper-confirm-button').disabled = true;
+  document.getElementById('signals-paper-preview').hidden = true;
+});
 
 loadActions();
 // Auto-refresh every 5 minutes

@@ -13,6 +13,114 @@ _scoring_cfg = _load_scoring_config()
 _DEFAULT_WEIGHTS = _scoring_cfg.get("weights", {})
 
 
+def _resolve_decision(composite: float, ticker: str, market: str,
+                      signal_action: str | None, risk_mgr) -> tuple[str, str | None]:
+    """Apply score thresholds, then gate only executable BUY decisions.
+
+    Portfolio buy limits must not turn WATCH/SKIP or SELL recommendations into
+    BLOCKED rows: those decisions do not open a new long position.
+    """
+    if composite >= 0.65:
+        decision = "EXECUTE"
+    elif composite >= 0.40:
+        return "WATCH", None
+    else:
+        return "SKIP", None
+
+    if (signal_action or "").upper() != "BUY":
+        return decision, None
+    allowed, block_reason = risk_mgr.check_can_buy(ticker, market)
+    return ("EXECUTE", None) if allowed else ("BLOCKED", block_reason)
+
+
+def _rescore_item(item: dict, collectors: tuple, risk_mgr, scoring_service,
+                  *, technical_override: float | None = None,
+                  signal_action_override: str | None = None,
+                  trigger: str = "scheduled",
+                  record_event: bool = False) -> dict | None:
+    """Recalculate and persist one row, optionally auditing a signal trigger."""
+    fund_col, flow_col, macro_col, intel_col = collectors
+    ticker = item["ticker"]
+    market = item["market"]
+    technical_score = technical_override
+    if technical_score is None:
+        technical_score = item.get("technical_score")
+    if technical_score is None:
+        technical_score = 0.5
+
+    fund_score = fund_col.score(ticker, market).get("score", 0.5)
+    flow_score = flow_col.score(ticker, market).get("score", 0.5)
+    macro_score = macro_col.score(market=market).get("score", 0.5)
+    intel_score = intel_col.score(ticker, market).get("score", 0.5)
+
+    try:
+        weights = json.loads(item.get("weights_used_json") or "{}")
+    except Exception:
+        weights = {}
+    market_weights = _DEFAULT_WEIGHTS.get(
+        market, _DEFAULT_WEIGHTS.get("KRX", {})
+    )
+    effective_weights = {
+        axis: weights.get(axis, market_weights.get(axis, default))
+        for axis, default in {
+            "technical": 0.50,
+            "fundamental": 0.10,
+            "flow": 0.20,
+            "intel": 0.10,
+            "macro": 0.10,
+        }.items()
+    }
+    composite = round(
+        min(
+            1.0,
+            max(
+                0.0,
+                technical_score * effective_weights["technical"]
+                + fund_score * effective_weights["fundamental"]
+                + flow_score * effective_weights["flow"]
+                + intel_score * effective_weights["intel"]
+                + macro_score * effective_weights["macro"],
+            ),
+        ),
+        4,
+    )
+    signal_action = signal_action_override or item.get("signal_action")
+    if signal_action:
+        signal_action = signal_action.upper()
+    decision, block_reason = _resolve_decision(
+        composite, ticker, market, signal_action, risk_mgr
+    )
+    scores = {
+        "technical": round(float(technical_score), 4),
+        "fundamental": round(float(fund_score), 4),
+        "flow": round(float(flow_score), 4),
+        "intel": round(float(intel_score), 4),
+        "macro": round(float(macro_score), 4),
+        "composite": composite,
+    }
+    event_id = scoring_service.update_scoring_result(
+        item["id"],
+        scores,
+        decision,
+        block_reason=block_reason,
+        weights=effective_weights,
+        signal_action=signal_action,
+        recommendation=decision,
+        execution_state="BLOCKED" if decision == "BLOCKED" else "RESCORE_ONLY",
+        provenance={"pipeline": "rescore", "trigger": trigger},
+        data_quality={"score_method": "collector_refresh"},
+        append_decision_event=record_event,
+    )
+    if event_id is None:
+        return None
+    return {
+        "event_id": event_id,
+        "composite": composite,
+        "decision": decision,
+        "block_reason": block_reason,
+    }
+
+
 
 def run_rescore(tickers: list[str] | None = None) -> int:
     """오늘 scoring_results 전 종목(또는 지정 종목)을 최신 캐시로 재스코어링.
@@ -31,8 +139,13 @@ def run_rescore(tickers: list[str] | None = None) -> int:
 
     with get_db() as db:
         rows = db.execute(
-            "SELECT id, ticker, market, technical_score, weights_used_json "
-            "FROM scoring_results WHERE scan_date = ? ORDER BY id DESC",
+            """SELECT sr.id, sr.ticker, sr.ticker_name, sr.market, sr.scan_date,
+                      sr.technical_score, sr.weights_used_json,
+                      (SELECT de.signal_action FROM decision_events de
+                       WHERE de.scoring_result_id=sr.id
+                       ORDER BY de.id DESC LIMIT 1) AS signal_action
+               FROM scoring_results sr
+               WHERE sr.scan_date = ? ORDER BY sr.id DESC""",
             (today,),
         ).fetchall()
 
@@ -45,8 +158,13 @@ def run_rescore(tickers: list[str] | None = None) -> int:
             if latest_date and latest_date != today:
                 logger.info(f"Rescore: no rows for today ({today}), using latest scan_date={latest_date}")
                 rows = db.execute(
-                    "SELECT id, ticker, market, technical_score, weights_used_json "
-                    "FROM scoring_results WHERE scan_date = ? ORDER BY id DESC",
+                    """SELECT sr.id, sr.ticker, sr.ticker_name, sr.market, sr.scan_date,
+                              sr.technical_score, sr.weights_used_json,
+                              (SELECT de.signal_action FROM decision_events de
+                               WHERE de.scoring_result_id=sr.id
+                               ORDER BY de.id DESC LIMIT 1) AS signal_action
+                       FROM scoring_results sr
+                       WHERE sr.scan_date = ? ORDER BY sr.id DESC""",
                     (latest_date,),
                 ).fetchall()
 
@@ -70,83 +188,19 @@ def run_rescore(tickers: list[str] | None = None) -> int:
 
     from scoring.risk_manager import PortfolioRiskManager
     risk_mgr = PortfolioRiskManager()
+    from web.services.scoring_service import ScoringService
+    scoring_service = ScoringService()
+    collectors = (fund_col, flow_col, macro_col, intel_col)
 
-    with get_db() as db:
-        for item in to_update:
-            try:
-                ticker = item["ticker"]
-                market = item["market"]
-
-                # 각 축 재계산 (캐시 우선, 만료 시 API 호출)
-                fund_score = fund_col.score(ticker, market).get("score", 0.5)
-                flow_score = flow_col.score(ticker, market).get("score", 0.5)
-                macro_score = macro_col.score(market=market).get("score", 0.5)
-                intel_score = intel_col.score(ticker, market).get("score", 0.5)
-                tech_score = item["technical_score"] or 0.5  # 기술적은 daily 값 유지
-
-                try:
-                    weights = json.loads(item["weights_used_json"] or "{}")
-                except Exception:
-                    weights = {}
-
-                mw = _DEFAULT_WEIGHTS.get(market, _DEFAULT_WEIGHTS.get("KRX", {}))
-                w_tech = weights.get("technical", mw.get("technical", 0.50))
-                w_fund = weights.get("fundamental", mw.get("fundamental", 0.10))
-                w_flow = weights.get("flow", mw.get("flow", 0.20))
-                w_intel = weights.get("intel", mw.get("intel", 0.10))
-                w_macro = weights.get("macro", mw.get("macro", 0.10))
-
-                new_composite = round(
-                    min(
-                        1.0,
-                        max(
-                            0.0,
-                            tech_score * w_tech
-                            + fund_score * w_fund
-                            + flow_score * w_flow
-                            + intel_score * w_intel
-                            + macro_score * w_macro,
-                        ),
-                    ),
-                    4,
-                )
-
-                # Re-evaluate decision & block_reason using current risk limits
-                allowed, block_reason = risk_mgr.check_can_buy(ticker, market)
-                if not allowed:
-                    new_decision = "BLOCKED"
-                elif new_composite >= 0.65:
-                    new_decision = "EXECUTE"
-                    block_reason = None
-                elif new_composite >= 0.40:
-                    new_decision = "WATCH"
-                    block_reason = None
-                else:
-                    new_decision = "SKIP"
-                    block_reason = None
-
-                db.execute(
-                    """
-                    UPDATE scoring_results
-                    SET fundamental_score=?, flow_score=?, macro_score=?,
-                        intel_score=?, composite_score=?, decision=?, block_reason=?
-                    WHERE id=?
-                    """,
-                    (
-                        round(fund_score, 4),
-                        round(flow_score, 4),
-                        round(macro_score, 4),
-                        round(intel_score, 4),
-                        new_composite,
-                        new_decision,
-                        block_reason,
-                        item["id"],
-                    ),
-                )
+    for item in to_update:
+        try:
+            result = _rescore_item(
+                item, collectors, risk_mgr, scoring_service, trigger="scheduled"
+            )
+            if result is not None:
                 updated += 1
-
-            except Exception as e:
-                logger.warning(f"Rescore failed for {item['ticker']}: {e}")
+        except Exception as e:
+            logger.warning(f"Rescore failed for {item['ticker']}: {e}")
 
     logger.info(f"Rescore complete: {updated}/{len(to_update)} tickers updated")
 
@@ -165,8 +219,15 @@ def run_rescore(tickers: list[str] | None = None) -> int:
                     p_market = pos["market"]
                     p_entry_price = pos["entry_price"]
                     p_entry_date = pos["entry_date"]
-                    yf_ticker = p_ticker + ".KS" if p_market == "KRX" else p_ticker
-                    df = yf.download(yf_ticker, period="6mo", progress=False, auto_adjust=True)
+                    if p_market == "KRX":
+                        from market_data.krx_fetcher import download_yahoo_ohlcv
+                        df = download_yahoo_ohlcv(
+                            p_ticker, period="6mo", auto_adjust=True, yf_module=yf
+                        )
+                    else:
+                        df = yf.download(
+                            p_ticker, period="6mo", progress=False, auto_adjust=True
+                        )
                     if df is not None and len(df) >= 20:
                         result = exit_scorer.evaluate(p_ticker, p_market, p_entry_price, p_entry_date, df)
                         with get_db() as db:
@@ -201,6 +262,8 @@ def rescore_ticker_by_signal(ticker: str, market: str, signal_type: str) -> bool
     from web.db.connection import get_db
     from scoring.data_collectors import FundamentalCollector, FlowCollector, MacroCollector
     from scoring.intel_scorer import IntelScorer
+    from scoring.risk_manager import PortfolioRiskManager
+    from web.services.scoring_service import ScoringService
 
     today = datetime.now(KST).strftime("%Y-%m-%d")
     proxy_map = {"BUY": 0.75, "SELL": 0.25, "HOLD": 0.50}
@@ -208,55 +271,38 @@ def rescore_ticker_by_signal(ticker: str, market: str, signal_type: str) -> bool
 
     with get_db() as db:
         row = db.execute(
-            "SELECT id, weights_used_json FROM scoring_results "
-            "WHERE ticker=? AND scan_date=? ORDER BY id DESC LIMIT 1",
-            (ticker, today),
+            """SELECT id, ticker, ticker_name, market, scan_date,
+                      technical_score, weights_used_json
+               FROM scoring_results
+               WHERE ticker=? AND market=? AND scan_date=?
+               ORDER BY id DESC
+               LIMIT 1""",
+            (ticker, market, today),
         ).fetchone()
         if not row:
             return False
+        item = dict(row)
 
-        try:
-            weights = json.loads(row["weights_used_json"] or "{}")
-        except Exception:
-            weights = {}
-
-        mw = _DEFAULT_WEIGHTS.get(market, _DEFAULT_WEIGHTS.get("KRX", {}))
-        fund_score = FundamentalCollector().score(ticker, market).get("score", 0.5)
-        flow_score = FlowCollector().score(ticker, market).get("score", 0.5)
-        macro_score = MacroCollector().score(market=market).get("score", 0.5)
-        intel_score = IntelScorer().score(ticker, market).get("score", 0.5)
-
-        new_composite = round(
-            min(
-                1.0,
-                max(
-                    0.0,
-                    new_tech * weights.get("technical", mw.get("technical", 0.50))
-                    + fund_score * weights.get("fundamental", mw.get("fundamental", 0.10))
-                    + flow_score * weights.get("flow", mw.get("flow", 0.20))
-                    + intel_score * weights.get("intel", mw.get("intel", 0.10))
-                    + macro_score * weights.get("macro", mw.get("macro", 0.10)),
-                ),
-            ),
-            4,
-        )
-
-        db.execute(
-            """
-            UPDATE scoring_results
-            SET technical_score=?, fundamental_score=?, flow_score=?,
-                macro_score=?, intel_score=?, composite_score=?
-            WHERE id=?
-            """,
-            (
-                new_tech,
-                round(fund_score, 4),
-                round(flow_score, 4),
-                round(macro_score, 4),
-                round(intel_score, 4),
-                new_composite,
-                row["id"],
-            ),
-        )
-    logger.info(f"Consensus rescore done: {ticker} {signal_type} → composite={new_composite}")
+    collectors = (
+        FundamentalCollector(), FlowCollector(), MacroCollector(), IntelScorer()
+    )
+    result = _rescore_item(
+        item,
+        collectors,
+        PortfolioRiskManager(),
+        ScoringService(),
+        technical_override=new_tech,
+        signal_action_override=signal_type,
+        trigger="consensus_signal",
+        record_event=True,
+    )
+    if result is None:
+        return False
+    logger.info(
+        "Consensus rescore done: %s %s → composite=%s decision=%s",
+        ticker,
+        signal_type,
+        result["composite"],
+        result["decision"],
+    )
     return True

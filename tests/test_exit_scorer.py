@@ -1,5 +1,7 @@
 """Tests for ExitScorer._check_overrides()."""
 
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -88,6 +90,58 @@ class TestCheckOverrides:
 
         if result is not None:
             assert result["details"].get("override") != "STOP_LOSS"
+
+    def test_stop_loss_overrides_two_day_minimum_hold(self):
+        """A same-day -5% loss must exit before the normal hold guard."""
+        self.scorer.config["min_holding_days"] = 2
+        entry_date = datetime.now(
+            timezone(timedelta(hours=9))
+        ).strftime("%Y-%m-%d")
+        df = _make_df(n=30, base_price=95.0)
+
+        result = self.scorer.evaluate(
+            ticker="TEST",
+            market="KRX",
+            entry_price=100.0,
+            entry_date=entry_date,
+            ohlcv_df=df,
+        )
+
+        assert result["decision"] == "SELL_EXECUTE"
+        assert result["details"]["override"] == "STOP_LOSS"
+        assert result["details"]["pnl_pct"] == pytest.approx(-0.05)
+
+    def test_take_profit_remains_subject_to_minimum_hold(self):
+        """Only the hard stop bypasses the two-day holding requirement."""
+        self.scorer.config["min_holding_days"] = 2
+        entry_date = datetime.now(
+            timezone(timedelta(hours=9))
+        ).strftime("%Y-%m-%d")
+        prices = list(np.linspace(130.0, 116.0, 30))
+        df = pd.DataFrame(
+            {
+                "Open": prices,
+                "High": [price * 1.005 for price in prices],
+                "Low": [price * 0.995 for price in prices],
+                "Close": prices,
+                "Volume": [1_000_000] * len(prices),
+            },
+            index=pd.date_range("2024-01-01", periods=len(prices), freq="D"),
+        )
+        assert self.scorer._check_overrides(
+            116.0, 100.0, 0.16, df, entry_date
+        )["details"]["override"] == "TAKE_PROFIT"
+
+        result = self.scorer.evaluate(
+            ticker="TEST",
+            market="KRX",
+            entry_price=100.0,
+            entry_date=entry_date,
+            ohlcv_df=df,
+        )
+
+        assert result["decision"] == "HOLD"
+        assert "Min holding period" in result["reason"]
 
     # ------------------------------------------------------------------
     # Take-profit

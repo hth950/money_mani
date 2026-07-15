@@ -13,31 +13,10 @@ from backtester.walk_forward import WalkForwardValidator
 from market_data.krx_fetcher import KRXFetcher
 from market_data.us_fetcher import USFetcher
 from web.db.connection import get_db
+from web.db.migrate import run_schema_migrations
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("walk_forward_validate")
-
-# Ensure walk_forward_results table exists
-CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS walk_forward_results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    strategy_name TEXT NOT NULL,
-    ticker TEXT NOT NULL,
-    market TEXT DEFAULT 'KRX',
-    total_windows INTEGER,
-    valid_windows INTEGER,
-    avg_train_sharpe REAL,
-    avg_test_sharpe REAL,
-    sharpe_degradation REAL,
-    is_overfit INTEGER DEFAULT 0,
-    overfit_reason TEXT,
-    windows_json TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_wf_strategy ON walk_forward_results (strategy_name);
-CREATE INDEX IF NOT EXISTS idx_wf_overfit ON walk_forward_results (is_overfit);
-"""
-
 
 def main():
     import argparse
@@ -52,9 +31,9 @@ def main():
                         help="Actually mark overfit strategies")
     args = parser.parse_args()
 
-    # Create table
-    with get_db() as db:
-        db.executescript(CREATE_TABLE_SQL)
+    # Use the application's canonical additive schema.  This keeps direct CLI
+    # runs compatible with web startup and preserves older evidence rows.
+    run_schema_migrations()
 
     registry = StrategyRegistry()
     strategies = registry.get_validated()
@@ -95,8 +74,9 @@ def main():
                     INSERT INTO walk_forward_results
                     (strategy_name, ticker, market, total_windows, valid_windows,
                      avg_train_sharpe, avg_test_sharpe, sharpe_degradation,
-                     is_overfit, overfit_reason, windows_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     is_overfit, overfit_reason, windows_json, train_days,
+                     test_days, step_days, overfit_threshold, min_windows)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     result.strategy_name, ticker, args.market,
                     result.total_windows, result.valid_windows,
@@ -106,6 +86,11 @@ def main():
                     1 if result.is_overfit else 0,
                     result.overfit_reason,
                     json.dumps(windows_data, ensure_ascii=False),
+                    validator.train_days,
+                    validator.test_days,
+                    validator.step_days,
+                    validator.overfit_threshold,
+                    validator.min_windows,
                 ))
 
             if result.is_overfit:

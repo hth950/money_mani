@@ -18,6 +18,7 @@ from web.services.signal_service import SignalService
 from web.services.performance_service import PerformanceService
 from web.services.position_service import PositionService
 from web.services.conflict_resolver import ConflictResolver
+from web.services.scoring_service import ScoringService
 from pipeline.decision_score import log_conviction
 
 KST = timezone(timedelta(hours=9))
@@ -49,6 +50,7 @@ class DailyScan:
         self.signal_service = SignalService()
         self.perf_service = PerformanceService()
         self.position_service = PositionService()
+        self.scoring_service = ScoringService()
         self.conflict_resolver = ConflictResolver()
         self._last_krx_ohlcv: dict = {}
         self._last_us_ohlcv: dict = {}
@@ -169,10 +171,20 @@ class DailyScan:
         today = datetime.now(KST).date()
         is_krx_day = self.krx_cal.is_trading_day(today)
         is_nyse_day = self.nyse_cal.is_trading_day(today)
+        markets_open = [
+            market
+            for market, is_open in (("KRX", is_krx_day), ("US", is_nyse_day))
+            if is_open
+        ]
 
         if not is_krx_day and not is_nyse_day:
             logger.info(f"{today}: No markets open today. Skipping scan.")
-            return {"date": str(today), "signals": [], "skipped": True}
+            return {
+                "date": str(today),
+                "signals": [],
+                "skipped": True,
+                "markets_open": markets_open,
+            }
 
         # Get strategies: all validated if USE_ALL_STRATEGIES, else top N ranked
         strategies = self._get_top_strategies()
@@ -181,7 +193,12 @@ class DailyScan:
             logger.info(f"Fallback to all validated strategies: {len(strategies)}")
         if not strategies:
             logger.warning("No validated strategies found.")
-            return {"date": str(today), "signals": [], "skipped": False}
+            return {
+                "date": str(today),
+                "signals": [],
+                "skipped": False,
+                "markets_open": markets_open,
+            }
 
         signals = []
 
@@ -230,11 +247,25 @@ class DailyScan:
         # Apply ensemble consensus filter
         ensemble_signals, consensus_summary = self._apply_ensemble_filter(signals)
 
-        # Apply multi-layer scoring (with fallback to original signals)
-        ensemble_signals = self._apply_multi_layer_scoring(ensemble_signals, len(strategies))
+        # Score every consensus candidate so both acted-on and rejected cohorts
+        # remain available for outcome analysis. SKIP is audit-only and must
+        # never reach signal alerts or position execution.
+        scored_candidates = self._apply_multi_layer_scoring(
+            ensemble_signals, len(strategies)
+        )
+        skipped_signals = [
+            sig for sig in scored_candidates
+            if sig.get("score_decision") == "SKIP"
+        ]
+        alert_candidates = [
+            sig for sig in scored_candidates
+            if sig.get("score_decision") != "SKIP"
+        ]
 
-        # Apply portfolio risk gate (Phase 2)
-        ensemble_signals, blocked_signals = self._apply_risk_gate(ensemble_signals)
+        # Apply portfolio risk gate to alert candidates (Phase 2). BLOCKED is
+        # audit-only, while WATCH remains an observational recommendation.
+        ensemble_signals, blocked_signals = self._apply_risk_gate(alert_candidates)
+        audited_signals = ensemble_signals + blocked_signals + skipped_signals
 
         # --- Phase: Exit Scoring for open positions ---
         exit_signals = []
@@ -251,8 +282,8 @@ class DailyScan:
             except Exception as e:
                 logger.error(f"US exit scoring failed: {e}")
 
-        # Save scoring results to DB — include blocked signals for tracking
-        self._save_scoring_results(ensemble_signals + blocked_signals, str(today))
+        # Save all scored cohorts, including BLOCKED and SKIP, exactly once.
+        self._save_scoring_results(audited_signals, str(today))
 
         # Classify conviction for each consensus signal
         for sig in ensemble_signals:
@@ -279,7 +310,14 @@ class DailyScan:
         if exit_signals:
             self._send_exit_alerts(exit_signals, str(today))
 
-        return {"date": str(today), "signals": ensemble_signals, "all_signals": signals, "skipped": False}
+        return {
+            "date": str(today),
+            "signals": ensemble_signals,
+            "all_signals": signals,
+            "scored_signals": audited_signals,
+            "skipped": False,
+            "markets_open": markets_open,
+        }
 
     def _scan_factor_strategies(self, krx_market=None, us_market=None) -> list[dict]:
         """Scan factor-based strategies (low volatility, F-Score).
@@ -298,7 +336,9 @@ class DailyScan:
         for name in registry.list_strategies():
             try:
                 s = registry.load(name)
-                if getattr(s, 'strategy_type', 'indicator') == 'factor' and s.status in ('validated', 'validated_v2', 'draft'):
+                # Draft factors stay in research/shadow mode until their
+                # point-in-time ranking and execution price are validated.
+                if getattr(s, 'strategy_type', 'indicator') == 'factor' and s.status in ('validated', 'validated_v2'):
                     factor_strategies.append(s)
             except Exception:
                 pass
@@ -492,6 +532,7 @@ class DailyScan:
     def _apply_multi_layer_scoring(self, ensemble_signals: list[dict], total_strategies: int) -> list[dict]:
         """Apply multi-layer scoring to ensemble signals.
 
+        Returns every scored cohort, including SKIP, for decision auditing.
         Falls back to original signals if scoring fails or is disabled.
         """
         try:
@@ -526,10 +567,10 @@ class DailyScan:
                     sig["score_details"] = result["details"]
                     sig["score_weights"] = result["weights"]
 
-                    # Filter: only EXECUTE and WATCH pass through
-                    if result["decision"] in ("EXECUTE", "WATCH"):
-                        scored_signals.append(sig)
-                    else:
+                    # Preserve every scored cohort for append-only decision
+                    # evidence. The caller separates SKIP before alerts.
+                    scored_signals.append(sig)
+                    if result["decision"] == "SKIP":
                         logger.info(f"SKIP {sig['ticker']}: composite={result['composite_score']:.2%}")
 
                 except Exception as e:
@@ -540,8 +581,8 @@ class DailyScan:
 
             execute_count = sum(1 for s in scored_signals if s.get("score_decision") == "EXECUTE")
             watch_count = sum(1 for s in scored_signals if s.get("score_decision") == "WATCH")
-            skip_count = len(ensemble_signals) - len(scored_signals)
-            logger.info(f"Multi-layer scoring: {len(ensemble_signals)} -> {len(scored_signals)} "
+            skip_count = sum(1 for s in scored_signals if s.get("score_decision") == "SKIP")
+            logger.info(f"Multi-layer scoring: {len(ensemble_signals)} candidates scored "
                         f"(EXECUTE={execute_count}, WATCH={watch_count}, SKIP={skip_count})")
 
             return scored_signals
@@ -556,7 +597,8 @@ class DailyScan:
     def _apply_risk_gate(self, ensemble_signals: list[dict]) -> tuple[list[dict], list[dict]]:
         """Apply portfolio risk management gate (Phase 2).
 
-        BUY signals that violate risk constraints are marked BLOCKED.
+        EXECUTE BUY signals that violate risk constraints are marked BLOCKED;
+        WATCH remains observation-only and is not capacity-gated.
         Returns (passed_signals, blocked_signals) so blocked can still be saved to DB.
         Falls back to passing all signals if risk module unavailable.
         """
@@ -571,7 +613,12 @@ class DailyScan:
             passed = []
             blocked_list = []
             for sig in ensemble_signals:
-                if sig["signal_type"] == "BUY":
+                # Capacity/risk rules apply only to actual entry candidates.
+                # WATCH is observation-only and passes through unchanged.
+                if (
+                    sig["signal_type"] == "BUY"
+                    and sig.get("score_decision") == "EXECUTE"
+                ):
                     allowed, reason = manager.check_can_buy(
                         sig["ticker"], sig.get("market", "KRX")
                     )
@@ -794,7 +841,7 @@ class DailyScan:
                     ticker_name = sig.get("ticker_name", ticker)
                     if ticker_name == ticker and ticker in known_names:
                         ticker_name = known_names[ticker]
-                    service.save_scoring_result(
+                    event_id = service.save_scoring_result(
                         ticker=ticker,
                         ticker_name=ticker_name,
                         market=sig.get("market", "KRX"),
@@ -810,7 +857,32 @@ class DailyScan:
                         decision=sig.get("score_decision", "UNKNOWN"),
                         block_reason=sig.get("block_reason"),
                         weights=sig.get("score_weights"),
+                        signal_action=sig.get("signal_type"),
+                        recommendation=sig.get("score_decision", "UNKNOWN"),
+                        execution_state=(
+                            "BLOCKED" if sig.get("score_decision") == "BLOCKED" else
+                            "PENDING_OPEN" if sig.get("signal_type") == "BUY" and sig.get("score_decision") == "EXECUTE" else
+                            "PENDING_CLOSE" if sig.get("signal_type") == "SELL" and sig.get("score_decision") == "EXECUTE" else
+                            "WATCH_ONLY" if sig.get("score_decision") == "WATCH" else
+                            "NOT_EXECUTED"
+                        ),
+                        score_details=sig.get("score_details"),
+                        consensus_count=sig.get("consensus_count"),
+                        consensus_strategies=sig.get("consensus_strategies"),
+                        provenance={
+                            "pipeline": "daily_scan",
+                            "signal_source": sig.get("source", "daily_scan"),
+                            "signal_date": sig.get("date", date_str),
+                            "signal_type": sig.get("signal_type"),
+                        },
+                        data_quality={
+                            "composite_available": sig.get("composite_score") is not None,
+                            "score_method": "multi_layer" if sig.get("score_details") is not None else "fallback",
+                        },
+                        signal_price=sig.get("price"),
                     )
+                    if event_id:
+                        sig["decision_event_id"] = event_id
         except ImportError:
             logger.debug("scoring_service not available, skipping scoring DB save")
         except Exception as e:
@@ -947,27 +1019,60 @@ class DailyScan:
         for sig in new_signals:
             try:
                 sig_id = self.signal_service.save_signal(sig)
+                score_decision = sig.get("score_decision")
+                event_id = sig.get("decision_event_id")
+                if event_id:
+                    self.scoring_service.link_decision_event_signal(event_id, sig_id)
 
                 if sig["signal_type"] == "BUY":
-                    self.position_service.open_position(
-                        strategy_name=sig["strategy_name"],
-                        ticker=sig["ticker"],
-                        ticker_name=sig.get("ticker_name", sig["ticker"]),
-                        market=sig.get("market", "KRX"),
-                        entry_price=sig["price"],
-                        entry_date=sig.get("date", date_str),
-                        signal_id=sig_id,
-                    )
+                    # WATCH is an observation state, never a position action.
+                    # Require an explicit scorer decision before opening paper
+                    # positions; scorer failures must not silently trade.
+                    if score_decision == "EXECUTE":
+                        self.position_service.open_position(
+                            strategy_name=sig["strategy_name"],
+                            ticker=sig["ticker"],
+                            ticker_name=sig.get("ticker_name", sig["ticker"]),
+                            market=sig.get("market", "KRX"),
+                            entry_price=sig["price"],
+                            entry_date=sig.get("date", date_str),
+                            signal_id=sig_id,
+                        )
+                        if event_id:
+                            self.scoring_service.mark_decision_event(event_id, "OPENED")
+                    elif event_id:
+                        self.scoring_service.mark_decision_event(
+                            event_id,
+                            "WATCH_ONLY" if score_decision == "WATCH" else "NOT_EXECUTED",
+                        )
                 elif sig["signal_type"] == "SELL":
-                    self.position_service.close_position(
-                        strategy_name=sig["strategy_name"],
-                        ticker=sig["ticker"],
-                        exit_price=sig["price"],
-                        exit_date=sig.get("date", date_str),
-                        signal_id=sig_id,
-                    )
+                    # SELL consensus still uses the legacy scorer for now, so
+                    # only an explicit EXECUTE may close. WATCH is alert-only;
+                    # the independent ExitScorer remains the future close path.
+                    if score_decision == "EXECUTE":
+                        closed_id = self.position_service.close_position(
+                            strategy_name=sig["strategy_name"],
+                            ticker=sig["ticker"],
+                            exit_price=sig["price"],
+                            exit_date=sig.get("date", date_str),
+                            signal_id=sig_id,
+                        )
+                        if event_id:
+                            self.scoring_service.mark_decision_event(
+                                event_id,
+                                "CLOSED" if closed_id else "NOT_EXECUTED",
+                            )
+                    elif event_id:
+                        self.scoring_service.mark_decision_event(
+                            event_id,
+                            "WATCH_ONLY" if score_decision == "WATCH" else "NOT_EXECUTED",
+                        )
             except Exception as e:
                 logger.error(f"Failed to save signal to DB: {e}")
+                if sig.get("decision_event_id"):
+                    self.scoring_service.mark_decision_event(
+                        sig["decision_event_id"], "FAILED", str(e)
+                    )
 
         # Send consensus signal alerts
         for sig in new_signals:

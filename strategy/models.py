@@ -24,6 +24,22 @@ class Strategy:
 
     @classmethod
     def from_yaml(cls, data: dict) -> "Strategy":
+        # Newer strategy files use ``markets`` while the dataclass historically
+        # exposed a singular ``market`` field.  Normalize the two forms here so
+        # a KR-only/US-only strategy cannot silently run in both universes.
+        market = data.get("market")
+        if not market:
+            markets = data.get("markets")
+            if isinstance(markets, str):
+                market = markets
+            elif isinstance(markets, (list, tuple, set)):
+                normalized = {str(value).upper() for value in markets if value}
+                if len(normalized) == 1:
+                    market = next(iter(normalized))
+                elif normalized:
+                    market = "ALL"
+        market = market or "ALL"
+
         return cls(
             name=data["name"],
             description=data.get("description", ""),
@@ -34,7 +50,7 @@ class Strategy:
             indicators=data.get("indicators", []),
             parameters=data.get("parameters", {}),
             backtest_results=data.get("backtest_results", None),
-            market=data.get("market", "ALL"),
+            market=market,
             timeframe=data.get("timeframe", "1d"),
             strategy_type=data.get("strategy_type", "indicator"),
             allowed_signal_types=data.get("allowed_signal_types", ["BUY", "SELL"]),

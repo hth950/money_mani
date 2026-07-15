@@ -1,7 +1,8 @@
 # Money Mani — 주식 자동 스코어링 & 매매 신호 시스템
 
-OCI 클라우드에 상시 운영 중인 한국/미국 주식 자동화 파이프라인입니다.
-5축 복합 스코어로 종목을 평가하고, 실시간 모니터가 매매 신호를 Discord로 알림합니다.
+현재 로컬 PC의 `http://localhost:31234`에서 운영 중인 한국/미국 주식 자동화 파이프라인입니다.
+5축 복합 스코어로 종목을 평가하고, 일일 스캔과 인텔 갱신 결과를 대시보드와 Discord로 알립니다.
+실시간 모니터는 일봉/장중 시계열 재설계가 끝날 때까지 안전 잠금 상태입니다.
 
 ---
 
@@ -42,7 +43,7 @@ OCI 클라우드에 상시 운영 중인 한국/미국 주식 자동화 파이�
 [scoring_results DB 저장]   [재스코어링 09:30/11:30/13:30/15:30]
     ↓
 [웹 대시보드 실시간 표시]
-http://168.107.42.41:8000
+http://localhost:31234
 ```
 
 **핵심 원칙**
@@ -312,17 +313,18 @@ DB(market_intel_issues) 저장
 
 ## 8. 웹 대시보드 페이지 안내
 
-서버 주소: **http://168.107.42.41:8000**
+로컬 주소: **http://localhost:31234**
 
 | 경로 | 페이지 | 내용 |
 |------|--------|------|
 | `/` | 홈 | 시스템 상태 요약 |
 | `/scoring` | **스코어링 현황** | 전 종목 5축 점수 + 복합 점수 테이블 |
 | `/signals` | **매매 대시보드** | 매수 추천 / 관망 / 매도 추천 종목 목록 |
-| `/monitor` | **실시간 모니터** | 모니터 ON/OFF, 실시간 시그널 스트림 |
-| `/market-intel` | **인텔리전스** | AI 분석 뉴스 이슈 목록, 종목별 감성 |
-| `/performance` | **성과 분석** | Paper Trading P&L, Spearman 상관계수 |
-| `/portfolio` | **포트폴리오** | 가상 보유 포지션 |
+| `/monitor` | **실시간 모니터** | 현재 안전 잠금 상태와 비활성 사유 확인 |
+| `/intel` | **인텔리전스** | AI 분석 뉴스 이슈 목록, 종목별 감성 |
+| `/paper-trading` | **모의투자** | 가상 주문, 포지션, 손익, 30일 가격·점수 추적 |
+| `/portfolio` | **실계좌 포트폴리오** | KIS 실계좌 잔고와 보유 종목 조회 |
+| `/performance` | **신호 성과 추적** | 신호 이후 수익률, Spearman 상관계수 |
 | `/backtest` | **백테스트** | 전략별 과거 수익률 검증 |
 | `/strategies` | **전략 목록** | 등록된 기술적 전략 관리 |
 | `/risk` | **리스크 관리** | 포트폴리오 한도 설정 현황 |
@@ -333,31 +335,27 @@ DB(market_intel_issues) 저장
 ## 9. Paper Trading & 성과 검증
 
 ### Paper Trading이란?
-실제 돈을 쓰지 않고 **가상 매매**를 시뮬레이션하는 기능입니다.
-시스템이 BUY 신호를 내면 가상으로 매수하고, SELL 신호에 가상 매도합니다.
+실제 돈이나 주문 가능 현금 한도를 사용하지 않고 **독립된 가상 원장**에서 매매를 연습하는 기능입니다.
+`/paper-trading` 또는 `/signals`에서 수량을 선택하고 예상 가격·수수료·시세 지연 여부를 확인한 뒤 사용자가 직접 모의 체결을 확정합니다.
 
-- 보유 종목이 `/portfolio` 및 `/signals` 페이지에 "보유중"으로 표시됩니다
-- 실제 계좌 잔고가 아니며, DB의 `paper_positions` 테이블에 기록됩니다
-- KIS API를 연결하면 실제 계좌 연동도 가능 (현재는 Paper Trading 모드)
+- `/paper-trading`: 모의 포지션, 보유 원가, 평가액, 실현·미실현손익, 수수료와 수정 불가능한 체결 이력
+- `/portfolio`: KIS에서 조회한 **실계좌 포트폴리오**. 모의 주문으로 잔고가 바뀌지 않습니다
+- `/signals`: legacy 전략 포지션은 “전략 추적 보유”, 새 가상 원장은 “모의 보유”로 분리합니다. KIS 실계좌 보유 여부는 `/portfolio`에서만 확인합니다
+- 주문 확정 시 서버가 가격을 다시 조회합니다. 최근 종가 fallback은 `지연 시세`로 명시해 체결할 수 있고, 모든 시세 소스가 실패한 경우에만 오류로 중단합니다
 
 ### 성과 검증 흐름
 
 ```
-[BUY 신호 발생]
-    ↓
-signal_price 기록 (시그널 당시 가격)
-    ↓
-[16:00 IntelPriceTracker 실행]
-    ↓
-당일 종가 vs signal_price 비교 → pnl_pct 계산
-    ↓
-[scoring_results ↔ signal_performance JOIN]
-    ↓
-[일요일 09:00 CorrelationReport]
-각 축별 Spearman 순위상관계수 계산
-→ |r| < 0.1이면 가중치 재조정 필요 경고
-→ Discord로 주간 리포트 전송
+[추천에서 모의 주문 미리보기]
+    ↓ 가격·수수료·추천 스냅샷 확인
+[모의 체결 확정]
+    ↓ 포지션 + 불변 체결 이력 기록
+[시세·5축·Exit 점수 갱신]
+    ↓ 실현/미실현손익 + 매수 당시 대비 점수 변화
+[30일 가격·복합 점수·Exit 점수 차트]
 ```
+
+모의 원장 손익은 `/paper-trading`에서 확인합니다. `/performance`는 신호 이후 실제 수익률과 스코어 상관관계를 분석하는 별도 검증 화면입니다.
 
 ### 상관계수 해석
 
@@ -467,54 +465,190 @@ money_mani/
 
 ## 12. 서버 배포 & 운영
 
-### 서버 정보
-- **주소**: `168.107.42.41` (OCI 클라우드, Ubuntu)
-- **SSH 접속**: `ssh money-mani`
-- **경로**: `/home/ubuntu/money_mani`
-- **Python**: `/home/ubuntu/money_mani/.venv/bin/python`
+운영 대상은 `hermes-vps`이며, 애플리케이션은 Docker에서 실행합니다. 호스트에는
+`127.0.0.1:32777`만 바인딩하고 Tailscale Funnel이 공개 HTTPS를 제공합니다.
+기존 Traefik의 80/443 및 Hostinger 관리 포트 32781은 사용하거나 변경하지 않습니다.
 
-### systemd 서비스
+```text
+외부 브라우저
+  → https://<tailscale-host>.<tailnet>.ts.net:8443
+  → Tailscale Funnel
+  → 127.0.0.1:32777
+  → web:31234 ↔ SQLite ↔ scheduler
+```
 
-| 서비스 | 역할 |
-|--------|------|
-| `money-mani` | FastAPI 웹 서버 (포트 8000) |
-| `money-mani-scheduler` | APScheduler 스케줄러 |
+### 배포 파일과 영속 상태
+
+| 경로 | 역할 |
+|------|------|
+| `/srv/money-mani/app` | 공개 Git 저장소의 정확한 commit SHA checkout |
+| `/srv/money-mani/shared` | DB, 설정, 전략, output, MEMORY, OAuth, 백업 |
+| `/srv/money-mani/secrets/app.env` | API 키와 내부 토큰; 권한 600 |
+| `compose.hermes.yml` | 단일 web worker와 단일 scheduler |
+
+컨테이너 루트 파일시스템은 읽기 전용이며, 위 영속 경로만 쓰기 가능합니다.
+DB 경로는 `MONEY_MANI_DB_PATH`, scheduler 내부 주소는
+`MONEY_MANI_WEB_BASE_URL`로 주입합니다. Docker 네트워크는 고정 gateway
+`172.30.77.1`만 신뢰 프록시로 허용합니다. 해당 subnet이 VPS와 충돌할 때만
+deploy env의 `MONEY_MANI_DOCKER_SUBNET`, `MONEY_MANI_DOCKER_GATEWAY`,
+`MONEY_MANI_FORWARDED_ALLOW_IPS`를 같은 값으로 함께 변경합니다.
+
+### 최초 호스트 준비
+
+먼저 코드와 테스트를 커밋하고 공개 원격 저장소에 push합니다. `.env`, DB,
+백업, WAL/SHM, `MEMORY.md`가 commit에 포함되지 않았는지 반드시 확인합니다.
 
 ```bash
-# 서비스 상태 확인
-ssh money-mani "systemctl status money-mani money-mani-scheduler"
-
-# 서비스 재시작
-ssh money-mani "sudo systemctl restart money-mani money-mani-scheduler"
-
-# 로그 확인
-ssh money-mani "journalctl -u money-mani-scheduler -n 50 --no-pager"
+.venv/bin/python -m pytest -q
+python3 -m deploy.hermes.secret_scan --revision HEAD
+git status --short
+git rev-parse HEAD  # 이후 모든 명령에서 이 40자 SHA를 사용
 ```
 
-### 코드 배포
-git을 사용하지 않고 rsync로 배포합니다.
+root로 `deploy/hermes/bootstrap_host.sh`를 한 번 실행하면 기본 UID 1000의
+`money-mani` 사용자, Docker 그룹과 `/srv/money-mani` 디렉터리를 준비합니다.
+root의 `authorized_keys` 전체는 절대 복사하지 않으며, 명시한 단일 공개키만
+fingerprint 검증 후 설치합니다. Docker 그룹은 root에 준하는 권한이므로 이
+계정은 배포 전용으로만 사용합니다.
 
 ```bash
-# 단일 파일 배포
-rsync -av scoring/data_collectors.py money-mani:/home/ubuntu/money_mani/scoring/
-
-# 전체 소스 배포 (캐시·DB 제외)
-rsync -av --exclude='.git' --exclude='__pycache__' --exclude='*.db' \
-  . money-mani:/home/ubuntu/money_mani/
+scp deploy/hermes/bootstrap_host.sh hermes-vps:/tmp/
+scp ~/.ssh/ssh-key-hwang.pub hermes-vps:/tmp/ssh-key-hwang.pub
+ssh hermes-vps \
+  'MONEY_MANI_ALLOW_DOCKER_ROOT_EQUIVALENT=1 bash /tmp/bootstrap_host.sh \
+    --authorized-key-file /tmp/ssh-key-hwang.pub && \
+    rm -f /tmp/ssh-key-hwang.pub'
+ssh -i ~/.ssh/ssh-key-hwang money-mani@187.127.121.97
 ```
 
-### 환경변수 (.env)
+두 번째 터미널에서 `money-mani` 키 로그인이 성공하고 Hostinger 콘솔 접근을
+확보한 뒤에만 `PermitRootLogin no`, `PasswordAuthentication no`를 SSH drop-in에
+설정하고 `sshd -t` 성공 후 SSH를 reload합니다. 로컬 SSH alias에는 다음을
+사용하며 기존 `LocalForward`는 비상 접속용으로 유지합니다.
 
-```env
-OPENROUTER_KEY=sk-or-v1-xxxx       # LLM (OpenRouter / Gemini)
-DISCORD_WEBHOOK_URL=https://...     # Discord 알림
-DART_API_KEY=xxxx                   # DART 전자공시 API
-NAVER_CLIENT_ID=xxxx                # 네이버 검색 API
-NAVER_CLIENT_SECRET=xxxx
-KIS_API_KEY=xxxx                    # 한국투자증권 KIS (선택)
-KIS_API_SECRET=xxxx
-KIS_ACCOUNT_NUMBER=xxxx
+```sshconfig
+Host hermes-vps
+    HostName 187.127.121.97
+    User money-mani
+    IdentityFile ~/.ssh/ssh-key-hwang
+    IdentitiesOnly yes
+    LocalForward 9119 127.0.0.1:32777
 ```
+
+### Tailscale과 공개 HTTPS
+
+VPS에 Tailscale을 설치하고 로그인한 뒤 hostname을 고정합니다. Funnel은 앱과
+인증 검증이 끝난 마지막 단계에서만 켭니다.
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --hostname=money-mani-hermes
+sudo tailscale funnel --bg --https=8443 http://127.0.0.1:32777
+tailscale funnel status
+```
+
+Funnel이 출력한 정확한 origin을
+`MONEY_MANI_ALLOWED_ORIGINS=https://...:8443`으로 `app.env`에 저장하고,
+`MONEY_MANI_ALLOWED_HOSTS`에는 `localhost,127.0.0.1,web`과 scheme/port 없는
+정확한 Funnel hostname을 나열합니다. `*.ts.net` wildcard는 허용하지 않습니다.
+환경 파일을 바꾼 뒤에는 다음 명령으로 적용합니다.
+
+```bash
+docker compose --env-file /srv/money-mani/deploy.env \
+  -f compose.hermes.yml up -d --force-recreate web scheduler
+```
+
+Funnel은 일반 브라우저 방문자에게 공개되므로 owner/viewer 로그인이 필수입니다.
+
+### 로컬 데이터 컷오버
+
+최종 컷오버 때 로컬 web과 scheduler를 먼저 완전히 중지합니다. 아래 도구는
+31234 포트가 열려 있으면 거부하고, WAL checkpoint 후 SQLite Backup API로
+스냅샷을 만들며 모든 파일의 SHA-256 매니페스트를 기록합니다.
+
+```bash
+.venv/bin/python -m deploy.hermes.prepare_cutover \
+  --confirm-services-stopped \
+  --destination "cutover-$(date -u +%Y%m%dT%H%M%SZ)"
+
+rsync -az --protect-args cutover-<timestamp>/ \
+  hermes-vps:/srv/money-mani/incoming/cutover-<timestamp>/
+```
+
+VPS에서 정확한 SHA를 checkout한 뒤 번들을 검증·설치합니다. `app.env`에는 기존
+API 키 외에 32자 이상의 무작위 `MONEY_MANI_INTERNAL_TOKEN`을 추가합니다.
+
+```bash
+git clone https://github.com/hth950/money_mani.git /srv/money-mani/app
+cd /srv/money-mani/app
+git switch --detach <40-char-sha>
+python3 -m deploy.hermes.install_cutover \
+  --bundle /srv/money-mani/incoming/cutover-<timestamp> \
+  --confirm-services-stopped
+
+python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+chmod 600 /srv/money-mani/secrets/app.env
+```
+
+원격 설치기는 검증 성공 후 전송 번들의 비밀 파일을 덮어쓰고 번들을 제거합니다.
+외부 로그인과 row count까지 확인한 뒤 로컬 번들도 정리합니다.
+
+```bash
+.venv/bin/python -m deploy.hermes.cleanup_cutover \
+  --bundle cutover-<timestamp> \
+  --confirm-remote-verified
+```
+
+### 배포, 사용자, 검증
+
+`deploy.sh`는 remote branch에 존재하는 정확한 40자 SHA만 허용합니다. 시작 전
+온라인 DB 백업을 만들고 이미지를 해당 SHA로 태깅한 뒤 web healthcheck가
+성공해야 scheduler를 하나만 시작합니다.
+
+```bash
+cd /srv/money-mani/app
+./deploy/hermes/deploy.sh <40-char-sha>
+
+# SSH 터미널에서 비밀번호를 안전하게 입력해 사용자 생성
+docker compose --env-file /srv/money-mani/deploy.env \
+  -f compose.hermes.yml exec web \
+  python -m web.auth_cli create --username admin --role owner
+docker compose --env-file /srv/money-mani/deploy.env \
+  -f compose.hermes.yml exec web \
+  python -m web.auth_cli create --username guest --role viewer
+
+curl -fsS http://127.0.0.1:32777/healthz
+docker compose --env-file /srv/money-mani/deploy.env \
+  -f compose.hermes.yml ps
+```
+
+외부에서는 Funnel URL의 로그인, owner 변경 기능과 viewer 조회 제한을 각각
+검증합니다. 공인 IP의 31234/32777은 계속 닫혀 있어야 하며,
+`ssh hermes-vps` 연결 중 `http://localhost:9119`는 비상 경로로 사용할 수 있습니다.
+
+### 백업과 롤백
+
+다음 설치 스크립트는 매일 03:30 KST에 온라인 백업과 무결성/FK 검사를 실행해
+일간 14개와 일요일 주간본 8개를 보관합니다.
+
+```bash
+sudo /srv/money-mani/app/deploy/hermes/install_backup_timer.sh
+systemctl list-timers money-mani-backup.timer --no-pager
+```
+
+직전 배포로 되돌릴 때는 기록된 이전 SHA와 그 배포 직전 DB가 한 쌍으로
+복구됩니다. 이때 현재 `app_users`의 비밀번호 해시·역할·활성 상태와 인증 감사
+기록은 승계하고 모든 세션은 폐기하므로, 과거 세션이나 변경 전 비밀번호가
+부활하지 않습니다. 임의 SHA는 그 시점의 검증된 DB 백업도 명시해야 합니다.
+
+```bash
+./deploy/hermes/rollback.sh
+./deploy/hermes/rollback.sh --to <40-char-sha> \
+  --database-backup /srv/money-mani/shared/backups/<verified>.db
+```
+
+컷오버 후 SQLite 쓰기 주체는 VPS 하나뿐입니다. 로컬 web/scheduler를 다시
+시작하려면 먼저 최신 원격 DB를 동일한 검증 절차로 내려받아야 합니다.
 
 ---
 
@@ -562,4 +696,4 @@ realtime:
 - 과거 백테스트 성과가 미래 수익을 보장하지 않습니다.
 - 네이버 금융 스크래퍼는 HTML 구조 변경 시 파싱 실패할 수 있습니다. 로그를 모니터링하세요.
 - DART API 무료 티어는 일 10,000건 제한입니다. 대량 스캔 시 한도에 주의하세요.
-- KIS API 연결 없이는 Paper Trading 모드로만 동작합니다 (실제 매매 없음).
+- 모의 주문은 KIS 실계좌 주문을 호출하지 않으며 실제 잔고를 변경하지 않습니다.

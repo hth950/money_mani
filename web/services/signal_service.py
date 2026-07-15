@@ -6,6 +6,23 @@ from web.db.connection import get_db
 
 logger = logging.getLogger("money_mani.web.services.signal")
 
+_ticker_name_cache: dict[str, str] = {}
+_ticker_name_failures: set[str] = set()
+_NAME_BACKFILL_TARGETS = (
+    ("scoring_results", "ticker_name"),
+    ("signals", "ticker_name"),
+    ("positions", "ticker_name"),
+    ("paper_positions", "ticker_name"),
+    ("signal_performance", "ticker_name"),
+    ("decision_events", "ticker_name"),
+    ("portfolio_snapshots", "name"),
+)
+
+
+def _missing_ticker_name(ticker, ticker_name) -> bool:
+    name = str(ticker_name or "").strip()
+    return not name or name == str(ticker).strip() or name.isdigit()
+
 
 class SignalService:
     """Persist and query trading signals."""
@@ -83,6 +100,63 @@ class SignalService:
             row = db.execute("SELECT * FROM signals WHERE id=?", (signal_id,)).fetchone()
             return dict(row) if row else None
 
+    def _resolve_action_ticker_names(self, rows) -> dict[str, str]:
+        """Resolve unique missing KRX names and backfill allowlisted ledgers."""
+        unresolved = {
+            str(row["ticker"]).strip()
+            for row in rows
+            if (row["market"] or "").upper() == "KRX"
+            and _missing_ticker_name(row["ticker"], row["ticker_name"])
+        }
+        if not unresolved:
+            return {}
+
+        resolved = {
+            ticker: _ticker_name_cache[ticker]
+            for ticker in unresolved
+            if ticker in _ticker_name_cache
+        }
+        to_lookup = sorted(
+            unresolved - set(resolved) - _ticker_name_failures
+        )
+        if to_lookup:
+            from market_data.krx_fetcher import KRXFetcher
+
+            fetcher = KRXFetcher(delay=0)
+            for ticker in to_lookup:
+                try:
+                    name = str(fetcher.get_ticker_name(ticker) or "").strip()
+                except Exception as exc:
+                    logger.warning("Ticker-name resolution failed for %s: %s", ticker, exc)
+                    name = ""
+                if name and name != ticker:
+                    _ticker_name_cache[ticker] = name
+                    resolved[ticker] = name
+                else:
+                    _ticker_name_failures.add(ticker)
+
+        if resolved:
+            try:
+                # One transaction keeps all user-facing name-bearing ledgers in
+                # sync while preserving any name that was already meaningful.
+                with get_db() as db:
+                    for ticker, name in resolved.items():
+                        for table, name_column in _NAME_BACKFILL_TARGETS:
+                            db.execute(
+                                f"""UPDATE {table}
+                                    SET {name_column}=?
+                                    WHERE ticker=? AND UPPER(COALESCE(market, ''))='KRX'
+                                      AND ({name_column} IS NULL
+                                           OR TRIM({name_column})=''
+                                           OR TRIM({name_column})=TRIM(ticker)
+                                           OR (TRIM({name_column})<>''
+                                               AND TRIM({name_column}) NOT GLOB '*[^0-9]*'))""",
+                                (name, ticker),
+                            )
+            except Exception as exc:
+                logger.warning("Ticker-name ledger backfill failed: %s", exc)
+        return resolved
+
     def get_actions(self, days: int = 7) -> list[dict]:
         """Return latest scoring-based actions per ticker for the trading dashboard.
 
@@ -111,17 +185,25 @@ class SignalService:
                     sr.block_reason,
                     sr.scan_date,
                     sr.score_breakdown_json,
-                    p.status  AS position_status,
+                    p.position_status,
                     p.pnl_pct
                 FROM scoring_results sr
-                LEFT JOIN positions p
-                    ON sr.ticker = p.ticker AND p.status = 'open'
+                LEFT JOIN (
+                    SELECT
+                        ticker,
+                        'open' AS position_status,
+                        AVG(pnl_pct) AS pnl_pct
+                    FROM positions
+                    WHERE status = 'open'
+                    GROUP BY ticker
+                ) p ON sr.ticker = p.ticker
                 WHERE sr.scan_date = ? AND sr.source != 'backfill'
                 ORDER BY sr.composite_score DESC
                 """,
                 (scan_date,),
             ).fetchall()
 
+        resolved_names = self._resolve_action_ticker_names(rows)
         actions: list[dict] = []
         for row in rows:
             score = row["composite_score"] or 0.0
@@ -140,17 +222,14 @@ class SignalService:
             except (KeyError, IndexError):
                 block_reason = ""
             if decision == "BLOCKED" and "이미 포지션 보유 중" in block_reason:
-                # 보유 중 종목은 composite_score 기반으로 action 결정
-                if score >= 0.65:
-                    action = "BUY"
-                elif score >= 0.40:
-                    action = "WATCH"
-                else:
-                    action = "SELL"
+                # 보유 중이라는 이유로 BLOCKED를 SELL로 추정하지 않는다.
+                # 실제 청산은 독립적인 ExitScorer와 포지션 이벤트가 담당한다.
+                action = "WATCH"
             elif decision == "EXECUTE":
                 action = "BUY"
             elif decision == "SKIP":
-                action = "SELL"
+                # SKIP은 진입하지 않음이지 매도 명령이 아니다.
+                action = "NONE"
             elif decision == "BLOCKED":
                 action = "WATCH"
             else:
@@ -163,9 +242,12 @@ class SignalService:
 
             actions.append({
                 "ticker": row["ticker"],
-                "ticker_name": row["ticker_name"] or row["ticker"],
+                "ticker_name": resolved_names.get(
+                    str(row["ticker"]), row["ticker_name"] or row["ticker"]
+                ),
                 "market": row["market"] or "KRX",
                 "action": action,
+                "recommendation": decision,
                 "conviction": conviction,
                 "composite_score": score,
                 "score_breakdown": breakdown,

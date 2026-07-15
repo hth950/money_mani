@@ -12,6 +12,7 @@ logger = logging.getLogger("money_mani.scoring.data_collectors")
 
 # Module-level TTL caches
 _fundamental_cache = TTLCache(ttl=4 * 3600, maxsize=256)
+_fundamental_failure_cache = TTLCache(ttl=15 * 60, maxsize=256)
 _flow_cache = TTLCache(ttl=4 * 3600, maxsize=256)
 _macro_cache = TTLCache(ttl=2 * 3600, maxsize=4)
 
@@ -94,12 +95,17 @@ def _get_ticker_sector_eng(ticker: str) -> str | None:
         return _sector_yf_cache[ticker]
     try:
         import yfinance as yf
-        info = yf.Ticker(f"{ticker}.KS").get_info()
-        yf_sector = info.get("sector")
-        _sector_yf_cache[ticker] = yf_sector
-        if yf_sector:
-            logger.debug(f"yfinance sector for {ticker}: {yf_sector}")
-        return yf_sector
+        from market_data.krx_fetcher import resolve_yahoo_symbols
+
+        for symbol in resolve_yahoo_symbols(ticker, yf):
+            info = yf.Ticker(symbol).get_info()
+            yf_sector = info.get("sector") if isinstance(info, dict) else None
+            if yf_sector:
+                _sector_yf_cache[ticker] = yf_sector
+                logger.debug("yfinance sector for %s (%s): %s", ticker, symbol, yf_sector)
+                return yf_sector
+        _sector_yf_cache[ticker] = None
+        return None
     except Exception as e:
         logger.debug(f"yfinance sector lookup failed for {ticker}: {e}")
         _sector_yf_cache[ticker] = None
@@ -111,6 +117,41 @@ class FundamentalCollector:
 
     def __init__(self):
         pass
+
+    @staticmethod
+    def _neutral_result(
+        status: str,
+        reason: str,
+        source: str = "none",
+        attempts: list[dict] | None = None,
+    ) -> dict:
+        """Build an explicit neutral result for missing/failed data."""
+        return {
+            "score": 0.5,
+            "details": {
+                "per_score": 0.5,
+                "pbr_score": 0.5,
+                "roe_score": 0.5,
+                "div_score": 0.5,
+                "source": source,
+                "data_status": status,
+                "reason": reason,
+                "available_metrics": [],
+                "missing_metrics": ["per", "pbr", "roe", "div"],
+                "attempts": attempts or [],
+            },
+        }
+
+    @staticmethod
+    def _optional_float(value) -> float | None:
+        """Return a finite float, preserving zero as an observed value."""
+        if value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
 
     def _load_benchmarks_config(self) -> dict:
         """Load sector_benchmarks section from config/scoring.yaml."""
@@ -137,16 +178,133 @@ class FundamentalCollector:
         defaults = config.get("defaults", {"per": 20.0, "roe": 0.15, "pbr": 1.5})
         return sectors.get(sector, defaults)
 
+    def _load_fundamental_scoring_config(self) -> dict:
+        """Load KRX fundamental component weights and missing-value policy."""
+        try:
+            import yaml
+            from pathlib import Path
+
+            config_path = Path(__file__).parent.parent / "config" / "scoring.yaml"
+            if config_path.exists():
+                with open(config_path, encoding="utf-8") as f:
+                    return (yaml.safe_load(f) or {}).get("fundamental_scoring", {})
+        except Exception as e:
+            logger.warning(f"Failed to load fundamental scoring config: {e}")
+        return {}
+
+    def _score_krx_values(self, values: dict, source: str) -> dict:
+        """Score whichever KRX metrics are actually available.
+
+        Missing individual metrics stay neutral and are exposed in metadata;
+        an entirely empty payload is handled by ``_neutral_result`` instead.
+        Dividend values are expected as percentage points (2.0 == 2%).
+        """
+        per = self._optional_float(values.get("per"))
+        pbr = self._optional_float(values.get("pbr"))
+        roe = self._optional_float(values.get("roe"))
+        div = self._optional_float(values.get("div"))
+        observed = {"per": per, "pbr": pbr, "roe": roe, "div": div}
+        available = [name for name, value in observed.items() if value is not None]
+        missing = [name for name, value in observed.items() if value is None]
+        if not available:
+            return self._neutral_result(
+                "unavailable", "no_usable_metrics", source=source
+            )
+
+        supplied_sector = values.get("sector")
+        eng_sector = (
+            supplied_sector.strip()
+            if isinstance(supplied_sector, str)
+            and supplied_sector.strip()
+            and supplied_sector != "Unknown"
+            else None
+        )
+        if not eng_sector:
+            eng_sector = _get_ticker_sector_eng(str(values.get("ticker", "")))
+        raw_sector = eng_sector or "Unknown"
+        benchmarks = self._get_sector_benchmarks(raw_sector)
+        benchmark_per = float(benchmarks.get("per", 20.0))
+        benchmark_pbr = float(benchmarks.get("pbr", 1.5))
+        benchmark_roe = float(benchmarks.get("roe", 0.15))
+
+        if not hasattr(self, "_fundamental_scoring_config"):
+            self._fundamental_scoring_config = self._load_fundamental_scoring_config()
+        scoring_cfg = self._fundamental_scoring_config
+        missing_score = float(scoring_cfg.get("missing_metric_score", 0.5))
+        weights = scoring_cfg.get("components", {})
+        component_weights = {
+            "per": float(weights.get("per", 0.35)),
+            "pbr": float(weights.get("pbr", 0.25)),
+            "roe": float(weights.get("roe", 0.25)),
+            "div": float(weights.get("dividend", 0.15)),
+        }
+
+        per_score = (
+            max(0.0, min(1.0, 1.5 - per / benchmark_per))
+            if per is not None and per > 0 else
+            (0.0 if per is not None else missing_score)
+        )
+        pbr_score = (
+            max(0.0, min(1.0, 1.5 - pbr / benchmark_pbr))
+            if pbr is not None and pbr > 0 else
+            (0.0 if pbr is not None else missing_score)
+        )
+        roe_score = (
+            min(1.0, max(0.0, roe / benchmark_roe))
+            if roe is not None else missing_score
+        )
+        div_score = (
+            min(1.0, max(0.0, div / 5.0))
+            if div is not None else missing_score
+        )
+        component_scores = {
+            "per": per_score,
+            "pbr": pbr_score,
+            "roe": roe_score,
+            "div": div_score,
+        }
+        weight_total = sum(component_weights.values()) or 1.0
+        fundamental_score = sum(
+            component_scores[name] * weight
+            for name, weight in component_weights.items()
+        ) / weight_total
+
+        return {
+            "score": round(fundamental_score, 4),
+            "details": {
+                "per_score": round(per_score, 4),
+                "pbr_score": round(pbr_score, 4),
+                "roe_score": round(roe_score, 4),
+                "div_score": round(div_score, 4),
+                "per": per,
+                "pbr": pbr,
+                "roe": roe,
+                "div": div,
+                "sector": raw_sector,
+                "sector_eng": eng_sector,
+                "sector_benchmark_per": benchmark_per,
+                "sector_benchmark_pbr": benchmark_pbr,
+                "sector_benchmark_roe": benchmark_roe,
+                "source": source,
+                "data_status": "available" if not missing else "partial",
+                "available_metrics": available,
+                "missing_metrics": missing,
+            },
+        }
+
     def score(self, ticker: str, market: str) -> dict:
         """Return fundamental score and details.
 
         Returns:
             {"score": 0.0~1.0, "details": {"per_score": ..., "pbr_score": ..., "div_score": ...}}
         """
-        neutral = {"score": 0.5, "details": {"per_score": 0.5, "pbr_score": 0.5, "div_score": 0.5}}
+        neutral = self._neutral_result("unavailable", "not_collected")
 
         cache_key = f"{market}:{ticker}"
         hit, cached = _fundamental_cache.get(cache_key)
+        if hit:
+            return cached
+        hit, cached = _fundamental_failure_cache.get(cache_key)
         if hit:
             return cached
 
@@ -155,11 +313,21 @@ class FundamentalCollector:
                 result = self._score_krx(ticker, neutral)
             else:
                 result = self._score_us(ticker, neutral)
-            _fundamental_cache.set(cache_key, result)
+            status = result.get("details", {}).get("data_status")
+            cache = (
+                _fundamental_failure_cache
+                if status in {"error", "unavailable"}
+                else _fundamental_cache
+            )
+            cache.set(cache_key, result)
             return result
         except Exception as e:
             logger.warning(f"FundamentalCollector.score failed for {ticker}: {e}")
-            return neutral
+            result = self._neutral_result(
+                "error", f"collector_failed:{type(e).__name__}"
+            )
+            _fundamental_failure_cache.set(cache_key, result)
+            return result
 
     def _score_krx(self, ticker: str, neutral: dict) -> dict:
         from market_data.krx_fetcher import KRXFetcher
@@ -169,89 +337,66 @@ class FundamentalCollector:
             df = KRXFetcher().get_fundamentals(ticker, start, today)
         except Exception as e:
             logger.warning(f"KRX get_fundamentals failed for {ticker}: {e}")
-            return neutral
+            df = None
+            primary_status = "error"
+            primary_reason = f"krx_fetcher_failed:{type(e).__name__}"
+        else:
+            primary_status = (df.attrs.get("status") if df is not None else None) or "unavailable"
+            primary_reason = (df.attrs.get("reason") if df is not None else None) or "no_krx_fundamental_data"
 
-        if df is None or df.empty:
-            # Fallback: DART-based fundamentals with sector-aware benchmarks
-            try:
-                from scoring.dart_fundamental import DARTFundamentalFetcher
-                dart_data = DARTFundamentalFetcher().get_financial_data(ticker)
-                if dart_data:
-                    ticker_per = float(dart_data.get("per", 0) or 0)
-                    ticker_pbr = float(dart_data.get("pbr", 0) or 0)
-                    ticker_div = float(dart_data.get("div_yield", 0) or 0) * 100  # → %
+        if df is not None and not df.empty:
+            row = df.iloc[-1]
+            source = df.attrs.get("source", "pykrx")
+            return self._score_krx_values({
+                "ticker": ticker,
+                "per": row.get("PER"),
+                "pbr": row.get("PBR"),
+                "roe": row.get("ROE"),
+                "div": row.get("DIV"),
+                "sector": row.get("sector"),
+            }, source)
 
-                    eng_sector = _get_ticker_sector_eng(ticker)
-                    raw_sector = eng_sector or "Unknown"
-                    benchmarks = self._get_sector_benchmarks(eng_sector or "Unknown")
-                    sector_avg_per = benchmarks["per"]
-                    sector_avg_pbr = benchmarks.get("pbr", 1.5)
+        attempts = [{
+            "source": "krx_fetcher",
+            "status": primary_status,
+            "reason": primary_reason,
+        }]
 
-                    per_ratio = ticker_per / sector_avg_per
-                    per_score = max(0.0, min(1.0, 1.5 - per_ratio)) if ticker_per > 0 else 0.5
-                    pbr_ratio = ticker_pbr / sector_avg_pbr
-                    pbr_score = max(0.0, min(1.0, 1.5 - pbr_ratio)) if ticker_pbr > 0 else 0.5
-                    div_score = min(1.0, ticker_div / 5.0)
-                    fundamental_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
+        # Fallback: DART-based fundamentals with sector-aware benchmarks.
+        dart_status = "unavailable"
+        dart_reason = "no_dart_fundamental_data"
+        try:
+            from scoring.dart_fundamental import DARTFundamentalFetcher
 
-                    logger.info(f"DART fallback fundamentals for {ticker}: PER={ticker_per}, PBR={ticker_pbr}")
-                    return {
-                        "score": round(fundamental_score, 4),
-                        "details": {
-                            "per_score": round(per_score, 4),
-                            "pbr_score": round(pbr_score, 4),
-                            "div_score": round(div_score, 4),
-                            "per": ticker_per,
-                            "pbr": ticker_pbr,
-                            "div": ticker_div,
-                            "sector": raw_sector,
-                            "sector_eng": eng_sector,
-                            "sector_benchmark_per": sector_avg_per,
-                            "sector_benchmark_pbr": sector_avg_pbr,
-                            "source": "dart",
-                        },
-                    }
-            except Exception as e:
-                logger.warning(f"DART fundamental fallback failed for {ticker}: {e}")
-            return neutral
+            dart_fetcher = DARTFundamentalFetcher()
+            dart_data = dart_fetcher.get_financial_data(ticker)
+            dart_status = dart_fetcher.last_status
+            dart_reason = dart_fetcher.last_error or dart_reason
+            if dart_data:
+                dividend_yield = self._optional_float(dart_data.get("div_yield"))
+                return self._score_krx_values({
+                    "ticker": ticker,
+                    "per": dart_data.get("per"),
+                    "pbr": dart_data.get("pbr"),
+                    "roe": dart_data.get("roe"),
+                    "div": dividend_yield * 100 if dividend_yield is not None else None,
+                }, "dart")
+        except Exception as e:
+            dart_status = "error"
+            dart_reason = f"dart_fetcher_failed:{type(e).__name__}"
+            logger.warning(f"DART fundamental fallback failed for {ticker}: {e}")
 
-        # Use the latest row
-        row = df.iloc[-1]
-        ticker_per = float(row.get("PER", 0) or 0)
-        ticker_pbr = float(row.get("PBR", 0) or 0)
-        ticker_div = float(row.get("DIV", 0) or 0)
-
-        # Sector-aware benchmarks from config/scoring.yaml
-        eng_sector = _get_ticker_sector_eng(ticker)
-        raw_sector = eng_sector or "Unknown"
-        benchmarks = self._get_sector_benchmarks(eng_sector or "Unknown")
-        sector_avg_per = benchmarks["per"]
-        sector_avg_pbr = benchmarks.get("pbr", 1.5)
-
-        per_ratio = ticker_per / sector_avg_per
-        per_score = max(0.0, min(1.0, 1.5 - per_ratio)) if ticker_per > 0 else 0.5
-        pbr_ratio = ticker_pbr / sector_avg_pbr
-        pbr_score = max(0.0, min(1.0, 1.5 - pbr_ratio)) if ticker_pbr > 0 else 0.5
-        div_score = min(1.0, ticker_div / 5.0)
-
-        fundamental_score = per_score * 0.4 + pbr_score * 0.3 + div_score * 0.3
-
-        return {
-            "score": round(fundamental_score, 4),
-            "details": {
-                "per_score": round(per_score, 4),
-                "pbr_score": round(pbr_score, 4),
-                "div_score": round(div_score, 4),
-                "per": ticker_per,
-                "pbr": ticker_pbr,
-                "div": ticker_div,
-                "sector": raw_sector,
-                "sector_eng": eng_sector,
-                "sector_benchmark_per": sector_avg_per,
-                "sector_benchmark_pbr": sector_avg_pbr,
-                "source": "pykrx",
-            },
-        }
+        attempts.append({
+            "source": "dart",
+            "status": dart_status,
+            "reason": dart_reason,
+        })
+        final_status = "error" if any(a["status"] == "error" for a in attempts) else "unavailable"
+        return self._neutral_result(
+            final_status,
+            "all_fundamental_sources_failed" if final_status == "error" else "fundamental_data_unavailable",
+            attempts=attempts,
+        )
 
     def _score_us(self, ticker: str, neutral: dict) -> dict:
         from market_data.us_fetcher import USFetcher

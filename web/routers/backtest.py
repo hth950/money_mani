@@ -1,11 +1,13 @@
 """Backtest API endpoints."""
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from web.services.backtest_service import BacktestService
+from web.services.backtest_evidence_service import BacktestEvidenceService
 from web.services.job_service import JobService
 from web.models.schemas import BacktestRequest
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 service = BacktestService()
+evidence_service = BacktestEvidenceService()
 job_service = JobService()
 
 
@@ -26,6 +28,12 @@ async def run_backtest(req: BacktestRequest):
 async def list_results(strategy_id: int = None, ticker: str = None):
     """List backtest results."""
     return service.list_results(strategy_id=strategy_id, ticker=ticker)
+
+
+@router.get("/evidence")
+async def get_validation_evidence(include_unclaimed: bool = True):
+    """Reconcile YAML status claims with persisted validation evidence."""
+    return evidence_service.build_report(include_unclaimed=include_unclaimed)
 
 
 @router.get("/results/{result_id}")

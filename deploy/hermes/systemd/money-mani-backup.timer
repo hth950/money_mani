@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Money Mani SQLite backup daily at 03:30 KST
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Seoul
+Persistent=true
+Unit=money-mani-backup.service
+
+[Install]
+WantedBy=timers.target

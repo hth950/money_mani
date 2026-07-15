@@ -19,7 +19,7 @@ async def stop_monitor():
 
 @router.get("/status")
 async def monitor_status():
-    return {"running": service.is_running()}
+    return service.status()
 
 
 @router.get("/stream")

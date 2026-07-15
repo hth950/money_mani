@@ -86,17 +86,22 @@
 </table>
 </figure>
 
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml } = window.MoneyManiSafe;
+
 function fmt(v, digits=2) {
     if (v === null || v === undefined) return '-';
     const n = Number(v);
+    if (!Number.isFinite(n)) return '-';
     const sign = n >= 0 ? '+' : '';
     return sign + n.toFixed(digits) + '%';
 }
 
 function fmtPrice(v) {
     if (!v) return '-';
-    return Number(v).toLocaleString('ko-KR', {maximumFractionDigits: 0});
+    const n = Number(v);
+    return Number.isFinite(n) ? n.toLocaleString('ko-KR', {maximumFractionDigits: 0}) : '-';
 }
 
 function colorClass(v) {
@@ -119,46 +124,50 @@ function updateSummary(data) {
 
     const best = data.best;
     if (best) {
-        const bName = best.ticker_name || best.ticker;
-        document.getElementById('bestSignal').innerHTML =
-            `<span style="${colorClass(best.pnl_pct)}">${bName} (${best.signal_type}) ${fmt(best.pnl_pct)}</span>`;
+        document.getElementById('bestSignal').innerHTML = renderSignalSummary(best);
     } else {
         document.getElementById('bestSignal').textContent = '-';
     }
 
     const worst = data.worst;
     if (worst) {
-        const wName = worst.ticker_name || worst.ticker;
-        document.getElementById('worstSignal').innerHTML =
-            `<span style="${colorClass(worst.pnl_pct)}">${wName} (${worst.signal_type}) ${fmt(worst.pnl_pct)}</span>`;
+        document.getElementById('worstSignal').innerHTML = renderSignalSummary(worst);
     } else {
         document.getElementById('worstSignal').textContent = '-';
     }
 }
 
-function renderRecords(records) {
-    const tbody = document.getElementById('recordsBody');
-    if (!records || records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">기록이 없습니다.</td></tr>';
-        return;
+function renderSignalSummary(item) {
+    const name = item?.ticker_name || item?.ticker || '-';
+    return `<span style="${colorClass(item?.pnl_pct)}">${escapeHtml(name)} (${escapeHtml(item?.signal_type || '-')}) ${escapeHtml(fmt(item?.pnl_pct))}</span>`;
+}
+
+function renderPerformanceRecords(records) {
+    if (!Array.isArray(records) || !records.length) {
+        return '<tr><td colspan="7" style="text-align:center;">기록이 없습니다.</td></tr>';
     }
-    tbody.innerHTML = records.map(r => {
-        const pnl = r.pnl_pct;
-        const sigEmoji = r.signal_type === 'BUY' ? '🟢 매수' : '🔴 매도';
+    return records.map(r => {
+        const pnl = r?.pnl_pct;
+        const sigEmoji = r?.signal_type === 'BUY' ? '🟢 매수' : '🔴 매도';
         return `<tr>
-            <td>${r.signal_date || '-'}</td>
-            <td>${r.ticker_name || r.ticker}</td>
-            <td>${r.strategy_name || '-'}</td>
+            <td>${escapeHtml(r?.signal_date || '-')}</td>
+            <td>${escapeHtml(r?.ticker_name || r?.ticker || '-')}</td>
+            <td>${escapeHtml(r?.strategy_name || '-')}</td>
             <td>${sigEmoji}</td>
-            <td>${fmtPrice(r.signal_price)}</td>
-            <td>${fmtPrice(r.close_price)}</td>
-            <td style="${colorClass(pnl)}">${fmt(pnl)}</td>
+            <td>${escapeHtml(fmtPrice(r?.signal_price))}</td>
+            <td>${escapeHtml(fmtPrice(r?.close_price))}</td>
+            <td style="${colorClass(pnl)}">${escapeHtml(fmt(pnl))}</td>
         </tr>`;
     }).join('');
 }
 
+function renderRecords(records) {
+    const tbody = document.getElementById('recordsBody');
+    tbody.innerHTML = renderPerformanceRecords(records);
+}
+
 async function loadDaily(date) {
-    const url = date ? `/api/performance/daily?date=${date}` : '/api/performance/daily';
+    const url = date ? `/api/performance/daily?date=${encodeURIComponent(date)}` : '/api/performance/daily';
     try {
         const res = await fetch(url);
         const data = await res.json();
@@ -186,26 +195,30 @@ async function loadReports() {
         const data = await res.json();
         const tbody = document.getElementById('reportsBody');
         const reports = data.reports || [];
-        if (reports.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">리포트가 없습니다.</td></tr>';
-            return;
-        }
-        tbody.innerHTML = reports.map(r => {
-            const pnl = r.total_pnl_pct || 0;
-            const typeLabel = r.report_type === 'daily' ? '일일' : '주간';
-            const sent = r.discord_sent ? '✅' : '❌';
-            return `<tr>
-                <td>${r.report_date || '-'}</td>
-                <td>${typeLabel}</td>
-                <td>${r.total_signals || 0}건</td>
-                <td style="${colorClass(pnl)}">${fmt(pnl)}</td>
-                <td>${(r.win_rate || 0).toFixed(1)}%</td>
-                <td>${sent}</td>
-            </tr>`;
-        }).join('');
+        tbody.innerHTML = renderPerformanceReports(reports);
     } catch(e) {
         console.error('Failed to load reports:', e);
     }
+}
+
+function renderPerformanceReports(reports) {
+    if (!Array.isArray(reports) || !reports.length) {
+        return '<tr><td colspan="6" style="text-align:center;">리포트가 없습니다.</td></tr>';
+    }
+    return reports.map(r => {
+        const pnl = Number.isFinite(Number(r?.total_pnl_pct)) ? Number(r.total_pnl_pct) : 0;
+        const winRate = Number.isFinite(Number(r?.win_rate)) ? Number(r.win_rate) : 0;
+        const typeLabel = r?.report_type === 'daily' ? '일일' : '주간';
+        const sent = r?.discord_sent ? '✅' : '❌';
+        return `<tr>
+            <td>${escapeHtml(r?.report_date || '-')}</td>
+            <td>${typeLabel}</td>
+            <td>${escapeHtml(r?.total_signals ?? 0)}건</td>
+            <td style="${colorClass(pnl)}">${escapeHtml(fmt(pnl))}</td>
+            <td>${winRate.toFixed(1)}%</td>
+            <td>${sent}</td>
+        </tr>`;
+    }).join('');
 }
 
 // Initial load

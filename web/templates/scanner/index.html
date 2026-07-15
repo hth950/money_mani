@@ -15,18 +15,21 @@
     <div id="scan-history"><p>로딩 중...</p></div>
 </article>
 
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml } = window.MoneyManiSafe;
+
 function runScan() {
     const btn = document.getElementById('scan-btn');
     btn.disabled = true; btn.textContent = '스캔 중...';
     fetch('/api/scan/run', {method: 'POST'})
         .then(r => r.json())
         .then(data => {
-            document.getElementById('scan-status').innerHTML = '<p>작업 ID: ' + data.job_id + ' - ' + data.message + '</p>';
+            document.getElementById('scan-status').innerHTML = '<p>작업 ID: ' + escapeHtml(data.job_id) + ' - ' + escapeHtml(data.message) + '</p>';
             setTimeout(loadHistory, 5000);
         })
         .catch(err => {
-            document.getElementById('scan-status').innerHTML = '<p class="error">오류: ' + err.message + '</p>';
+            document.getElementById('scan-status').innerHTML = '<p class="error">오류: ' + escapeHtml(err.message) + '</p>';
         })
         .finally(() => { btn.disabled = false; btn.textContent = '스캔 실행'; });
 }
@@ -36,16 +39,20 @@ function loadHistory() {
         .then(r => r.json())
         .then(data => {
             const div = document.getElementById('scan-history');
-            if (!data.length) { div.innerHTML = '<p>스캔 이력이 없습니다.</p>'; return; }
-            let html = '<table><thead><tr><th>날짜</th><th>신호 수</th><th>시장</th><th>실행 시간</th></tr></thead><tbody>';
-            data.forEach(s => {
-                html += '<tr><td>' + s.scan_date + '</td><td>' + s.signals_count + '</td>'
-                    + '<td>' + (s.markets_open||'-') + '</td>'
-                    + '<td>' + (s.created_at||'').substring(0,16) + '</td></tr>';
-            });
-            div.innerHTML = html + '</tbody></table>';
+            div.innerHTML = renderScanHistory(data);
         });
 }
+function renderScanHistory(data) {
+    if (!Array.isArray(data) || !data.length) return '<p>스캔 이력이 없습니다.</p>';
+    let html = '<table><thead><tr><th>날짜</th><th>신호 수</th><th>시장</th><th>실행 시간</th></tr></thead><tbody>';
+    data.forEach(s => {
+        html += '<tr><td>' + escapeHtml(s?.scan_date || '-') + '</td><td>' + escapeHtml(s?.signals_count ?? 0) + '</td>'
+            + '<td>' + escapeHtml(s?.markets_open || '-') + '</td>'
+            + '<td>' + escapeHtml(String(s?.created_at || '').substring(0,16)) + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+}
+// Initial load
 loadHistory();
 </script>
 {% endblock %}

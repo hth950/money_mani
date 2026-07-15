@@ -4,30 +4,65 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Money Mani{% endblock %}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-    <link rel="stylesheet" href="/static/style.css">
-    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-    <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.1.1/css/pico.min.css"
+          integrity="sha384-L1dWfspMTHU/ApYnFiMz2QID/PlP1xCW9visvBdbEkOLkSSWsP6ZJWhPw6apiXxU" crossorigin="anonymous">
+    <link rel="stylesheet" href="/static/style.css?v=20260714-paper-trading">
+    <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"
+            integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"
+            integrity="sha384-OZrRw8/Zvv0VFGJJF6TN3gABVZvvO60Xz7RWkQKAmoRe+t1dc5J/ySJvXbpL+N+Q" crossorigin="anonymous"></script>
+    <meta name="csrf-token" content="{{ request.state.csrf_token or '' }}">
+    <script>
+    (() => {
+        const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = (input, init = {}) => {
+            const method = String(init.method || 'GET').toUpperCase();
+            const target = new URL(typeof input === 'string' ? input : input.url, window.location.href);
+            if (token && target.origin === window.location.origin && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+                const headers = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined));
+                headers.set('X-CSRF-Token', token);
+                init = {...init, headers};
+            }
+            return originalFetch(input, init);
+        };
+        document.addEventListener('htmx:configRequest', (event) => {
+            if (token && !['get', 'head', 'options'].includes(String(event.detail.verb || '').toLowerCase())) {
+                event.detail.headers['X-CSRF-Token'] = token;
+            }
+        });
+    })();
+    </script>
 </head>
-<body>
+{% set current_user = request.state.user %}
+<body data-role="{{ current_user.role }}">
     <nav class="container-fluid">
         <ul>
-            <li><strong><a href="/">Money Mani</a></strong></li>
+            <li><strong><a href="{{ '/' if current_user.role == 'owner' else '/signals' }}">Money Mani</a></strong></li>
         </ul>
         <ul>
             <li><a href="/strategies">전략 관리</a></li>
             <li><a href="/backtest">백테스트</a></li>
             <li><a href="/signals">신호 이력</a></li>
+            {% if current_user.role == 'owner' %}
             <li><a href="/scanner">일일 스캔</a></li>
             <li><a href="/discovery">전략 탐색</a></li>
             <li><a href="/monitor">실시간 모니터</a></li>
-            <li><a href="/portfolio">포트폴리오</a></li>
+            {% endif %}
+            <li><a href="/paper-trading">모의투자</a></li>
+            {% if current_user.role == 'owner' %}
+            <li><a href="/portfolio">실계좌 포트폴리오</a></li>
+            {% endif %}
             <li><a href="/performance">성과 추적</a></li>
             <li><a href="/intel">시장 인텔</a></li>
             <li><a href="/scoring">스코어링</a></li>
             <li><a href="/guide">매매 가이드</a></li>
             <li><a href="/macro">매크로</a></li>
+            {% if current_user.role == 'owner' %}
             <li><a href="/settings">설정</a></li>
+            {% endif %}
+            <li><small>{{ current_user.username }} · {{ current_user.role }}</small></li>
+            <li><button id="logout-button" type="button" class="outline secondary" style="padding:.3rem .6rem;margin:0;">로그아웃</button></li>
         </ul>
     </nav>
     <main class="container">
@@ -36,5 +71,11 @@
     <footer class="container">
         <small>Money Mani Trading System</small>
     </footer>
+    <script>
+    document.getElementById('logout-button')?.addEventListener('click', async () => {
+        const response = await fetch('/logout', {method: 'POST'});
+        if (response.ok) window.location.assign('/login');
+    });
+    </script>
 </body>
 </html>

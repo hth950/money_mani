@@ -97,6 +97,8 @@ class DARTFundamentalFetcher:
             self._api_key = get_env("DART_API_KEY", "")
         if not self._api_key:
             logger.warning("DART API key not configured (DART_API_KEY)")
+        self.last_status = "not_started"
+        self.last_error: str | None = None
 
     def _get(self, endpoint: str, params: dict) -> dict:
         """DART API GET 요청. 호출 카운터 증가."""
@@ -108,6 +110,8 @@ class DARTFundamentalFetcher:
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
+            self.last_status = "error"
+            self.last_error = f"api_request_failed:{endpoint}:{type(e).__name__}"
             logger.warning(f"DART API error ({endpoint}): {e}")
             return {}
 
@@ -146,6 +150,8 @@ class DARTFundamentalFetcher:
             logger.info(f"Loaded {len(corp_map)} corp codes from DART")
             return corp_map
         except Exception as e:
+            self.last_status = "error"
+            self.last_error = f"corp_code_download_failed:{type(e).__name__}"
             logger.error(f"Failed to download DART corp codes: {e}")
             return {}
 
@@ -167,7 +173,14 @@ class DARTFundamentalFetcher:
         if _financial_cache is not None:
             hit, cached = _financial_cache.get(cache_key)
             if hit:
+                self.last_status = "available"
+                self.last_error = None
                 return cached
+
+        if not self._api_key:
+            self.last_status = "unavailable"
+            self.last_error = "missing_api_key"
+            return {}
 
         result = self._fetch_fundamentals(ticker, bsns_year=bsns_year)
         if result and _financial_cache is not None:
@@ -180,6 +193,9 @@ class DARTFundamentalFetcher:
         corp_map = self.get_corp_code_map()
         corp_code = corp_map.get(ticker)
         if not corp_code:
+            if self.last_status != "error":
+                self.last_status = "unavailable"
+                self.last_error = "corp_code_not_found"
             logger.warning(f"No corp_code for {ticker}")
             return {}
 
@@ -204,11 +220,17 @@ class DARTFundamentalFetcher:
                     break
 
         if not financials:
+            if self.last_status != "error":
+                self.last_status = "unavailable"
+                self.last_error = "financial_statements_unavailable"
             return {}
 
         # 4. 시가총액 (yfinance .KS)
         market_cap = self._get_market_cap_yfinance(ticker)
         if not market_cap:
+            if self.last_status != "error":
+                self.last_status = "unavailable"
+                self.last_error = "market_cap_unavailable"
             return {}
 
         # 5. PER/PBR/ROE 계산
@@ -222,7 +244,7 @@ class DARTFundamentalFetcher:
         # 6. 배당수익률 (DART 배당 API)
         div_yield = self._get_dividend_yield(corp_code, bsns_year, market_cap)
 
-        return {
+        result = {
             "per": round(per, 2),
             "pbr": round(pbr, 2),
             "roe": round(roe, 4),
@@ -233,6 +255,9 @@ class DARTFundamentalFetcher:
             "source": "dart",
             "year": bsns_year,
         }
+        self.last_status = "available"
+        self.last_error = None
+        return result
 
     def _parse_financials(self, items: list) -> dict:
         """재무제표 항목에서 자본총계/당기순이익/매출액 추출."""
@@ -275,10 +300,19 @@ class DARTFundamentalFetcher:
         """yfinance로 시가총액 조회 (KRX IP 차단 우회)."""
         try:
             import yfinance as yf
-            t = yf.Ticker(f"{ticker}.KS")
-            info = t.info
-            return float(info.get("marketCap") or 0)
+            from market_data.krx_fetcher import resolve_yahoo_symbols
+
+            for symbol in resolve_yahoo_symbols(ticker, yf):
+                stock = yf.Ticker(symbol)
+                getter = getattr(stock, "get_info", None)
+                info = getter() if callable(getter) else getattr(stock, "info", {})
+                market_cap = float((info or {}).get("marketCap") or 0)
+                if market_cap > 0:
+                    return market_cap
+            return 0.0
         except Exception as e:
+            self.last_status = "error"
+            self.last_error = f"market_cap_failed:{type(e).__name__}"
             logger.warning(f"yfinance market cap failed for {ticker}: {e}")
             return 0.0
 

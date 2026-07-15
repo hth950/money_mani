@@ -3,12 +3,15 @@ import html
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from web.db.connection import init_db
+from web.auth.config import get_auth_settings
+from web.auth.middleware import AuthMiddleware
+from web.db.connection import get_db, init_db
 from web.db.migrate import migrate_yaml_strategies, run_schema_migrations
 
 logger = logging.getLogger("money_mani.web")
@@ -17,6 +20,7 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+auth_settings = get_auth_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,27 +38,51 @@ app = FastAPI(
     title="Money Mani",
     description="Stock Investment Research & Alert Pipeline",
     lifespan=lifespan,
+    docs_url=None if auth_settings.production else "/docs",
+    redoc_url=None if auth_settings.production else "/redoc",
+    openapi_url=None if auth_settings.production else "/openapi.json",
 )
 
+app.add_middleware(AuthMiddleware, settings=auth_settings)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(auth_settings.allowed_hosts))
+
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/healthz", include_in_schema=False)
+async def healthz():
+    """Minimal unauthenticated liveness/readiness probe."""
+    try:
+        with get_db() as db:
+            db.execute("SELECT 1").fetchone()
+    except Exception:
+        return Response(status_code=503)
+    return Response(status_code=204)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled error: {exc}", exc_info=True)
+    public_message = (
+        "오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+        if auth_settings.production
+        else str(exc)
+    )
     if request.headers.get("HX-Request"):
         return HTMLResponse(
-            f'<div class="error">오류가 발생했습니다: {html.escape(str(exc))}</div>',
+            f'<div class="error">{html.escape(public_message)}</div>',
             status_code=500,
         )
     return JSONResponse(
-        {"error": str(exc)},
+        {"error": public_message},
         status_code=500,
     )
 
 # Import and include routers
+from web.routers.auth import router as auth_router
 from web.routers.pages import router as pages_router
 from web.routers.strategies import router as strategies_router
 from web.routers.backtest import router as backtest_router
+app.include_router(auth_router)
 app.include_router(pages_router)
 app.include_router(strategies_router)
 app.include_router(backtest_router)
@@ -84,3 +112,5 @@ from web.routers import macro as macro_router
 app.include_router(macro_router.router)
 from web.routers.settings import router as settings_router
 app.include_router(settings_router)
+from web.routers.paper_trading import router as paper_trading_router
+app.include_router(paper_trading_router)

@@ -70,6 +70,10 @@ async def discovery_detail_page(request: Request, report_id: int):
 async def portfolio_page(request: Request):
     return templates.TemplateResponse("portfolio/index.html", {"request": request})
 
+@router.get("/paper-trading", response_class=HTMLResponse)
+async def paper_trading_page(request: Request):
+    return templates.TemplateResponse("paper_trading/index.html", {"request": request})
+
 @router.get("/performance", response_class=HTMLResponse)
 async def performance_page(request: Request):
     return templates.TemplateResponse("performance/index.html", {"request": request})

@@ -25,20 +25,32 @@
     <header>순위</header>
     <div id="rankings"></div>
 </article>
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml } = window.MoneyManiSafe;
+
+function finiteNumber(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function renderRankings(rankings) {
+    if (!Array.isArray(rankings) || !rankings.length) return '<p>순위 데이터가 없습니다.</p>';
+    let html = '<table><thead><tr><th>#</th><th>전략</th><th>종합 점수</th><th>평균 수익률</th><th>평균 샤프</th><th>유효 수</th></tr></thead><tbody>';
+    rankings.forEach((r, i) => {
+        html += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(r?.strategy_name || '-') + '</td>'
+            + '<td>' + finiteNumber(r?.composite_score).toFixed(3) + '</td>'
+            + '<td>' + (finiteNumber(r?.avg_return) * 100).toFixed(2) + '%</td>'
+            + '<td>' + finiteNumber(r?.avg_sharpe).toFixed(2) + '</td>'
+            + '<td>' + escapeHtml(r?.valid_count ?? 0) + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+}
+
+const rankingsPayload = {{ report.rankings_json | tojson }};
 try {
-    const rankings = JSON.parse('{{ report.rankings_json | tojson }}');
-    if (rankings.length) {
-        let html = '<table><thead><tr><th>#</th><th>전략</th><th>종합 점수</th><th>평균 수익률</th><th>평균 샤프</th><th>유효 수</th></tr></thead><tbody>';
-        rankings.forEach((r, i) => {
-            html += '<tr><td>' + (i+1) + '</td><td>' + r.strategy_name + '</td>'
-                + '<td>' + (r.composite_score||0).toFixed(3) + '</td>'
-                + '<td>' + ((r.avg_return||0)*100).toFixed(2) + '%</td>'
-                + '<td>' + (r.avg_sharpe||0).toFixed(2) + '</td>'
-                + '<td>' + (r.valid_count||0) + '</td></tr>';
-        });
-        document.getElementById('rankings').innerHTML = html + '</tbody></table>';
-    }
+    const rankings = typeof rankingsPayload === 'string' ? JSON.parse(rankingsPayload) : rankingsPayload;
+    document.getElementById('rankings').innerHTML = renderRankings(rankings);
 } catch(e) { document.getElementById('rankings').innerHTML = '<p>순위 데이터를 파싱할 수 없습니다.</p>'; }
 </script>
 {% endif %}

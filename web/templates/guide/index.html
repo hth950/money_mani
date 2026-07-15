@@ -53,7 +53,7 @@
   <div class="callout">
     <strong>핵심 흐름</strong><br>
     매일 08:00 스캔 → 5축 점수 계산 → 대시보드 표시<br>
-    장중 08:50~15:35 실시간 모니터 → 60초마다 기술적 신호 감시 → 합의 전환 시 Discord 알림<br>
+    실시간 모니터는 시계열 재설계가 끝날 때까지 안전 잠금 상태<br>
     매시 AI 뉴스 분석 → Intel Score 갱신 → 자동 재스코어링
   </div>
 
@@ -72,10 +72,9 @@
     ↓
 [/signals 대시보드]   [Discord 알림]
 
-[08:50 실시간 모니터 시작]
-  60초마다 현재가 조회 → 전략 합의 계산
-  합의 전환(BUY↔SELL) → 즉시 Discord 알림 + 즉시 재스코어링
-[15:35 자동 종료]
+[실시간 모니터: 현재 비활성]
+  일봉과 장중 스냅샷의 주기 혼합을 제거하고
+  재시작 중복 알림 방지 검증을 마친 뒤 다시 활성화
     </pre>
   </figure>
 </section>
@@ -324,12 +323,14 @@
 <section class="guide-section" id="realtime">
   <h2>4. 실시간 모니터 (Realtime Monitor)</h2>
 
-  <p>
-    일일 스캔이 "아침에 찍어둔 스냅샷"이라면,<br>
-    실시간 모니터는 <strong>장중 연속 감시자</strong>입니다.
-  </p>
+  <div class="callout">
+    <strong>현재 안전 잠금 상태입니다.</strong><br>
+    기존 구현은 일봉 이력에 60초 현재가 스냅샷을 별도 봉으로 누적해 지표 주기를 왜곡하고,
+    재시작 직후 중복 알림을 만들 수 있었습니다. 자동·수동 시작은 모두 차단되어 있으며
+    일일 스캔, 인텔 스캔, 고정 시각 재스코어링은 정상 운영됩니다.
+  </div>
 
-  <h3>운영 시간 (자동 시작/종료)</h3>
+  <h3>재활성화 후 예정 운영 시간</h3>
   <table>
     <thead><tr><th>시장</th><th>시작</th><th>종료</th></tr></thead>
     <tbody>
@@ -338,16 +339,16 @@
     </tbody>
   </table>
 
-  <h3>동작 방식</h3>
+  <h3>재활성화 전 필수 조건</h3>
   <ol>
-    <li>KIS API로 현재가 수집 (실패 시 yfinance 대체)</li>
-    <li>RollingBuffer에 OHLCV 추가 (최대 200봉 유지)</li>
-    <li>검증된 기술적 전략 N개 각각 시그널 계산</li>
-    <li><strong>합의 전환(Consensus Flip) 감지</strong>: BUY→SELL 또는 SELL→BUY</li>
-    <li>합의 전환 시 Discord 알림 전송 + 즉시 재스코어링</li>
+    <li>당일 현재가를 새 일봉으로 추가하지 않고 같은 거래일 봉에 upsert</li>
+    <li>ROC/HIGH 252 계산에 충분한 버퍼와 전략별 시장 필터 적용</li>
+    <li>첫 계산은 상태 기준선으로만 저장해 시작 알림 폭주 방지</li>
+    <li>실시간 신호 DB 저장과 재시작 중복 방지 검증</li>
+    <li>개별 전략 전환과 실제 합의 신호를 명확히 분리</li>
   </ol>
 
-  <h3>합의(Consensus)란?</h3>
+  <h3>재설계 목표: 실제 합의(Consensus)</h3>
   <div class="callout">
     예: 검증된 전략 8개 중 <strong>5개 이상</strong>이 BUY 신호 → <span class="badge badge-buy">BUY 합의</span> (SELL은 7개 이상 필요)<br>
     → 이후 합의가 깨지면 → <strong>합의 전환(Flip)</strong> 발생 → Discord 알림<br><br>
@@ -357,11 +358,12 @@
       <li>BUY 합의 → Technical Score = 0.75</li>
       <li>SELL 합의 → Technical Score = 0.25</li>
     </ul>
+    재활성화 시에는 개별 전략 하나의 전환이 아니라 이 합의 정의를 DB·알림·즉시 재스코어링에 동일하게 적용합니다.
   </div>
 
   <p><strong>쿨다운</strong>: 동일 종목 30분 내 중복 알림 억제</p>
 
-  <p>수동 제어: <a href="/monitor">/monitor 페이지</a>에서 ON/OFF 가능</p>
+  <p>상태 확인: <a href="/monitor">/monitor 페이지</a>에서 비활성 사유를 확인할 수 있습니다.</p>
 </section>
 
 <!-- 5. 인텔리전스 -->
@@ -429,18 +431,18 @@
       <tr><td>00:05</td><td>DART 카운터 초기화</td><td>DART 일일 API 한도(10,000건) 리셋</td></tr>
       <tr><td>06:00</td><td>DART 이벤트 캐시 갱신</td><td>실적 발표 일정 등 사전 캐시</td></tr>
       <tr><td><strong>08:00</strong></td><td><strong>일일 스캔</strong></td><td>전 감시 종목 기술적 전략 합의 평가 + 5축 스코어 계산 → DB 저장</td></tr>
-      <tr><td>08:50</td><td>실시간 모니터 시작</td><td>KRX 장 시작 10분 전 자동 시작</td></tr>
+      <tr><td>08:50</td><td>실시간 모니터</td><td>현재 안전 잠금으로 자동 시작하지 않음</td></tr>
       <tr><td>09:00~15:00 (매시)</td><td><strong>인텔 스캔</strong></td><td>KRX 뉴스·공시 AI 분석 → Intel Score 갱신 → 전 종목 재스코어링</td></tr>
       <tr><td>09:30</td><td>재스코어링</td><td>최신 캐시로 전 종목 복합 점수 재계산</td></tr>
       <tr><td>11:30</td><td>재스코어링</td><td></td></tr>
       <tr><td>13:30</td><td>재스코어링</td><td></td></tr>
       <tr><td>15:30</td><td>재스코어링</td><td></td></tr>
-      <tr><td>15:35</td><td>실시간 모니터 종료</td><td>KRX 장 마감 후 자동 종료</td></tr>
+      <tr><td>15:35</td><td>실시간 모니터 종료</td><td>실행 중인 구 프로세스가 있을 경우 중지</td></tr>
       <tr><td>16:00</td><td>인텔 가격 추적</td><td>시그널 발생 종목의 당일 종가 기록 → accuracy_score 계산</td></tr>
       <tr><td><strong>16:10</strong></td><td><strong>수급 재스코어링</strong></td><td>Flow 캐시 강제 만료 → 당일 수급 데이터로 재계산</td></tr>
       <tr><td>18:00</td><td>상관관계 로깅</td><td>인텔 시그널 vs 수익률 상관계수 DB 기록</td></tr>
       <tr><td>19:00</td><td>저녁 성과 리포트</td><td>P&amp;L, 포지션 현황 Discord 전송</td></tr>
-      <tr><td>22:50</td><td>US 실시간 모니터 시작</td><td>미국 장 전 자동 시작</td></tr>
+      <tr><td>22:50</td><td>US 실시간 모니터</td><td>현재 안전 잠금으로 자동 시작하지 않음</td></tr>
       <tr><td>23:00~익일 06:00 (매시)</td><td><strong>US 인텔 스캔</strong></td><td>미국 뉴스 AI 분석 → Intel Score 갱신 → 재스코어링</td></tr>
       <tr><td>익일 06:05</td><td>US 실시간 모니터 종료</td><td></td></tr>
     </tbody>
@@ -474,13 +476,12 @@
       <tr><td>스케줄 재스코어링</td><td>09:30 / 11:30 / 13:30 / 15:30</td><td>오늘 스캔된 전 종목</td></tr>
       <tr><td>인텔 스캔 완료 후</td><td>매시 인텔 스캔 직후</td><td>전 종목</td></tr>
       <tr><td>수급 재스코어링</td><td>16:10 (Flow 캐시 강제 만료 후)</td><td>전 종목</td></tr>
-      <tr><td><strong>합의 전환 즉시</strong></td><td>실시간 모니터에서 Consensus Flip 감지 즉시</td><td><strong>해당 종목만</strong></td></tr>
+      <tr><td><strong>장중 신호 즉시</strong></td><td>실시간 모니터 재설계 완료 후 재활성화</td><td><strong>현재 중지</strong></td></tr>
     </tbody>
   </table>
 
   <p>
-    합의 전환 즉시 재스코어링은 장중 가장 빠른 업데이트입니다.<br>
-    실시간 모니터 → 전략 합의 BUY→SELL 전환 감지 → 해당 종목만 즉시 재계산 → 대시보드 반영
+    현재 장중 점수 갱신은 인텔 스캔 직후와 09:30/11:30/13:30/15:30 고정 재스코어링이 담당합니다.
   </p>
 </section>
 
@@ -488,36 +489,32 @@
 <section class="guide-section" id="paper">
   <h2>8. Paper Trading &amp; 성과 검증</h2>
 
-  <h3>Paper Trading이란?</h3>
+  <h3>모의투자와 실계좌는 완전히 분리됩니다</h3>
   <p>
-    실제 돈을 쓰지 않고 <strong>가상 매매를 시뮬레이션</strong>하는 기능입니다.<br>
-    시스템이 BUY 신호를 내면 가상으로 매수 기록하고, SELL 신호에 가상 매도합니다.
+    <a href="/paper-trading"><strong>모의투자</strong></a>는 실제 돈이나 주문 가능 현금 한도를 사용하지 않는 독립 가상 원장입니다.
+    추천 종목의 주문 미리보기에서 예상 가격·수수료·지연 시세 여부를 확인한 뒤 사용자가 직접 가상 체결을 확정합니다.
   </p>
   <div class="callout warn">
-    <strong>참고</strong>: <a href="/portfolio">포트폴리오</a>·<a href="/signals">신호 대시보드</a>에 "보유중"으로 표시되는 종목은
-    실제 계좌가 아닌 <strong>DB의 가상 포지션</strong>입니다. KIS API 실계좌 연동 시에만 실제 매매가 발생합니다.
+    <strong>구분 원칙</strong><br>
+    <a href="/paper-trading">/paper-trading</a>의 포지션·손익·체결은 모두 모의 데이터입니다.<br>
+    <a href="/portfolio">/portfolio</a>는 KIS에서 조회한 <strong>실계좌 포트폴리오</strong>이며, 모의 주문으로 바뀌지 않습니다.<br>
+    <a href="/signals">/signals</a>의 기존 “전략 추적 보유”와 새 “모의 보유”도 서로 다른 기록입니다.
+    KIS 실계좌 보유 여부는 <a href="/portfolio">/portfolio</a>에서만 확인합니다.
   </div>
 
-  <h3>성과 검증 흐름</h3>
+  <h3>모의 주문과 추적 흐름</h3>
   <ol>
-    <li>BUY 신호 발생 → <code>signal_price</code> 기록 (시그널 당시 가격)</li>
-    <li>매일 16:00 <code>IntelPriceTracker</code> → 당일 종가 vs signal_price 비교 → <code>pnl_pct</code> 계산</li>
-    <li><code>scoring_results</code> ↔ <code>signal_performance</code> JOIN → 각 축별 Spearman 순위상관계수 계산</li>
-    <li>매주 일요일 → 주간 상관분석 리포트 Discord 전송</li>
+    <li>매수·매도 후보 또는 보유 종목에서 수량 선택</li>
+    <li>주문 미리보기 → 최신 예상 가격, 수수료, 추천 스냅샷과 시세 지연 여부 확인</li>
+    <li>모의 주문 확정 → 포지션과 수정 불가능한 체결 이력에 기록</li>
+    <li>시세·점수 갱신 → 보유 원가, 평가액, 실현·미실현손익과 5축 점수 변화 추적</li>
+    <li>보유 종목의 30일 가격·복합 점수·Exit 점수 차트 확인</li>
   </ol>
 
-  <h3>상관계수 해석</h3>
-  <table>
-    <thead><tr><th>Spearman r</th><th>의미</th></tr></thead>
-    <tbody>
-      <tr><td>0.3 이상</td><td>✅ 해당 축이 수익률과 양의 상관 → 가중치 유지 또는 확대</td></tr>
-      <tr><td>0.1 ~ 0.3</td><td>⚠️ 약한 상관 → 모니터링 필요</td></tr>
-      <tr><td>0.1 미만</td><td>❌ 상관 없음 → 가중치 축소 검토</td></tr>
-      <tr><td>음수</td><td>🚨 역효과 → 즉시 검토</td></tr>
-    </tbody>
-  </table>
-
-  <p>→ <a href="/performance">성과 분석 페이지</a>에서 실시간 확인 가능</p>
+  <p>
+    모의 원장 손익은 <a href="/paper-trading">모의투자 페이지</a>에서 확인합니다.
+    <a href="/performance">성과 추적</a>은 신호 이후 수익률과 스코어 상관관계를 분석하는 별도 검증 화면입니다.
+  </p>
 </section>
 
 <!-- 9. 페이지 안내 -->
@@ -530,10 +527,11 @@
       <tr><td><a href="/">/</a></td><td>홈</td><td>시스템 상태 요약</td></tr>
       <tr><td><a href="/scoring">/scoring</a></td><td>스코어링 현황</td><td>전 종목 5축 점수 + 복합 점수 테이블</td></tr>
       <tr><td><a href="/signals">/signals</a></td><td>매매 대시보드</td><td>매수 추천 / 관망 / 매도 추천 종목 목록</td></tr>
-      <tr><td><a href="/monitor">/monitor</a></td><td>실시간 모니터</td><td>모니터 ON/OFF, 실시간 시그널 스트림</td></tr>
+      <tr><td><a href="/monitor">/monitor</a></td><td>실시간 모니터</td><td>안전 잠금 상태와 비활성 사유 확인</td></tr>
       <tr><td><a href="/intel">/intel</a></td><td>인텔리전스</td><td>AI 분석 뉴스 이슈 목록, 종목별 감성</td></tr>
-      <tr><td><a href="/performance">/performance</a></td><td>성과 분석</td><td>Paper Trading P&amp;L, Spearman 상관계수</td></tr>
-      <tr><td><a href="/portfolio">/portfolio</a></td><td>포트폴리오</td><td>가상 보유 포지션 현황</td></tr>
+      <tr><td><a href="/paper-trading">/paper-trading</a></td><td>모의투자</td><td>가상 주문, 포지션, 손익, 30일 점수·가격 추적</td></tr>
+      <tr><td><a href="/portfolio">/portfolio</a></td><td>실계좌 포트폴리오</td><td>KIS 실계좌 잔고와 보유 종목 조회</td></tr>
+      <tr><td><a href="/performance">/performance</a></td><td>신호 성과 추적</td><td>신호 이후 수익률과 Spearman 상관계수</td></tr>
       <tr><td><a href="/backtest">/backtest</a></td><td>백테스트</td><td>전략별 과거 수익률 검증</td></tr>
       <tr><td><a href="/strategies">/strategies</a></td><td>전략 목록</td><td>기술적 전략 관리 (YAML 기반)</td></tr>
       <tr><td><a href="/scanner">/scanner</a></td><td>일일 스캔</td><td>당일 스캔 결과 확인</td></tr>

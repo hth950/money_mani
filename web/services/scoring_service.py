@@ -10,15 +10,63 @@ logger = logging.getLogger("money_mani.web.services.scoring_service")
 class ScoringService:
 
     def save_scoring_result(self, ticker, market, scan_date, scores, decision,
-                            ticker_name=None, block_reason=None, weights=None):
-        """Save a scoring result to DB (upsert: same ticker+date replaces old)."""
+                            ticker_name=None, block_reason=None, weights=None,
+                            signal_action=None, recommendation=None,
+                            execution_state=None, score_details=None,
+                            consensus_count=None, consensus_strategies=None,
+                            provenance=None, data_quality=None, signal_id=None,
+                            signal_price=None):
+        """Save the current UI row and an immutable decision snapshot.
+
+        ``scoring_results`` remains a latest-value compatibility table because
+        existing dashboards query it directly.  Every call also appends to
+        ``decision_events`` so a rescore cannot erase the original rationale.
+        """
+        event_id = None
         try:
             with get_db() as db:
+                # Append-only audit record.  Keep this best-effort so an older
+                # database can still serve the legacy scoring table until the
+                # startup migration has created decision_events.
+                try:
+                    event_cursor = db.execute("""
+                        INSERT INTO decision_events
+                        (scoring_result_id, signal_id, signal_price, ticker, ticker_name, market,
+                         signal_action, recommendation, execution_state, scan_date,
+                         composite_score, score_breakdown_json, score_details_json,
+                         weights_used_json, consensus_count, consensus_strategies_json,
+                         block_reason, provenance_json, data_quality_json)
+                        VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        signal_id,
+                        signal_price if signal_price is not None else scores.get("signal_price"),
+                        ticker,
+                        ticker_name or ticker,
+                        market,
+                        signal_action,
+                        recommendation or decision,
+                        execution_state or "NOT_EXECUTED",
+                        scan_date,
+                        scores.get("composite"),
+                        json.dumps(scores, ensure_ascii=False),
+                        json.dumps(score_details, ensure_ascii=False) if score_details is not None else None,
+                        json.dumps(weights, ensure_ascii=False) if weights else None,
+                        consensus_count,
+                        json.dumps(consensus_strategies, ensure_ascii=False)
+                        if consensus_strategies is not None else None,
+                        block_reason,
+                        json.dumps(provenance, ensure_ascii=False) if provenance is not None else None,
+                        json.dumps(data_quality, ensure_ascii=False) if data_quality is not None else None,
+                    ))
+                    event_id = event_cursor.lastrowid
+                except Exception as event_error:
+                    logger.warning("Failed to append decision event for %s: %s", ticker, event_error)
+
                 db.execute("""
                     DELETE FROM scoring_results
                     WHERE ticker = ? AND scan_date = ?
                 """, (ticker, scan_date))
-                db.execute("""
+                scoring_cursor = db.execute("""
                     INSERT INTO scoring_results
                     (ticker, ticker_name, market, scan_date, technical_score, fundamental_score,
                      flow_score, intel_score, macro_score, composite_score, score_breakdown_json,
@@ -34,8 +82,180 @@ class ScoringService:
                     decision, block_reason,
                     json.dumps(weights, ensure_ascii=False) if weights else None,
                 ))
+                if event_id:
+                    db.execute(
+                        "UPDATE decision_events SET scoring_result_id=? WHERE id=?",
+                        (scoring_cursor.lastrowid, event_id),
+                    )
+            return event_id
         except Exception as e:
             logger.error(f"Failed to save scoring result: {e}")
+            # The connection context rolled the whole transaction back.  Do
+            # not leak the lastrowid of an audit row that no longer exists.
+            return None
+
+    def update_scoring_result(
+        self,
+        scoring_result_id,
+        scores,
+        decision,
+        *,
+        block_reason=None,
+        weights=None,
+        signal_action=None,
+        recommendation=None,
+        execution_state="RESCORE_ONLY",
+        score_details=None,
+        consensus_count=None,
+        consensus_strategies=None,
+        provenance=None,
+        data_quality=None,
+        signal_id=None,
+        signal_price=None,
+        append_decision_event=True,
+    ):
+        """Atomically update a latest score row and append its audit event.
+
+        Rescore paths use this method so the displayed decision, block reason,
+        and breakdown cannot diverge.  Signal-triggered calls append an event
+        atomically; scheduled cache refreshes set ``append_decision_event`` to
+        false so they do not inflate the outcome cohort every few minutes.
+        """
+        try:
+            with get_db() as db:
+                current = db.execute(
+                    "SELECT ticker, ticker_name, market, scan_date "
+                    "FROM scoring_results WHERE id=?",
+                    (scoring_result_id,),
+                ).fetchone()
+                if not current:
+                    return None
+
+                update_cursor = db.execute(
+                    """
+                    UPDATE scoring_results
+                    SET technical_score=?, fundamental_score=?, flow_score=?,
+                        intel_score=?, macro_score=?, composite_score=?,
+                        score_breakdown_json=?, decision=?, block_reason=?,
+                        weights_used_json=?
+                    WHERE id=?
+                    """,
+                    (
+                        scores.get("technical"),
+                        scores.get("fundamental"),
+                        scores.get("flow"),
+                        scores.get("intel"),
+                        scores.get("macro"),
+                        scores.get("composite"),
+                        json.dumps(scores, ensure_ascii=False),
+                        decision,
+                        block_reason,
+                        json.dumps(weights, ensure_ascii=False)
+                        if weights is not None else None,
+                        scoring_result_id,
+                    ),
+                )
+                if update_cursor.rowcount != 1:
+                    raise RuntimeError(
+                        f"scoring result disappeared during rescore: {scoring_result_id}"
+                    )
+
+                event_id = 0
+                if append_decision_event:
+                    event_cursor = db.execute(
+                        """
+                        INSERT INTO decision_events
+                        (scoring_result_id, signal_id, signal_price, ticker, ticker_name, market,
+                         signal_action, recommendation, execution_state, scan_date,
+                         composite_score, score_breakdown_json, score_details_json,
+                         weights_used_json, consensus_count, consensus_strategies_json,
+                         block_reason, provenance_json, data_quality_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            scoring_result_id,
+                            signal_id,
+                            signal_price if signal_price is not None
+                            else scores.get("signal_price"),
+                            current["ticker"],
+                            current["ticker_name"] or current["ticker"],
+                            current["market"],
+                            signal_action,
+                            recommendation or decision,
+                            execution_state,
+                            current["scan_date"],
+                            scores.get("composite"),
+                            json.dumps(scores, ensure_ascii=False),
+                            json.dumps(score_details, ensure_ascii=False)
+                            if score_details is not None else None,
+                            json.dumps(weights, ensure_ascii=False)
+                            if weights is not None else None,
+                            consensus_count,
+                            json.dumps(consensus_strategies, ensure_ascii=False)
+                            if consensus_strategies is not None else None,
+                            block_reason,
+                            json.dumps(provenance, ensure_ascii=False)
+                            if provenance is not None else None,
+                            json.dumps(data_quality, ensure_ascii=False)
+                            if data_quality is not None else None,
+                        ),
+                    )
+                    event_id = event_cursor.lastrowid
+            return event_id
+        except Exception as e:
+            logger.error("Failed to update scoring result %s: %s", scoring_result_id, e)
+            return None
+
+    def mark_decision_event(self, event_id, execution_state, execution_error=None):
+        """Record the execution outcome without changing the original snapshot."""
+        if not event_id:
+            return False
+        try:
+            with get_db() as db:
+                db.execute("""
+                    UPDATE decision_events
+                    SET execution_state = ?, execution_error = ?
+                    WHERE id = ?
+                """, (execution_state, execution_error, event_id))
+            return True
+        except Exception as e:
+            logger.warning("Failed to update decision event %s: %s", event_id, e)
+            return False
+
+    def link_decision_event_signal(self, event_id, signal_id):
+        """Attach the persisted signal row created after the scoring snapshot."""
+        if not event_id or not signal_id:
+            return False
+        try:
+            with get_db() as db:
+                db.execute(
+                    "UPDATE decision_events SET signal_id=? WHERE id=?",
+                    (signal_id, event_id),
+                )
+            return True
+        except Exception as e:
+            logger.warning("Failed to link decision event %s to signal: %s", event_id, e)
+            return False
+
+    def get_decision_events(self, ticker=None, limit=100):
+        """Return immutable decision snapshots for audit/debug views."""
+        try:
+            with get_db() as db:
+                if ticker:
+                    rows = db.execute("""
+                        SELECT * FROM decision_events
+                        WHERE ticker = ?
+                        ORDER BY created_at DESC, id DESC LIMIT ?
+                    """, (ticker, limit)).fetchall()
+                else:
+                    rows = db.execute("""
+                        SELECT * FROM decision_events
+                        ORDER BY created_at DESC, id DESC LIMIT ?
+                    """, (limit,)).fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.warning("Failed to read decision events: %s", e)
+            return []
 
     def get_today_results(self, scan_date=None):
         """Get today's scoring results. Falls back to latest scan date if no data for today."""

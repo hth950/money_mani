@@ -1,0 +1,21 @@
+[Unit]
+Description=Money Mani verified SQLite backup
+After=docker.service
+ConditionPathExists=/srv/money-mani/shared/data/money_mani.db
+
+[Service]
+Type=oneshot
+User=money-mani
+Group=money-mani
+WorkingDirectory=/srv/money-mani/app
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /srv/money-mani/app/deploy/hermes/sqlite_backup.py --db /srv/money-mani/shared/data/money_mani.db --destination /srv/money-mani/shared/backups --kind auto
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/money-mani/shared/backups
+
+[Install]
+WantedBy=multi-user.target

@@ -2,11 +2,11 @@
 
 import gc
 import logging
+import os
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from pipeline.daily_scan import DailyScan
 from pipeline.evening_report import EveningReport
 from pipeline.nightly import NightlyOrchestrator
 from pipeline.runner import PipelineRunner
@@ -14,16 +14,34 @@ from pipeline.market_intel import MarketIntelScanner
 from pipeline.intel_price_tracker import IntelPriceTracker
 from pipeline.correlation_logger import CorrelationLogger
 from utils.config_loader import load_config
+from web.services.monitor_service import get_realtime_policy
+from web.services.scan_service import ScanService
 
 logger = logging.getLogger("money_mani.pipeline.scheduler")
+
+
+def _web_base_url() -> str:
+    """Return the configured local web API base URL."""
+    override = os.getenv("MONEY_MANI_WEB_BASE_URL", "").strip()
+    if override:
+        return override.rstrip("/")
+    web_cfg = load_config().get("web", {})
+    return str(web_cfg.get("base_url", "http://localhost:31234")).rstrip("/")
+
+
+def _internal_request_headers() -> dict[str, str]:
+    """Build internal-control headers without logging the shared secret."""
+    token = os.getenv("MONEY_MANI_INTERNAL_TOKEN", "").strip()
+    if not token:
+        return {}
+    return {"X-Money-Mani-Internal-Token": token}
 
 
 def _run_daily_scan():
     """Job: daily morning scan."""
     try:
         logger.info("=== Daily Scan Job Started ===")
-        scan = DailyScan()
-        result = scan.run()
+        result = ScanService().run_scan()
         logger.info(f"Daily scan result: {result}")
     except Exception as e:
         logger.error(f"Daily scan job failed: {e}", exc_info=True)
@@ -69,7 +87,28 @@ def _run_rescore():
     except Exception as e:
         logger.error(f"Rescore failed: {e}")
     finally:
+        # This scheduler wrapper is the single paper refresh boundary for all
+        # standalone, intel-triggered, and flow-triggered rescore jobs.  Keep
+        # run_rescore() itself free of refresh calls to avoid double execution.
+        _refresh_paper_positions_after_rescore()
         gc.collect()
+
+
+def _refresh_paper_positions_after_rescore():
+    """Best-effort paper position refresh after a scheduled rescore."""
+    try:
+        from web.services.paper_trading_service import PaperTradingService
+
+        result = PaperTradingService().refresh_open_positions(
+            refresh_source="scheduled"
+        )
+        logger.info("Paper positions refreshed after rescore: %s", result)
+        return result
+    except Exception as e:
+        # Paper refresh must not alter the legacy rescore job's failure or
+        # completion behavior.
+        logger.error("Paper position refresh after rescore failed: %s", e)
+        return None
 
 
 def _run_flow_and_rescore():
@@ -111,28 +150,49 @@ def _run_correlation_logger():
 
 def _start_monitor(market_filter: str = None):
     """Job: auto-start realtime monitor via web API (force restart)."""
+    policy = get_realtime_policy()
+    if not policy["enabled"]:
+        logger.warning(
+            "Monitor auto-start disabled: %s", policy["disabled_reason"]
+        )
+        return {"status": "disabled", **policy}
+
     import requests
     try:
+        base_url = _web_base_url()
         # Stop first if running
-        requests.post("http://localhost:8000/api/monitor/stop", timeout=5)
+        requests.post(
+            f"{base_url}/api/monitor/stop",
+            headers=_internal_request_headers(),
+            timeout=5,
+        )
         import time
         time.sleep(1)
         # Start
         params = {}
         if market_filter:
             params["market_filter"] = market_filter
-        resp = requests.post("http://localhost:8000/api/monitor/start",
-                             params=params, timeout=10)
-        logger.info(f"Monitor auto-start: {resp.json()}")
+        resp = requests.post(f"{base_url}/api/monitor/start",
+                             params=params,
+                             headers=_internal_request_headers(),
+                             timeout=10)
+        result = resp.json()
+        logger.info(f"Monitor auto-start: {result}")
+        return result
     except Exception as e:
         logger.error(f"Monitor auto-start failed: {e}", exc_info=True)
+        return {"status": "error", "error": str(e)}
 
 
 def _stop_monitor():
     """Job: auto-stop realtime monitor via web API."""
     import requests
     try:
-        resp = requests.post("http://localhost:8000/api/monitor/stop", timeout=5)
+        resp = requests.post(
+            f"{_web_base_url()}/api/monitor/stop",
+            headers=_internal_request_headers(),
+            timeout=5,
+        )
         logger.info(f"Monitor auto-stop: {resp.json()}")
     except Exception as e:
         logger.error(f"Monitor auto-stop failed: {e}", exc_info=True)
@@ -195,38 +255,47 @@ def start_scheduler():
         scheduler.add_job(_run_daily_scan, trigger, id="daily_scan", name="Daily Scan")
         logger.info(f"Scheduled daily scan: {daily_cfg['cron']} ({tz})")
 
-    # Realtime monitor auto-start/stop
-    # KRX: 08:50 start -> 15:35 stop (weekdays)
-    scheduler.add_job(
-        _start_monitor,
-        CronTrigger(minute="50", hour="8", day_of_week="mon-fri", timezone=tz),
-        id="monitor_krx_start",
-        name="Monitor KRX Auto-Start",
-        kwargs={"market_filter": None},  # Start for all markets
-    )
+    # Realtime monitor auto-start/stop. Start jobs are not registered while
+    # the fail-closed switch is active; stop jobs remain available so an
+    # already-running legacy monitor can still be shut down.
+    monitor_policy = get_realtime_policy(config)
+    if monitor_policy["enabled"]:
+        scheduler.add_job(
+            _start_monitor,
+            CronTrigger(minute="50", hour="8", day_of_week="mon-fri", timezone=tz),
+            id="monitor_krx_start",
+            name="Monitor KRX Auto-Start",
+            kwargs={"market_filter": None},  # Start for all markets
+        )
+    else:
+        logger.warning(
+            "Realtime monitor auto-start jobs disabled: %s",
+            monitor_policy["disabled_reason"],
+        )
     scheduler.add_job(
         _stop_monitor,
         CronTrigger(minute="35", hour="15", day_of_week="mon-fri", timezone=tz),
         id="monitor_krx_stop",
         name="Monitor KRX Auto-Stop",
     )
-    logger.info("Scheduled monitor auto-start: 08:50 KST / auto-stop: 15:35 KST (weekdays)")
+    logger.info("Scheduled monitor auto-stop: 15:35 KST (weekdays)")
 
     # US: 22:50 start -> 06:05 stop (Mon-Fri start, Tue-Sat stop)
-    scheduler.add_job(
-        _start_monitor,
-        CronTrigger(minute="50", hour="22", day_of_week="mon-fri", timezone=tz),
-        id="monitor_us_start",
-        name="Monitor US Auto-Start",
-        kwargs={"market_filter": None},
-    )
+    if monitor_policy["enabled"]:
+        scheduler.add_job(
+            _start_monitor,
+            CronTrigger(minute="50", hour="22", day_of_week="mon-fri", timezone=tz),
+            id="monitor_us_start",
+            name="Monitor US Auto-Start",
+            kwargs={"market_filter": None},
+        )
     scheduler.add_job(
         _stop_monitor,
         CronTrigger(minute="5", hour="6", day_of_week="tue-sat", timezone=tz),
         id="monitor_us_stop",
         name="Monitor US Auto-Stop",
     )
-    logger.info("Scheduled monitor auto-start: 22:50 KST / auto-stop: 06:05 KST (US hours)")
+    logger.info("Scheduled monitor auto-stop: 06:05 KST (US hours)")
 
     # Evening performance report (19:00 KST, weekdays)
     scheduler.add_job(
@@ -325,14 +394,21 @@ def start_scheduler():
     )
     logger.info("Scheduled weekly correlation report: Sunday 09:00 KST")
 
-    # 전 종목 재스코어링 (10분마다)
+    # 전 종목 재스코어링 (장중 고정 4회)
     scheduler.add_job(
         _run_rescore,
-        CronTrigger(minute="*/10", timezone=tz),
-        id="rescore_10min",
-        name="Rescore every 10 minutes",
+        CronTrigger(
+            minute="30",
+            hour="9,11,13,15",
+            day_of_week="mon-fri",
+            timezone=tz,
+        ),
+        id="full_rescore_intraday",
+        name="Full Rescore Intraday",
     )
-    logger.info("Scheduled rescore: every 10 minutes")
+    logger.info(
+        "Scheduled full rescore: 09:30/11:30/13:30/15:30 KST (weekdays)"
+    )
 
     # 수급 장 마감 재스코어링 (16:10 KST, flow_cache 무효화 후)
     scheduler.add_job(
@@ -358,6 +434,13 @@ def start_scheduler():
 
 def _auto_start_monitor_if_market_open():
     """If scheduler starts during market hours, immediately start the monitor."""
+    policy = get_realtime_policy()
+    if not policy["enabled"]:
+        logger.warning(
+            "Startup monitor auto-start disabled: %s", policy["disabled_reason"]
+        )
+        return {"status": "disabled", **policy}
+
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -385,6 +468,9 @@ def _auto_start_monitor_if_market_open():
         import threading
         threading.Timer(5.0, _start_monitor).start()
         logger.info("Monitor auto-start scheduled in 5 seconds")
+        return {"status": "scheduled", "enabled": True, "disabled_reason": None}
+
+    return {"status": "outside_market_hours", "enabled": True, "disabled_reason": None}
 
 
 def _preload_sent_signals():

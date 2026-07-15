@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import subprocess
 import time
 import threading
@@ -74,6 +75,18 @@ def _switch_provider(new_provider: str):
 
 
 def _restart_services():
+    if os.getenv("MONEY_MANI_CONTAINERIZED", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }:
+        # load_config() rereads the mounted YAML for subsequent requests. A
+        # container must never receive the Docker socket merely to restart
+        # itself; Compose remains the only process supervisor.
+        logger.info(
+            "Containerized runtime detected; configuration will be picked up "
+            "without invoking systemctl"
+        )
+        return False
+
     def _do_restart():
         try:
             result = subprocess.run(
@@ -87,6 +100,7 @@ def _restart_services():
         except Exception as e:
             logger.error(f"Service restart failed: {e}")
     threading.Thread(target=_do_restart, daemon=True).start()
+    return True
 
 
 def _run_device_flow_background():

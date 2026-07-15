@@ -1,5 +1,11 @@
 python_cmd: "py -3.14"
 
+web:
+  host: "0.0.0.0"
+  port: 31234
+  base_url: "http://localhost:31234"
+  reload: true
+
 schedule:
   daily_scan:
     cron: "0 8 * * mon-fri"   # 매일 08:00 KST (평일)
@@ -87,6 +93,8 @@ notifications:
     recipients: []
 
 realtime:
+  enabled: false
+  disabled_reason: "60초 스냅샷을 일봉 지표 버퍼에 누적하는 현재 구조의 시계열 오류와 시작 시 알림 폭주를 막기 위해 재설계 전까지 비활성화되어 있습니다."
   interval_seconds: 60
   warmup_bars: 60
   max_buffer_size: 200

@@ -169,8 +169,5 @@ class StrategyService:
             deleted = cur.rowcount > 0
 
         if deleted:
-            # Remove YAML file if it exists
-            yaml_path = self._registry._dir / f"{existing['name']}.yaml"
-            if yaml_path.exists():
-                yaml_path.unlink()
+            self._registry.delete_strategy(existing["name"])
         return deleted

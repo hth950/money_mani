@@ -5,6 +5,7 @@
 <p>LLM 웹검색 기반 시장 이슈 감지 및 종목 추적</p>
 
 <!-- Manual scan controls -->
+{% if request.state.user.role == 'owner' %}
 <details>
     <summary>수동 스캔 실행</summary>
     <div class="grid" style="margin-top:1rem">
@@ -17,6 +18,7 @@
     </div>
     <div id="scan-status" style="margin-top:0.5rem"></div>
 </details>
+{% endif %}
 
 <!-- Accuracy stats -->
 <div id="accuracy-section" style="margin-top:1.5rem">
@@ -53,7 +55,10 @@
     <div id="scans-list">로딩 중...</div>
 </div>
 
+<script src="/static/safe_html.js"></script>
 <script>
+const { escapeHtml, escapeAttr, safeHttpUrl } = window.MoneyManiSafe;
+
 function toKST(utcStr) {
     const d = new Date(utcStr + 'Z');
     const p = {};
@@ -83,10 +88,10 @@ async function runScan(scanType) {
             body: JSON.stringify({scan_type: scanType})
         });
         const data = await res.json();
-        el.innerHTML = '<small style="color:green">스캔 시작됨: ' + data.message + '</small>';
+        el.innerHTML = '<small style="color:green">스캔 시작됨: ' + escapeHtml(data.message) + '</small>';
         setTimeout(() => { loadIssues(); loadScans(); }, 30000);
     } catch(e) {
-        el.innerHTML = '<small style="color:red">오류: ' + e.message + '</small>';
+        el.innerHTML = '<small style="color:red">오류: ' + escapeHtml(e.message) + '</small>';
     }
 }
 
@@ -106,7 +111,7 @@ async function loadIssues() {
         }
         el.innerHTML = issues.map(renderIssueCard).join('');
     } catch(e) {
-        el.innerHTML = '<p style="color:red">로딩 실패: ' + e.message + '</p>';
+        el.innerHTML = '<p style="color:red">로딩 실패: ' + escapeHtml(e.message) + '</p>';
     }
 }
 
@@ -135,11 +140,11 @@ function renderIssueCard(issue) {
             const a3 = priceCell(detPrices[t.ticker], p3d[t.ticker]);
             const a5 = priceCell(detPrices[t.ticker], p5d[t.ticker]);
             tickerRows += '<tr>' +
-                '<td>' + t.name + ' (' + t.ticker + ')</td>' +
+                '<td>' + escapeHtml(t.name) + ' (' + escapeHtml(t.ticker) + ')</td>' +
                 '<td style="color:' + dirColor + ';font-weight:bold">' + dir + '</td>' +
-                '<td>' + dp + '</td>' +
+                '<td>' + escapeHtml(dp) + '</td>' +
                 '<td>' + a1 + '</td><td>' + a3 + '</td><td>' + a5 + '</td>' +
-                '<td><small>' + (t.reason || '') + '</small></td></tr>';
+                '<td><small>' + escapeHtml(t.reason || '') + '</small></td></tr>';
         }
         tickerRows += '</tbody></table>';
     }
@@ -157,27 +162,33 @@ function renderIssueCard(issue) {
         timeStr = toKST(issue.created_at);
     }
 
+    const sourceUrl = safeHttpUrl(issue.source_url || issue.url || '');
+    const sourceText = escapeHtml(issue.source_info || '');
+    const sourceMarkup = sourceUrl
+        ? '<a href="' + escapeAttr(sourceUrl) + '" target="_blank" rel="noopener noreferrer">' + sourceText + '</a>'
+        : sourceText;
+
     return '<article style="margin-bottom:1rem">' +
-        '<header><strong>' + issue.title + '</strong>' +
-        ' <span style="background:#3498DB;color:#fff;padding:2px 6px;border-radius:4px;font-size:0.8rem">' + cat + '</span>' +
-        ' <span style="color:' + sentColor + ';font-size:0.8rem;font-weight:bold">' + sent + '</span>' +
-        ' <small>확신도: ' + conf + '</small>' + accBadge +
-        (timeStr ? ' <small style="color:#888">📅 ' + timeStr + '</small>' : '') +
+        '<header><strong>' + escapeHtml(issue.title) + '</strong>' +
+        ' <span style="background:#3498DB;color:#fff;padding:2px 6px;border-radius:4px;font-size:0.8rem">' + escapeHtml(cat) + '</span>' +
+        ' <span style="color:' + sentColor + ';font-size:0.8rem;font-weight:bold">' + escapeHtml(sent) + '</span>' +
+        ' <small>확신도: ' + escapeHtml(conf) + '</small>' + accBadge +
+        (timeStr ? ' <small style="color:#888">📅 ' + escapeHtml(timeStr) + '</small>' : '') +
         '</header>' +
-        '<p>' + (issue.summary || '') + '</p>' +
+        '<p>' + escapeHtml(issue.summary || '') + '</p>' +
         tickerRows +
-        (issue.source_info ? '<footer><small>출처: ' + issue.source_info + '</small></footer>' : '') +
+        (issue.source_info ? '<footer><small>출처: ' + sourceMarkup + '</small></footer>' : '') +
         '</article>';
 }
 
 function priceCell(base, current) {
     if (!current) return '-';
-    const formatted = current.toLocaleString();
+    const formatted = escapeHtml(current.toLocaleString());
     if (!base) return formatted;
     const pct = ((current - base) / base * 100).toFixed(2);
     const color = pct >= 0 ? '#00B050' : '#FF0000';
     const sign = pct >= 0 ? '+' : '';
-    return formatted + ' <small style="color:' + color + '">(' + sign + pct + '%)</small>';
+    return formatted + ' <small style="color:' + color + '">(' + escapeHtml(sign + pct + '%') + ')</small>';
 }
 
 async function loadScans() {
@@ -198,11 +209,11 @@ async function loadScans() {
                                s.status === 'partial' ? '#F39C12' : '#FF0000';
             let scanTime = s.created_at ? toKST(s.created_at) : '';
             const scanLabel = SCAN_LABELS[s.scan_type] || s.scan_type;
-            html += '<tr><td>' + scanTime + '</td>' +
-                '<td>' + scanLabel + '</td>' +
-                '<td>' + s.issues_count + '</td>' +
-                '<td>' + s.tickers_count + '</td>' +
-                '<td style="color:' + statusColor + '">' + s.status + '</td></tr>';
+            html += '<tr><td>' + escapeHtml(scanTime) + '</td>' +
+                '<td>' + escapeHtml(scanLabel) + '</td>' +
+                '<td>' + escapeHtml(s.issues_count) + '</td>' +
+                '<td>' + escapeHtml(s.tickers_count) + '</td>' +
+                '<td style="color:' + statusColor + '">' + escapeHtml(s.status) + '</td></tr>';
         }
         html += '</tbody></table>';
         el.innerHTML = html;
@@ -222,13 +233,13 @@ async function loadAccuracy() {
             return;
         }
         const pct = overall.avg_accuracy ? (overall.avg_accuracy * 100).toFixed(1) : '0';
-        let html = '<p><strong>전체 평균 정확도: ' + pct + '%</strong> (' + overall.total + '건 평가)</p>';
+        let html = '<p><strong>전체 평균 정확도: ' + escapeHtml(pct) + '%</strong> (' + escapeHtml(overall.total) + '건 평가)</p>';
         if (data.by_category && data.by_category.length) {
             html += '<table role="grid"><thead><tr><th>카테고리</th><th>건수</th><th>평균 정확도</th></tr></thead><tbody>';
             for (const c of data.by_category) {
                 const catLabel = CATEGORY_LABELS[c.category] || c.category;
                 const acc = c.avg_accuracy ? (c.avg_accuracy * 100).toFixed(1) : '0';
-                html += '<tr><td>' + catLabel + '</td><td>' + c.total + '</td><td>' + acc + '%</td></tr>';
+                html += '<tr><td>' + escapeHtml(catLabel) + '</td><td>' + escapeHtml(c.total) + '</td><td>' + escapeHtml(acc) + '%</td></tr>';
             }
             html += '</tbody></table>';
         }

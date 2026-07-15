@@ -67,6 +67,18 @@ class ExitScorer:
         if ohlcv_df is None or len(ohlcv_df) < 20:
             return self._hold_result("Insufficient data", ticker)
 
+        current_price = float(ohlcv_df["Close"].iloc[-1])
+        pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
+
+        # A hard stop protects capital regardless of holding age.  Evaluate it
+        # before the normal minimum-holding guard, while leaving take-profit
+        # and trend-based exits subject to that guard.
+        hard_stop = self._check_stop_loss_override(
+            current_price, entry_price, pnl_pct
+        )
+        if hard_stop:
+            return hard_stop
+
         # Check minimum holding days
         min_days = self.config.get("min_holding_days", 2)
         try:
@@ -78,10 +90,9 @@ class ExitScorer:
         except (ValueError, TypeError):
             holding_days = 0
 
-        current_price = float(ohlcv_df["Close"].iloc[-1])
-        pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
-
-        # Check hard overrides first
+        # Check remaining overrides after the minimum holding period.  The
+        # stop-loss branch is retained inside _check_overrides for callers that
+        # use that method directly, but has already been evaluated above.
         override = self._check_overrides(current_price, entry_price, pnl_pct, ohlcv_df, entry_date)
         if override:
             return override
@@ -281,23 +292,14 @@ class ExitScorer:
     def _check_overrides(self, current_price: float, entry_price: float, pnl_pct: float,
                          df: pd.DataFrame, entry_date: str) -> dict | None:
         """Check hard stop-loss and take-profit rules."""
-        stop_loss = self.config.get("stop_loss_pct", -0.05)
         take_profit = self.config.get("take_profit_pct", 0.15)
 
         # Stop loss
-        if pnl_pct <= stop_loss:
-            return {
-                "exit_score": 0.0,
-                "decision": "SELL_EXECUTE",
-                "reason": f"STOP_LOSS: {pnl_pct:+.2%} <= {stop_loss:.0%}",
-                "scores": {"trend": 0.0, "momentum": 0.0, "trailing_stop": 0.0},
-                "details": {
-                    "current_price": current_price,
-                    "entry_price": entry_price,
-                    "pnl_pct": round(pnl_pct, 4),
-                    "override": "STOP_LOSS",
-                },
-            }
+        stop_override = self._check_stop_loss_override(
+            current_price, entry_price, pnl_pct
+        )
+        if stop_override:
+            return stop_override
 
         # Take profit (only when trend is declining)
         if pnl_pct >= take_profit:
@@ -322,6 +324,26 @@ class ExitScorer:
                 }
 
         return None
+
+    def _check_stop_loss_override(
+        self, current_price: float, entry_price: float, pnl_pct: float
+    ) -> dict | None:
+        """Return an unconditional hard-stop result at the configured loss."""
+        stop_loss = self.config.get("stop_loss_pct", -0.05)
+        if pnl_pct > stop_loss:
+            return None
+        return {
+            "exit_score": 0.0,
+            "decision": "SELL_EXECUTE",
+            "reason": f"STOP_LOSS: {pnl_pct:+.2%} <= {stop_loss:.0%}",
+            "scores": {"trend": 0.0, "momentum": 0.0, "trailing_stop": 0.0},
+            "details": {
+                "current_price": current_price,
+                "entry_price": entry_price,
+                "pnl_pct": round(pnl_pct, 4),
+                "override": "STOP_LOSS",
+            },
+        }
 
     def _hold_result(self, reason: str, ticker: str) -> dict:
         """Return a neutral HOLD result."""
