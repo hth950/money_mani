@@ -197,6 +197,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.csrf_token = None
 
         path = request.url.path
+        if path == "/favicon.ico":
+            return self._secure(request, Response(status_code=204))
+
         context: AuthContext | None = None
         if not path.startswith("/static/"):
             context = authenticate_session(

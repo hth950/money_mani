@@ -187,6 +187,35 @@ def test_login_requires_same_origin_double_submit_token(client):
     assert failures == 0
 
 
+def test_favicon_is_public_without_rotating_login_csrf(client):
+    service.create_user("owner", PASSWORD, "owner")
+    settings = get_auth_settings()
+    login_page = client.get("/login")
+    first_token = _csrf_from_html(login_page)
+    assert client.cookies.get(settings.login_csrf_cookie_name) == first_token
+
+    favicon = client.get("/favicon.ico", follow_redirects=True)
+    assert favicon.status_code == 204
+    assert favicon.content == b""
+    assert favicon.headers["x-content-type-options"] == "nosniff"
+    assert favicon.headers["x-frame-options"] == "DENY"
+    assert client.cookies.get(settings.login_csrf_cookie_name) == first_token
+
+    response = client.post(
+        "/login",
+        data={
+            "username": "owner",
+            "password": PASSWORD,
+            "next": "/",
+            "login_csrf": first_token,
+        },
+        headers={"Origin": "http://testserver"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
 def test_owner_login_cookie_me_csrf_origin_and_logout(client):
     service.create_user("owner", PASSWORD, "owner")
     response = _login(client, "owner")
