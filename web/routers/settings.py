@@ -166,7 +166,7 @@ def _run_device_flow_background():
 async def settings_page(request: Request):
     provider = _get_current_provider()
     token_status = _get_token_status()
-    return templates.TemplateResponse("settings/index.html", {
+    return templates.TemplateResponse(request, "settings/index.html", {
         "request": request,
         "provider": provider,
         "token_status": token_status,
@@ -182,7 +182,7 @@ async def switch_provider(request: Request):
     if new_provider == "openrouter":
         _switch_provider("openrouter")
         _restart_services()
-        return templates.TemplateResponse("settings/_provider_status.html", {
+        return templates.TemplateResponse(request, "settings/_provider_status.html", {
             "request": request,
             "provider": "openrouter",
             "token_status": _get_token_status(),
@@ -195,7 +195,7 @@ async def switch_provider(request: Request):
         if token_status.get("valid"):
             _switch_provider("openai_oauth")
             _restart_services()
-            return templates.TemplateResponse("settings/_provider_status.html", {
+            return templates.TemplateResponse(request, "settings/_provider_status.html", {
                 "request": request,
                 "provider": "openai_oauth",
                 "token_status": token_status,
@@ -204,7 +204,7 @@ async def switch_provider(request: Request):
             })
         else:
             # Need to authenticate first — show OAuth flow
-            return templates.TemplateResponse("settings/_provider_status.html", {
+            return templates.TemplateResponse(request, "settings/_provider_status.html", {
                 "request": request,
                 "provider": _get_current_provider(),
                 "token_status": token_status,
@@ -218,7 +218,7 @@ async def switch_provider(request: Request):
 @router.post("/api/settings/oauth/start", response_class=HTMLResponse)
 async def start_oauth_flow(request: Request):
     if _active_flow["active"]:
-        return templates.TemplateResponse("settings/_oauth_flow.html", {
+        return templates.TemplateResponse(request, "settings/_oauth_flow.html", {
             "request": request, "flow": _active_flow,
         })
 
@@ -236,14 +236,14 @@ async def start_oauth_flow(request: Request):
             break
         time.sleep(0.25)
 
-    return templates.TemplateResponse("settings/_oauth_flow.html", {
+    return templates.TemplateResponse(request, "settings/_oauth_flow.html", {
         "request": request, "flow": _active_flow,
     })
 
 
 @router.get("/api/settings/oauth/poll", response_class=HTMLResponse)
 async def poll_oauth_status(request: Request):
-    return templates.TemplateResponse("settings/_oauth_flow.html", {
+    return templates.TemplateResponse(request, "settings/_oauth_flow.html", {
         "request": request, "flow": _active_flow,
     })
 
@@ -258,12 +258,12 @@ async def test_provider(request: Request):
             [{"role": "user", "content": "say ok"}],
             model="fast", max_tokens=10,
         )
-        return templates.TemplateResponse("settings/_test_result.html", {
+        return templates.TemplateResponse(request, "settings/_test_result.html", {
             "request": request, "provider": provider,
             "result": {"ok": True, "response": result[:50]},
         })
     except Exception as e:
-        return templates.TemplateResponse("settings/_test_result.html", {
+        return templates.TemplateResponse(request, "settings/_test_result.html", {
             "request": request, "provider": provider,
             "result": {"ok": False, "error": str(e)[:200]},
         })

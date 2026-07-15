@@ -20,7 +20,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 @router.get("/macro", response_class=HTMLResponse)
 async def macro_page(request: Request):
     """Render macro environment monitor page."""
-    return templates.TemplateResponse("macro/index.html", {"request": request})
+    return templates.TemplateResponse(request, "macro/index.html", {"request": request})
 
 
 @router.get("/api/macro/current")

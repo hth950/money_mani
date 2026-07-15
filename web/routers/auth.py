@@ -49,6 +49,7 @@ def _login_page_response(
     settings = get_auth_settings()
     csrf_token = secrets.token_urlsafe(32)
     response = templates.TemplateResponse(
+        request,
         "auth/login.html",
         {
             "request": request,

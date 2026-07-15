@@ -11,4 +11,4 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 
 @router.get("/guide", response_class=HTMLResponse)
 async def guide_page(request: Request):
-    return templates.TemplateResponse("guide/index.html", {"request": request})
+    return templates.TemplateResponse(request, "guide/index.html", {"request": request})
