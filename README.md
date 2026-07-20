@@ -515,24 +515,39 @@ fingerprint 검증 후 설치합니다. Docker 그룹은 root에 준하는 권�
 scp deploy/hermes/bootstrap_host.sh hermes-vps:/tmp/
 scp ~/.ssh/ssh-key-hwang.pub hermes-vps:/tmp/ssh-key-hwang.pub
 ssh hermes-vps \
-  'MONEY_MANI_ALLOW_DOCKER_ROOT_EQUIVALENT=1 bash /tmp/bootstrap_host.sh \
+  'sudo env MONEY_MANI_ALLOW_DOCKER_ROOT_EQUIVALENT=1 bash /tmp/bootstrap_host.sh \
     --authorized-key-file /tmp/ssh-key-hwang.pub && \
-    rm -f /tmp/ssh-key-hwang.pub'
+    sudo rm -f /tmp/ssh-key-hwang.pub'
 ssh -i ~/.ssh/ssh-key-hwang money-mani@187.127.121.97
 ```
 
 두 번째 터미널에서 `money-mani` 키 로그인이 성공하고 Hostinger 콘솔 접근을
 확보한 뒤에만 `PermitRootLogin no`, `PasswordAuthentication no`를 SSH drop-in에
-설정하고 `sshd -t` 성공 후 SSH를 reload합니다. 로컬 SSH alias에는 다음을
-사용하며 기존 `LocalForward`는 비상 접속용으로 유지합니다.
+설정하고 `sshd -t` 성공 후 SSH를 reload합니다. 호스트 관리자는
+`hermes-admin`, 애플리케이션 배포는 `money-mani`로 분리합니다. root 계정은
+삭제하지 않지만 직접 SSH 로그인은 계속 차단합니다. 로컬 SSH alias는 다음처럼
+관리자, 앱 배포, 비상 터널을 각각 분리합니다.
 
 ```sshconfig
 Host hermes-vps
+    HostName 187.127.121.97
+    User hermes-admin
+    IdentityFile ~/.ssh/ssh-key-hwang
+    IdentitiesOnly yes
+
+Host hermes-money-mani
+    HostName 187.127.121.97
+    User money-mani
+    IdentityFile ~/.ssh/ssh-key-hwang
+    IdentitiesOnly yes
+
+Host hermes-money-mani-tunnel
     HostName 187.127.121.97
     User money-mani
     IdentityFile ~/.ssh/ssh-key-hwang
     IdentitiesOnly yes
     LocalForward 9119 127.0.0.1:32777
+    ExitOnForwardFailure yes
 ```
 
 ### Tailscale과 공개 HTTPS
@@ -572,7 +587,7 @@ Funnel은 일반 브라우저 방문자에게 공개되므로 owner/viewer 로�
   --destination "cutover-$(date -u +%Y%m%dT%H%M%SZ)"
 
 rsync -az --protect-args cutover-<timestamp>/ \
-  hermes-vps:/srv/money-mani/incoming/cutover-<timestamp>/
+  hermes-money-mani:/srv/money-mani/incoming/cutover-<timestamp>/
 ```
 
 VPS에서 정확한 SHA를 checkout한 뒤 번들을 검증·설치합니다. `app.env`에는 기존
@@ -624,7 +639,9 @@ docker compose --env-file /srv/money-mani/deploy.env \
 
 외부에서는 Funnel URL의 로그인, owner 변경 기능과 viewer 조회 제한을 각각
 검증합니다. 공인 IP의 31234/32777은 계속 닫혀 있어야 하며,
-`ssh hermes-vps` 연결 중 `http://localhost:9119`는 비상 경로로 사용할 수 있습니다.
+`ssh hermes-money-mani-tunnel` 연결 중 `http://localhost:9119`는 비상 경로로
+사용할 수 있습니다. 일반 배포 작업은 `ssh hermes-money-mani`, 호스트 관리 작업은
+`ssh hermes-vps`를 사용합니다.
 
 ### 백업과 롤백
 
