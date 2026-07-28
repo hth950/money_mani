@@ -4,3 +4,28 @@ max_positions: 9999  # 무제한 (Paper Trading)
 max_single_weight: 0.20
 max_sector_weight: 0.30
 max_daily_loss: -0.03
+
+# Separate, explainable 0-100 risk axis used by the personal recommendation UI.
+# These are soft-risk weights; price/data integrity failures are the only hard
+# blocks.  The existing composite score remains the opportunity axis.
+entry_risk:
+  enabled: true
+  model_version: entry-risk-v1
+  low_max: 35
+  medium_max: 60
+  high_max: 80
+  opportunity_execute: 65
+  opportunity_early_watch: 55
+  opportunity_watch: 40
+  # Strategy positions do not carry capital weights. Treat every proposed
+  # entry as a 20% slot: first sector entry=20%, second same sector=40%.
+  assumed_position_weight: 0.20
+  max_sector_weight: 0.30
+  weights:
+    portfolio: 0.30
+    timing: 0.20
+    volatility: 0.15
+    macro_event: 0.15
+    disagreement: 0.10
+    data_quality: 0.10
+  max_recommendation_age_days: 7

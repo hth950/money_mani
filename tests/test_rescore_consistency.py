@@ -162,16 +162,90 @@ def test_signal_rescore_updates_decision_and_appends_linked_event(
                FROM decision_events WHERE ticker='EXEC'"""
         ).fetchone()
     assert score[0] == pytest.approx(0.875)
-    assert score[1:3] == ("BLOCKED", "position limit")
+    # Portfolio capacity is a soft entry risk now.  The opportunity decision is
+    # retained for the UI/API instead of being hidden behind legacy BLOCKED.
+    assert score[1:3] == ("EXECUTE", None)
     assert json.loads(score[3])["composite"] == pytest.approx(0.875)
     assert event[0] == score_id
-    assert event[1:4] == ("BUY", "BLOCKED", "BLOCKED")
+    assert event[1:4] == ("BUY", "EXECUTE", "RESCORE_ONLY")
     assert event[4] == pytest.approx(0.875)
     assert json.loads(event[5]) == {
         "pipeline": "rescore",
         "trigger": "consensus_signal",
     }
-    assert DenyRisk.calls == 1
+    # The short-circuiting legacy gate is no longer called; independent policy
+    # warnings are collected by the two-axis context instead.
+    assert DenyRisk.calls == 0
+
+
+def test_rescore_preserves_hard_block_until_verified_recovery(
+    rescore_db, rescore_module
+):
+    score_id = _insert_score(rescore_module, "HARD", 0.8, decision="BLOCKED")
+    with connection.get_db() as db:
+        db.execute(
+            "UPDATE scoring_results SET hard_block_reason='가격 데이터 검증 실패' WHERE id=?",
+            (score_id,),
+        )
+        item = dict(db.execute("SELECT * FROM scoring_results WHERE id=?", (score_id,)).fetchone())
+
+    captured = {}
+
+    class Risk:
+        config = {}
+
+        def _get_open_positions(self):
+            return []
+
+        def _get_sector(self, *_args):
+            return "Unknown"
+
+    class Entry:
+        def assess(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "opportunity_decision": "EXECUTE",
+                "risk_score": 90.0,
+                "risk_level": "VERY_HIGH",
+                "risk_breakdown": {},
+                "recommendation_tier": "UNAVAILABLE",
+                "hard_block_reason": kwargs["hard_block_reason"],
+                "risk_model_version": "test",
+            }
+
+    class Service:
+        def update_scoring_result(self, *_args, **kwargs):
+            captured["update"] = kwargs
+            return 1
+
+    collectors = tuple(_Collector(1.0) for _ in range(4))
+    result = rescore_module._rescore_item(
+        item, collectors, Risk(), Service(), Entry(), trigger="test"
+    )
+
+    assert captured["hard_block_reason"] == "가격 데이터 검증 실패"
+    assert captured["update"]["hard_block_reason"] == "가격 데이터 검증 실패"
+    assert result["decision"] == "BLOCKED"
+
+
+def test_rescore_policy_warnings_are_not_short_circuited(rescore_module):
+    class Risk:
+        config = {
+            "max_positions": 1,
+            "max_single_weight": 0.20,
+            "max_sector_weight": 0.30,
+            "max_daily_loss": -0.03,
+        }
+
+        def _get_daily_pnl(self):
+            return -0.05
+
+    warnings = rescore_module._portfolio_policy_warnings(
+        Risk(),
+        [{"ticker": "AAPL", "market": "US", "sector": "Technology"}],
+        "AAPL", "US", "Technology",
+    )
+    assert len(warnings) == 4
 
 
 def test_skip_and_watch_never_call_buy_risk_gate(rescore_module):

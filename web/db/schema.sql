@@ -318,6 +318,16 @@ CREATE TABLE IF NOT EXISTS scoring_results (
     score_breakdown_json TEXT,
     decision TEXT,
     block_reason TEXT,
+    -- The legacy decision/block reason remain for compatibility.  The fields
+    -- below separate score opportunity from the risk of entering now.
+    opportunity_decision TEXT,
+    risk_score REAL,
+    risk_level TEXT,
+    risk_breakdown_json TEXT,
+    risk_snapshot_json TEXT,
+    recommendation_tier TEXT,
+    hard_block_reason TEXT,
+    risk_model_version TEXT,
     weights_used_json TEXT,
     source TEXT DEFAULT 'live',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -349,6 +359,13 @@ CREATE TABLE IF NOT EXISTS decision_events (
     consensus_count INTEGER,
     consensus_strategies_json TEXT,
     block_reason TEXT,
+    opportunity_decision TEXT,
+    risk_score REAL,
+    risk_level TEXT,
+    risk_breakdown_json TEXT,
+    recommendation_tier TEXT,
+    hard_block_reason TEXT,
+    risk_model_version TEXT,
     provenance_json TEXT,
     data_quality_json TEXT,
     execution_error TEXT,
@@ -488,6 +505,13 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     recommendation TEXT,
     composite_score REAL,
     score_snapshot_json TEXT,
+    -- Conditional-entry acknowledgement snapshot.  These are deliberately
+    -- append-only alongside the rest of the simulated fill ledger.
+    risk_score REAL,
+    risk_snapshot_json TEXT,
+    risk_acknowledged_at TEXT,
+    risk_acknowledgement_version TEXT,
+    risk_snapshot_hash TEXT,
     idempotency_key TEXT NOT NULL UNIQUE,
     request_hash TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))

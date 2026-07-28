@@ -84,6 +84,10 @@ class TechnicalScorer:
         # 5. Volume trend score
         vol_score = self._volume_score(df, details)
 
+        # Entry-risk metadata.  This does not change the technical opportunity
+        # score; it gives the separate risk model an actual volatility input.
+        details["atr_pct"] = self._atr_pct(df, close)
+
         # Weighted composite
         w = self.WEIGHTS
         composite = (
@@ -109,6 +113,32 @@ class TechnicalScorer:
             f"ma={ma_score:.2f} bb={bb_score:.2f} vol={vol_score:.2f})"
         )
         return {"score": composite, "details": details}
+
+    @staticmethod
+    def _atr_pct(df: pd.DataFrame, close: pd.Series) -> float | None:
+        """Return 14-bar ATR as a fraction of the latest close."""
+        if not {"high", "low"}.issubset(df.columns) or len(close) < 15:
+            return None
+        try:
+            high = pd.to_numeric(df["high"], errors="coerce")
+            low = pd.to_numeric(df["low"], errors="coerce")
+            aligned_close = pd.to_numeric(df["close"], errors="coerce")
+            previous_close = aligned_close.shift(1)
+            true_range = pd.concat(
+                [
+                    high - low,
+                    (high - previous_close).abs(),
+                    (low - previous_close).abs(),
+                ],
+                axis=1,
+            ).max(axis=1)
+            atr = _safe_float(true_range.rolling(14).mean().iloc[-1])
+            latest = _safe_float(aligned_close.iloc[-1])
+            if atr is None or latest is None or latest <= 0:
+                return None
+            return round(atr / latest, 6)
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # Indicator sub-scorers

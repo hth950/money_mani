@@ -147,6 +147,14 @@
         </label>
       </div>
       <div id="paper-order-error" class="paper-error-box" role="alert" hidden></div>
+      <div id="paper-order-risk" class="paper-risk-ack" hidden>
+        <strong id="paper-order-risk-score">진입 위험</strong>
+        <div id="paper-order-risk-details" class="paper-risk-details"></div>
+        <label for="paper-order-risk-ack">
+          <input id="paper-order-risk-ack" type="checkbox">
+          위 위험을 이해했습니다
+        </label>
+      </div>
       <div id="paper-order-preview" class="paper-preview-box" hidden></div>
       <footer class="paper-dialog-actions">
         <small class="paper-muted">확정 시에도 서버가 시세를 다시 조회합니다.</small>
@@ -360,6 +368,9 @@
     } : null);
     const quantity = numberValue(pick(position, 'quantity', 'qty', 'shares')) || 0;
     const sellDisabled = side === 'SELL' && !position;
+    const tier = String(item.recommendation_tier || '');
+    const conditional = side === 'BUY' && tier === 'BUY_CONDITIONAL';
+    const riskScore = numberValue(item.risk_score);
     return `
       <article class="paper-recommendation-card">
         <div class="paper-section-header">
@@ -369,18 +380,23 @@
           </div>
           <div class="paper-inline-actions">
             ${position ? `<span class="paper-badge info">모의 보유 ${escapeHtml(formatNumber(quantity, 4))}주</span>` : ''}
-            <span class="paper-badge ${side === 'BUY' ? 'ok' : 'error'}">${escapeHtml(recommendation)}</span>
+            <span class="paper-badge ${conditional ? 'warn' : side === 'BUY' ? 'ok' : 'error'}">${escapeHtml(conditional ? '조건부' : recommendation)}</span>
           </div>
         </div>
         <dl class="paper-metrics" style="margin-top:0.75rem;">
           <div><dt>복합 점수</dt><dd>${escapeHtml(scorePercent(score))}</dd></div>
+          ${side === 'BUY' ? `<div><dt>진입 위험</dt><dd>${riskScore === null ? '-' : `${escapeHtml(riskScore.toFixed(1))}점`}</dd></div>` : ''}
           <div><dt>참고 가격</dt><dd>${escapeHtml(formatMoney(price, market))}</dd></div>
         </dl>
+        ${conditional ? riskReasonMarkup(item) : ''}
         ${reason ? `<p class="paper-muted" style="font-size:0.82rem;margin:0.65rem 0 0;">${escapeHtml(reason)}</p>` : ''}
         ${PAPER_CAN_TRADE ? `<div class="paper-inline-actions" style="margin-top:0.75rem;">
           <button type="button" class="${side === 'SELL' ? 'secondary' : ''} paper-compact-button"
             data-paper-order data-side="${side}" data-market="${escapeHtml(market)}"
             data-ticker="${escapeHtml(ticker)}" data-name="${escapeHtml(tickerName)}"
+            data-recommendation-tier="${escapeHtml(tier)}"
+            data-risk-score="${escapeHtml(riskScore ?? '')}"
+            data-risk-snapshot-hash="${escapeHtml(item.risk_snapshot_hash || '')}"
             data-position-id="${escapeHtml(pick(position, 'id', 'position_id') || '')}"
             data-max-quantity="${escapeHtml(quantity || '')}" ${sellDisabled ? 'disabled' : ''}>
             모의 ${side === 'BUY' ? '매수' : '매도'}
@@ -388,6 +404,26 @@
           ${sellDisabled ? '<small class="paper-muted">모의 보유 없음</small>' : ''}
         </div>` : ''}
       </article>`;
+  }
+
+  function riskReasonMarkup(item) {
+    const reasons = [];
+    const collect = (value) => {
+      if (Array.isArray(value)) {
+        value.forEach(collect);
+      } else if (value && typeof value === 'object') {
+        const direct = value.reasons || value.reason;
+        if (Array.isArray(direct)) direct.forEach((reason) => reasons.push(String(reason)));
+        else if (direct) reasons.push(String(direct));
+        Object.entries(value).forEach(([key, nested]) => {
+          if (key !== 'reasons' && key !== 'reason') collect(nested);
+        });
+      }
+    };
+    collect(item.risk_breakdown || {});
+    const unique = [...new Set(reasons)].slice(0, 4);
+    if (!unique.length) return '';
+    return `<ul class="paper-risk-list">${unique.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>`;
   }
 
   function renderRecommendations(items, side, targetId) {
@@ -610,6 +646,9 @@
       side, market, ticker, ticker_name: name,
       position_id: numberValue(button.dataset.positionId),
       max_quantity: maxQuantity,
+      recommendation_tier: button.dataset.recommendationTier || null,
+      risk_score: numberValue(button.dataset.riskScore),
+      risk_snapshot_hash: button.dataset.riskSnapshotHash || null,
       idempotency_key: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     };
     state.preview = null;
@@ -625,7 +664,17 @@
     byId('paper-order-preview').hidden = true;
     byId('paper-order-preview').innerHTML = '';
     byId('paper-confirm-button').disabled = true;
-    byId('paper-preview-button').disabled = false;
+    const conditional = side === 'BUY' && state.order.recommendation_tier === 'BUY_CONDITIONAL';
+    byId('paper-order-risk').hidden = !conditional;
+    byId('paper-order-risk-ack').checked = false;
+    byId('paper-order-risk-score').textContent =
+      `진입 위험 ${state.order.risk_score === null ? '-' : state.order.risk_score.toFixed(1)}점`;
+    const overviewItem = (state.overview?.buy_recommendations || []).find(
+      (item) => positionKey(item.market, item.ticker) === positionKey(market, ticker)
+    );
+    byId('paper-order-risk-details').innerHTML =
+      conditional && overviewItem ? riskReasonMarkup(overviewItem) : '';
+    syncPreviewButtonState();
     byId('paper-order-dialog').showModal();
   }
 
@@ -641,6 +690,13 @@
       ticker: state.order.ticker,
       quantity,
     };
+    if (state.order.side === 'BUY' && state.order.recommendation_tier === 'BUY_CONDITIONAL') {
+      if (!byId('paper-order-risk-ack').checked) {
+        throw new Error("위험 내용을 확인하고 '위 위험을 이해했습니다'에 동의해 주세요.");
+      }
+      payload.risk_acknowledged = true;
+      payload.risk_snapshot_hash = state.order.risk_snapshot_hash;
+    }
     if (includeIdempotency) {
       payload.idempotency_key = state.order.idempotency_key;
       if (state.preview?.estimated_price !== undefined && state.preview?.estimated_price !== null) {
@@ -655,6 +711,60 @@
     const error = byId('paper-order-error');
     error.textContent = message;
     error.hidden = false;
+  }
+
+  function canPreviewCurrentOrder() {
+    if (!state.order) return false;
+    if (state.order.side !== 'BUY') return true;
+    if (state.order.recommendation_tier === 'BUY_READY') return true;
+    if (state.order.recommendation_tier !== 'BUY_CONDITIONAL') return false;
+    return Boolean(
+      state.order.risk_snapshot_hash &&
+      byId('paper-order-risk-ack').checked
+    );
+  }
+
+  function syncPreviewButtonState() {
+    byId('paper-preview-button').disabled = !canPreviewCurrentOrder();
+  }
+
+  async function refreshOrderRiskAfterConflict(error) {
+    if (
+      error?.status !== 409 ||
+      state.order?.recommendation_tier !== 'BUY_CONDITIONAL'
+    ) return;
+    await loadOverview({ quiet: true });
+    const latest = (state.overview?.buy_recommendations || []).find(
+      (item) => positionKey(item.market, item.ticker) ===
+        positionKey(state.order.market, state.order.ticker)
+    );
+    state.preview = null;
+    byId('paper-confirm-button').disabled = true;
+    byId('paper-order-preview').hidden = true;
+    byId('paper-order-risk-ack').checked = false;
+    byId('paper-preview-button').disabled = true;
+    if (!latest) {
+      state.order.recommendation_tier = 'UNAVAILABLE';
+      state.order.risk_score = null;
+      state.order.risk_snapshot_hash = null;
+      byId('paper-order-risk').hidden = false;
+      byId('paper-order-risk-score').textContent = '진입 위험 판단 불가';
+      byId('paper-order-risk-details').innerHTML =
+        '<p class="paper-negative" style="margin:0;">조건부 후보가 최신 추천에서 사라졌습니다. 주문창을 닫고 신호를 다시 확인해 주세요.</p>';
+      showOrderError('최신 추천에서 조건부 후보가 사라져 모의매수를 진행할 수 없습니다.');
+      syncPreviewButtonState();
+      return;
+    }
+    state.order.recommendation_tier = latest.recommendation_tier;
+    state.order.risk_score = numberValue(latest.risk_score);
+    state.order.risk_snapshot_hash = latest.risk_snapshot_hash || null;
+    const conditional = latest.recommendation_tier === 'BUY_CONDITIONAL';
+    byId('paper-order-risk').hidden = !conditional;
+    byId('paper-order-risk-score').textContent =
+      `진입 위험 ${state.order.risk_score === null ? '-' : state.order.risk_score.toFixed(1)}점`;
+    byId('paper-order-risk-details').innerHTML =
+      conditional ? riskReasonMarkup(latest) : '';
+    syncPreviewButtonState();
   }
 
   async function previewOrder(event) {
@@ -673,6 +783,17 @@
       const market = preview.market || payload.market;
       const delayedBadge = truthyFlag(preview.is_delayed) ? '<span class="paper-badge warn">지연 시세</span>' : '<span class="paper-badge ok">시세 확인</span>';
       const snapshot = preview.recommendation_snapshot;
+      if (state.order.side === 'BUY' && snapshot) {
+        state.order.recommendation_tier = snapshot.recommendation_tier;
+        state.order.risk_score = numberValue(snapshot.risk_score);
+        state.order.risk_snapshot_hash = snapshot.risk_snapshot_hash || null;
+        const conditional = snapshot.recommendation_tier === 'BUY_CONDITIONAL';
+        byId('paper-order-risk').hidden = !conditional;
+        byId('paper-order-risk-score').textContent =
+          `진입 위험 ${state.order.risk_score === null ? '-' : state.order.risk_score.toFixed(1)}점`;
+        byId('paper-order-risk-details').innerHTML =
+          conditional ? riskReasonMarkup(snapshot) : '';
+      }
       byId('paper-order-preview').innerHTML = `
         <div class="paper-section-header"><strong>예상 주문</strong>${delayedBadge}</div>
         <dl class="paper-metrics" style="margin-top:0.65rem;">
@@ -688,8 +809,9 @@
     } catch (error) {
       state.preview = null;
       showOrderError(error.message);
+      await refreshOrderRiskAfterConflict(error);
     } finally {
-      button.disabled = false;
+      syncPreviewButtonState();
       button.removeAttribute('aria-busy');
     }
   }
@@ -716,7 +838,8 @@
       setTimeout(() => byId('paper-order-dialog').close(), 900);
     } catch (error) {
       showOrderError(error.message);
-      button.disabled = false;
+      await refreshOrderRiskAfterConflict(error);
+      button.disabled = !state.preview;
     } finally {
       button.removeAttribute('aria-busy');
     }
@@ -828,6 +951,12 @@
     state.preview = null;
     byId('paper-confirm-button').disabled = true;
     byId('paper-order-preview').hidden = true;
+  });
+  byId('paper-order-risk-ack').addEventListener('change', (event) => {
+    state.preview = null;
+    byId('paper-confirm-button').disabled = true;
+    byId('paper-order-preview').hidden = true;
+    syncPreviewButtonState();
   });
   document.querySelectorAll('[data-paper-close]').forEach((button) => button.addEventListener('click', () => byId('paper-order-dialog').close()));
   document.querySelectorAll('[data-paper-chart-close]').forEach((button) => button.addEventListener('click', () => byId('paper-chart-dialog').close()));

@@ -206,7 +206,7 @@ def test_multi_layer_scoring_preserves_skip_for_audit(
     assert result[0]["composite_score"] == pytest.approx(0.2)
 
 
-def test_risk_gate_checks_execute_buy_but_not_watch(
+def test_risk_gate_does_not_call_short_circuiting_legacy_gate(
     monkeypatch, daily_scan_module
 ):
     checked = []
@@ -225,10 +225,105 @@ def test_risk_gate_checks_execute_buy_but_not_watch(
 
     passed, blocked = scanner._apply_risk_gate([watch, execute])
 
-    assert checked == [("EXEC", "KRX")]
-    assert passed == [watch]
-    assert blocked == [execute]
-    assert execute["score_decision"] == "BLOCKED"
+    assert checked == []
+    assert passed == [watch, execute]
+    assert blocked == []
+    assert execute["score_decision"] == "EXECUTE"
+    assert execute["opportunity_decision"] == "EXECUTE"
+    assert execute["recommendation_tier"] == "BUY_READY"
+
+
+def test_portfolio_policy_warnings_include_all_independent_limits(daily_scan_module):
+    class RiskManager:
+        config = {
+            "max_positions": 1,
+            "max_single_weight": 0.20,
+            "max_sector_weight": 0.30,
+            "max_daily_loss": -0.03,
+        }
+
+        def _get_daily_pnl(self):
+            return -0.05
+
+    warnings = daily_scan_module.DailyScan._portfolio_policy_warnings(
+        RiskManager(),
+        [{"ticker": "AAPL", "market": "US", "sector": "Technology"}],
+        "AAPL", "US", "Technology",
+    )
+
+    assert any("포지션 한도" in warning for warning in warnings)
+    assert any("이미 포지션" in warning for warning in warnings)
+    assert any("섹터 집중도" in warning for warning in warnings)
+    assert any("일일 손실" in warning for warning in warnings)
+
+
+def test_entry_risk_context_merges_unique_strategy_and_paper_positions(
+    scan_db, monkeypatch, daily_scan_module
+):
+    captured = []
+
+    class FakeEntryRiskScorer:
+        def assess(self, **kwargs):
+            captured.append(kwargs)
+            return {
+                "opportunity_decision": "EXECUTE",
+                "risk_score": 45.0,
+                "risk_level": "MEDIUM",
+                "risk_breakdown": {},
+                "recommendation_tier": "BUY_CONDITIONAL",
+                "hard_block_reason": None,
+                "risk_model_version": "test",
+            }
+
+    entry_module = types.ModuleType("scoring.entry_risk_scorer")
+    entry_module.EntryRiskScorer = FakeEntryRiskScorer
+    monkeypatch.setitem(sys.modules, "scoring.entry_risk_scorer", entry_module)
+
+    class FakeRiskManager:
+        enabled = True
+
+        def _get_open_positions(self):
+            return [
+                {"ticker": "AAPL", "market": "US"},
+                {"ticker": "AUTO", "market": "US"},
+            ]
+
+        def _get_sector(self, ticker, _market):
+            return {"AAPL": "Technology", "AUTO": "Industrials", "PAPER": "Technology"}.get(ticker, "Unknown")
+
+        def check_can_buy(self, *_args):
+            return True, "OK"
+
+    monkeypatch.setattr(risk_manager, "PortfolioRiskManager", FakeRiskManager)
+    with connection.get_db() as db:
+        db.execute(
+            """INSERT INTO paper_positions
+               (market, ticker, ticker_name, status, quantity, avg_price, remaining_cost)
+               VALUES ('US', 'AAPL', 'AAPL', 'open', 1, 100, 100)"""
+        )
+        db.execute(
+            """INSERT INTO paper_positions
+               (market, ticker, ticker_name, status, quantity, avg_price, remaining_cost)
+               VALUES ('US', 'PAPER', 'PAPER', 'open', 1, 100, 100)"""
+        )
+
+    scanner = daily_scan_module.DailyScan.__new__(daily_scan_module.DailyScan)
+    execute = {
+        **_consensus_signal("execute"), "ticker": "TARGET", "market": "US",
+        "score_decision": "EXECUTE", "composite_score": 0.66,
+        "score_breakdown": {"technical": 0.66}, "score_details": {},
+    }
+    passed, blocked = scanner._apply_risk_gate([execute])
+
+    assert passed == [execute]
+    assert blocked == []
+    positions = captured[0]["positions"]
+    assert {(row["market"], row["ticker"]) for row in positions} == {
+        ("US", "AAPL"), ("US", "AUTO"), ("US", "PAPER"),
+    }
+    assert {row["ticker"]: row["sector"] for row in positions} == {
+        "AAPL": "Technology", "AUTO": "Industrials", "PAPER": "Technology",
+    }
 
 
 def test_run_audits_skip_without_signal_alert_or_position_execution(
@@ -277,7 +372,9 @@ def test_run_audits_skip_without_signal_alert_or_position_execution(
 
     result = scanner.run()
 
-    assert risk_inputs == []
+    # Risk snapshots are also kept for excluded scores; they still must never
+    # reach alerting or position execution.
+    assert risk_inputs == [skipped]
     assert saved == [skipped]
     assert result["signals"] == []
     assert result["scored_signals"] == [skipped]

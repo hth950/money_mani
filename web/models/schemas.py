@@ -55,6 +55,10 @@ class PaperOrderPreviewRequest(BaseModel):
     market: Literal["KRX", "US"]
     ticker: str = Field(min_length=1, max_length=32)
     quantity: StrictInt = Field(ge=1)
+    risk_acknowledged: bool = False
+    risk_snapshot_hash: Optional[str] = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$"
+    )
 
     @field_validator("side", "market", mode="before")
     @classmethod
@@ -66,6 +70,12 @@ class PaperOrderPreviewRequest(BaseModel):
     def normalize_ticker(cls, value):
         return str(value).strip().upper()
 
+    @field_validator("risk_snapshot_hash", mode="before")
+    @classmethod
+    def normalize_risk_hash(cls, value):
+        if value is None or value == "":
+            return None
+        return str(value).strip().lower()
 
 class PaperOrderRequest(PaperOrderPreviewRequest):
     """Confirm a paper order; the server always obtains a fresh quote."""

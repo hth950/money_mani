@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -102,6 +103,12 @@ class PaperTradingService:
             "market": str(self._payload_value(payload, "market", "")).strip().upper(),
             "ticker": str(self._payload_value(payload, "ticker", "")).strip().upper(),
             "quantity": self._payload_value(payload, "quantity"),
+            "risk_acknowledged": self._payload_value(
+                payload, "risk_acknowledged", False
+            ) is True,
+            "risk_snapshot_hash": str(
+                self._payload_value(payload, "risk_snapshot_hash", "") or ""
+            ).strip().lower(),
         }
         if order["side"] not in {"BUY", "SELL"}:
             raise ValueError("side must be BUY or SELL")
@@ -118,13 +125,36 @@ class PaperTradingService:
     @staticmethod
     def _request_hash(order: dict) -> str:
         canonical = _json_dumps(
-            {key: order[key] for key in ("side", "market", "ticker", "quantity")}
+            {
+                key: order[key]
+                for key in (
+                    "side", "market", "ticker", "quantity",
+                    "risk_acknowledged", "risk_snapshot_hash",
+                )
+            }
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def _fee(self, market: str, side: str, gross: float) -> float:
         rate = self.fees[market][side.lower()]
         return _round_money(gross * rate)
+
+    @staticmethod
+    def _scoring_revision(item: dict) -> str:
+        """Hash persisted recommendation inputs for a transaction-time CAS."""
+        fields = {
+            key: item.get(key)
+            for key in (
+                "id", "scan_date", "market", "ticker", "composite_score",
+                "decision", "opportunity_decision", "score_breakdown_json",
+                "risk_score", "risk_level", "risk_breakdown_json",
+                "recommendation_tier", "hard_block_reason",
+                "risk_model_version", "updated_at",
+            )
+        }
+        return hashlib.sha256(
+            _json_dumps(fields).encode("utf-8")
+        ).hexdigest()
 
     @staticmethod
     def _latest_recommendation(db, market: str, ticker: str) -> dict | None:
@@ -158,24 +188,282 @@ class PaperTradingService:
                 if scores[key] is None and breakdown.get(key) is not None:
                     scores[key] = breakdown[key]
         return {
+            "_scoring_revision": PaperTradingService._scoring_revision(item),
             "scan_date": str(item.get("scan_date") or "")[:10],
             "recommendation": item.get("decision"),
+            "block_reason": item.get("block_reason") or "",
             "composite_score": item.get("composite_score"),
             "scores": scores,
             "ticker_name": item.get("ticker_name") or ticker,
+            "opportunity_score": round(
+                float(item.get("composite_score") or 0) * 100, 4
+            ),
+            "opportunity_decision": item.get("opportunity_decision"),
+            "risk_score": item.get("risk_score"),
+            "risk_level": item.get("risk_level"),
+            "risk_breakdown": _json_loads(item.get("risk_breakdown_json"), {}),
+            "recommendation_tier": item.get("recommendation_tier"),
+            "hard_block_reason": item.get("hard_block_reason"),
+            "risk_model_version": item.get("risk_model_version"),
         }
 
-    def _require_buy_recommendation(self, market: str, ticker: str, db=None) -> dict:
-        if db is not None:
-            recommendation = self._latest_recommendation(db, market, ticker)
-        else:
-            with get_db() as connection:
-                recommendation = self._latest_recommendation(connection, market, ticker)
-        if not recommendation or recommendation.get("recommendation") != "EXECUTE":
+    @staticmethod
+    def _canonical_risk_snapshot(snapshot: dict) -> dict:
+        from web.services.signal_service import SignalService
+
+        score = float(snapshot.get("composite_score") or 0)
+        tier = snapshot.get("recommendation_tier")
+        risk_score = snapshot.get("risk_score")
+        hard_block_reason = snapshot.get("hard_block_reason") or ""
+        decision = snapshot.get("recommendation") or ""
+        if hard_block_reason:
+            tier = "UNAVAILABLE"
+        elif not tier:
+            if hard_block_reason:
+                tier = "UNAVAILABLE"
+            elif score >= 0.65 and decision == "BLOCKED":
+                tier, risk_score = "BUY_CONDITIONAL", (
+                    50.0 if risk_score is None else risk_score
+                )
+            elif score >= 0.65:
+                tier, risk_score = "BUY_READY", (
+                    0.0 if risk_score is None else risk_score
+                )
+            elif score >= 0.55:
+                tier = "EARLY_WATCH"
+            elif score >= 0.40:
+                tier = "WATCH"
+            else:
+                tier = "AVOID"
+        risk_breakdown = snapshot.get("risk_breakdown") or {}
+        if tier == "BUY_CONDITIONAL" and not risk_breakdown:
+            legacy_reason = snapshot.get("block_reason") or (
+                "기존 위험 정책에 의해 조건부 후보로 분류됨"
+            )
+            risk_breakdown = {
+                "legacy_policy": {
+                    "score": risk_score,
+                    "label": "기존 위험 정책",
+                    "reasons": [legacy_reason],
+                }
+            }
+        canonical = SignalService._risk_snapshot(
+            ticker=snapshot.get("ticker"),
+            market=snapshot.get("market"),
+            scan_date=snapshot.get("scan_date"),
+            opportunity_score=round(score * 100, 4),
+            opportunity_decision=snapshot.get("opportunity_decision") or (
+                "EXECUTE" if score >= 0.65 else "WATCH" if score >= 0.40 else "SKIP"
+            ),
+            risk_score=risk_score,
+            risk_level=snapshot.get("risk_level") or SignalService._risk_level(risk_score),
+            risk_breakdown=risk_breakdown,
+            recommendation_tier=tier,
+            hard_block_reason=hard_block_reason,
+            risk_model_version=snapshot.get("risk_model_version") or "legacy-v0",
+            portfolio_revision=snapshot.get("portfolio_revision") or "",
+        )
+        snapshot.update(canonical)
+        snapshot["risk_snapshot_hash"] = SignalService._risk_snapshot_hash(canonical)
+        return snapshot
+
+    def _reassess_buy_snapshot_with_quote(
+        self, recommendation: dict, quote: dict
+    ) -> dict:
+        """Recalculate current-model volatility risk using the latest quote.
+
+        All OHLCV/sector work is intentionally done before the ledger write
+        transaction. Persisted opportunity scores are not changed here; this
+        refresh only updates the separate entry-risk axis.
+        """
+        if recommendation.get("risk_model_version") != "entry-risk-v1":
+            return recommendation
+
+        from scoring.technical_scorer import TechnicalScorer
+        from web.services.signal_service import SignalService
+
+        volatility = None
+        try:
+            frame = self.quote_service.get_ohlcv(
+                recommendation["market"], recommendation["ticker"]
+            )
+            if frame is not None and not frame.empty:
+                close_column = "Close" if "Close" in frame.columns else "close"
+                previous_close = float(frame[close_column].iloc[-1])
+                live_frame = self._with_live_quote(frame, float(quote["price"]))
+                details = TechnicalScorer().score(
+                    recommendation["ticker"], live_frame
+                ).get("details", {})
+                volatility = {
+                    "atr_pct": details.get("atr_pct"),
+                    "gap_pct": (
+                        float(quote["price"]) / previous_close - 1
+                        if previous_close > 0 else None
+                    ),
+                }
+        except Exception as error:
+            logger.info(
+                "Order-time volatility unavailable for %s %s: %s",
+                recommendation["market"], recommendation["ticker"], error,
+            )
+
+        with get_db() as db:
+            portfolio_rows = SignalService._portfolio_state_rows(db)
+        context = SignalService._live_portfolio_context(portfolio_rows)
+        stored_breakdown = recommendation.get("risk_breakdown") or {}
+        live = SignalService._assess_live_entry_risk(
+            row=recommendation,
+            opportunity_score=float(recommendation.get("opportunity_score") or 0),
+            component_scores=recommendation.get("scores") or {},
+            stored_risk_breakdown=stored_breakdown,
+            context=context,
+            volatility=volatility,
+            data_quality={
+                "score_available": True,
+                "price_available": True,
+                "price_delayed": bool(quote.get("is_delayed")),
+            },
+        )
+        recommendation.update({
+            "opportunity_decision": live.get("opportunity_decision"),
+            "risk_score": live.get("risk_score"),
+            "risk_level": live.get("risk_level"),
+            "risk_breakdown": live.get("risk_breakdown") or {},
+            "recommendation_tier": live.get("recommendation_tier"),
+            "hard_block_reason": live.get("hard_block_reason"),
+            "risk_model_version": live.get("risk_model_version"),
+            "portfolio_revision": SignalService._portfolio_revision(
+                portfolio_rows
+            ),
+        })
+        return self._canonical_risk_snapshot(recommendation)
+
+    @staticmethod
+    def _validate_buy_snapshot(
+        recommendation: dict,
+        order: dict | None,
+        *,
+        accepted_conditional_hashes: set[str] | None = None,
+    ) -> None:
+        tier = recommendation["recommendation_tier"]
+        if recommendation.get("hard_block_reason"):
+            raise PaperTradingConflict(
+                f"현재 매수할 수 없습니다: {recommendation['hard_block_reason']}"
+            )
+        if tier == "BUY_CONDITIONAL":
+            supplied_hash = (order or {}).get("risk_snapshot_hash") or ""
+            if not (order or {}).get("risk_acknowledged"):
+                raise PaperTradingConflict(
+                    "조건부 후보는 위험 내용을 확인하고 '위험을 이해했습니다'에 동의해야 합니다."
+                )
+            valid_hashes = accepted_conditional_hashes or {
+                recommendation["risk_snapshot_hash"]
+            }
+            if supplied_hash not in valid_hashes:
+                raise PaperTradingConflict(
+                    "진입 위험 정보가 변경되었습니다. 최신 위험 내용을 다시 확인해 주세요."
+                )
+        elif tier != "BUY_READY":
+            label = {
+                "EARLY_WATCH": "관심 후보",
+                "WATCH": "관망",
+                "AVOID": "제외",
+                "UNAVAILABLE": "판단 불가",
+            }.get(tier, tier)
+            raise PaperTradingConflict(
+                f"{recommendation['market']} {recommendation['ticker']}는 "
+                f"현재 {label} 상태이므로 매수할 수 없습니다."
+            )
+
+    def _require_buy_recommendation(
+        self,
+        market: str,
+        ticker: str,
+        order: dict | None = None,
+        *,
+        quote: dict | None = None,
+        allow_prequote_hash: bool = False,
+    ) -> dict:
+        with get_db() as connection:
+            recommendation = self._latest_recommendation(connection, market, ticker)
+        if not recommendation:
             raise PaperTradingConflict(
                 f"{market} {ticker}는 현재 BUY 추천 종목이 아니므로 매수할 수 없습니다."
             )
+        self._require_fresh_recommendation(recommendation)
+
+        # Use the same live portfolio-aware snapshot shown on /signals.  The
+        # action service recomputes entry risk for entry-risk-v1 rows and signs
+        # the current strategy+paper ledger revision, so a previous approval
+        # becomes stale immediately after another fill.
+        from web.services.signal_service import SignalService
+
+        live_action = next(
+            (
+                item for item in SignalService().get_actions(days=7)
+                if str(item.get("market") or "").upper() == market
+                and str(item.get("ticker") or "").upper() == ticker
+            ),
+            None,
+        )
+        if live_action:
+            recommendation.update({
+                "opportunity_decision": live_action.get("opportunity_decision"),
+                "risk_score": live_action.get("risk_score"),
+                "risk_level": live_action.get("risk_level"),
+                "risk_breakdown": live_action.get("risk_breakdown") or {},
+                "recommendation_tier": live_action.get("recommendation_tier"),
+                "hard_block_reason": live_action.get("hard_block_reason"),
+                "risk_model_version": live_action.get("risk_model_version"),
+                "portfolio_revision": live_action.get("portfolio_revision"),
+            })
+        recommendation["market"] = market
+        recommendation["ticker"] = ticker
+        recommendation = self._canonical_risk_snapshot(recommendation)
+        prequote_hash = recommendation["risk_snapshot_hash"]
+        prequote_tier = recommendation["recommendation_tier"]
+        if quote is not None:
+            recommendation = self._reassess_buy_snapshot_with_quote(
+                recommendation, quote
+            )
+        accepted_hashes = {recommendation["risk_snapshot_hash"]}
+        if (
+            allow_prequote_hash
+            and prequote_tier == "BUY_CONDITIONAL"
+        ):
+            accepted_hashes.add(prequote_hash)
+        self._validate_buy_snapshot(
+            recommendation,
+            order,
+            accepted_conditional_hashes=accepted_hashes,
+        )
         return recommendation
+
+    @staticmethod
+    def _require_fresh_recommendation(recommendation: dict) -> None:
+        """Reject stale production recommendations while keeping local replay usable."""
+        if os.getenv("MONEY_MANI_ENV", "development").strip().lower() != "production":
+            return
+        try:
+            config_path = Path(__file__).parents[2] / "config" / "risk.yaml"
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            max_age = int(
+                config.get("entry_risk", {}).get(
+                    "max_recommendation_age_days", 7
+                )
+            )
+            scan_date = datetime.fromisoformat(
+                str(recommendation.get("scan_date") or "")[:10]
+            ).date()
+        except Exception as error:
+            raise PaperTradingConflict(
+                "추천 시점을 확인할 수 없어 매수할 수 없습니다."
+            ) from error
+        age = datetime.now(KST).date() - scan_date
+        if age.days < 0 or age.days > max_age:
+            raise PaperTradingConflict(
+                f"추천이 {age.days}일 경과해 만료되었습니다. 최신 스캔 후 다시 확인해 주세요."
+            )
 
     @staticmethod
     def _get_open_position(db, market: str, ticker: str):
@@ -203,8 +491,15 @@ class PaperTradingService:
 
     def preview_order(self, payload) -> dict:
         order = self._normalize_order(payload)
+        quote = self.quote_service.get_quote(order["market"], order["ticker"])
         if order["side"] == "BUY":
-            snapshot = self._require_buy_recommendation(order["market"], order["ticker"])
+            snapshot = self._require_buy_recommendation(
+                order["market"],
+                order["ticker"],
+                order=order,
+                quote=quote,
+                allow_prequote_hash=True,
+            )
             ticker_name = snapshot["ticker_name"]
         else:
             position = self._require_sellable(
@@ -216,7 +511,6 @@ class PaperTradingService:
                     db, order["market"], order["ticker"]
                 )
 
-        quote = self.quote_service.get_quote(order["market"], order["ticker"])
         gross = _round_money(quote["price"] * order["quantity"])
         fee = self._fee(order["market"], order["side"], gross)
         total = gross + fee if order["side"] == "BUY" else gross - fee
@@ -246,13 +540,20 @@ class PaperTradingService:
             replay["quote_changed"] = False
             return replay
 
-        # Network calls stay outside the write transaction. BUY is revalidated
-        # inside the transaction before any ledger row is inserted.
+        # All market/sector work stays outside the write transaction. The
+        # transaction only performs pure compare-and-swap checks against the
+        # persisted recommendation and portfolio ledgers.
+        quote = self.quote_service.get_quote(order["market"], order["ticker"])
+        validated_snapshot = None
         if order["side"] == "BUY":
-            self._require_buy_recommendation(order["market"], order["ticker"])
+            validated_snapshot = self._require_buy_recommendation(
+                order["market"],
+                order["ticker"],
+                order=order,
+                quote=quote,
+            )
         else:
             self._require_sellable(order["market"], order["ticker"], order["quantity"])
-        quote = self.quote_service.get_quote(order["market"], order["ticker"])
         gross = _round_money(quote["price"] * order["quantity"])
         fee = self._fee(order["market"], order["side"], gross)
         order_exit = self._best_effort_order_exit(order, quote)
@@ -270,9 +571,30 @@ class PaperTradingService:
                 trade_id = int(existing["id"])
                 position_id = int(existing["position_id"])
             elif order["side"] == "BUY":
-                snapshot = self._require_buy_recommendation(
-                    order["market"], order["ticker"], db=db
+                from web.services.signal_service import SignalService
+
+                fresh = self._latest_recommendation(
+                    db, order["market"], order["ticker"]
                 )
+                if (
+                    not fresh
+                    or fresh.get("_scoring_revision")
+                    != validated_snapshot.get("_scoring_revision")
+                ):
+                    raise PaperTradingConflict(
+                        "추천 정보가 변경되었습니다. 최신 추천을 다시 확인해 주세요."
+                    )
+                current_portfolio_revision = SignalService._portfolio_revision(
+                    SignalService._portfolio_state_rows(db)
+                )
+                if (
+                    current_portfolio_revision
+                    != validated_snapshot.get("portfolio_revision")
+                ):
+                    raise PaperTradingConflict(
+                        "진입 위험 정보가 변경되었습니다. 최신 위험 내용을 다시 확인해 주세요."
+                    )
+                snapshot = validated_snapshot
                 position = self._get_open_position(db, order["market"], order["ticker"])
                 added_cost = gross + fee
                 if position:
@@ -446,6 +768,18 @@ class PaperTradingService:
         key, request_hash, allocated_cost, realized_pnl,
     ) -> int:
         snapshot = snapshot or {}
+        from web.services.signal_service import SignalService
+
+        conditional_acknowledged = bool(
+            order["side"] == "BUY"
+            and snapshot.get("recommendation_tier") == "BUY_CONDITIONAL"
+            and order.get("risk_acknowledged")
+            and order.get("risk_snapshot_hash")
+            == snapshot.get("risk_snapshot_hash")
+        )
+        acknowledged_reasons = SignalService._risk_reasons(
+            snapshot.get("risk_breakdown") or {}
+        )
         cursor = db.execute(
             """
             INSERT INTO paper_trades
@@ -453,8 +787,10 @@ class PaperTradingService:
                price, gross_amount, fee, allocated_cost, realized_pnl,
                price_source, price_at, is_delayed, recommendation_date,
                recommendation, composite_score, score_snapshot_json,
+               risk_score, risk_snapshot_json, risk_acknowledged_at,
+               risk_acknowledgement_version, risk_snapshot_hash,
                idempotency_key, request_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 position_id, order["side"], order["market"], order["ticker"],
@@ -462,7 +798,19 @@ class PaperTradingService:
                 quote["price"], gross, fee, allocated_cost, realized_pnl,
                 quote["source"], str(quote["price_at"]), int(bool(quote["is_delayed"])),
                 snapshot.get("scan_date"), snapshot.get("recommendation"),
-                snapshot.get("composite_score"), _json_dumps(snapshot), key, request_hash,
+                snapshot.get("composite_score"), _json_dumps(snapshot),
+                snapshot.get("risk_score"),
+                _json_dumps({
+                    **snapshot,
+                    "acknowledged_reasons": acknowledged_reasons
+                    if conditional_acknowledged else [],
+                }) if snapshot.get("risk_snapshot_hash") else None,
+                datetime.now(timezone.utc).isoformat()
+                if conditional_acknowledged else None,
+                snapshot.get("risk_model_version")
+                if conditional_acknowledged else None,
+                snapshot.get("risk_snapshot_hash"),
+                key, request_hash,
             ),
         )
         return int(cursor.lastrowid)
@@ -568,6 +916,7 @@ class PaperTradingService:
         item = dict(row)
         item["is_delayed"] = bool(item["is_delayed"])
         item["score_snapshot"] = _json_loads(item.pop("score_snapshot_json"), {})
+        item["risk_snapshot"] = _json_loads(item.get("risk_snapshot_json"), {})
         item.pop("request_hash", None)
         item["net_amount"] = _round_money(
             item["gross_amount"] + item["fee"]
@@ -683,7 +1032,9 @@ class PaperTradingService:
 
         actions = [
             item for item in SignalService().get_actions(days=7)
-            if item.get("action") == "BUY"
+            if item.get("recommendation_tier") in {
+                "BUY_READY", "BUY_CONDITIONAL"
+            }
         ]
         with get_db() as db:
             rows = db.execute(
@@ -722,6 +1073,13 @@ class PaperTradingService:
                 },
                 "scan_date": str(item.get("last_signal_date") or "")[:10],
                 "signal_price": item.get("signal_price"),
+                "opportunity_score": item.get("opportunity_score"),
+                "risk_score": item.get("risk_score"),
+                "risk_level": item.get("risk_level"),
+                "risk_breakdown": item.get("risk_breakdown") or {},
+                "recommendation_tier": item.get("recommendation_tier"),
+                "risk_snapshot_hash": item.get("risk_snapshot_hash"),
+                "upgrade_conditions": item.get("upgrade_conditions") or [],
                 "paper_position_id": holding.get("paper_position_id"),
                 "held_quantity": holding.get("held_quantity", 0),
             })

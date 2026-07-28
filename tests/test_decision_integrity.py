@@ -226,6 +226,56 @@ def test_scoring_save_does_not_return_rolled_back_event_id(isolated_db):
         ).fetchone()[0] == 0
 
 
+def test_two_axis_risk_snapshot_is_persisted_in_latest_and_audit_ledgers(isolated_db):
+    event_id = ScoringService().save_scoring_result(
+        "RISK", "US", "2026-07-28",
+        {"technical": 0.7, "fundamental": 0.6, "flow": 0.5,
+         "intel": 0.7, "macro": 0.5, "composite": 0.66},
+        "EXECUTE",
+        signal_action="BUY",
+        opportunity_decision="EXECUTE",
+        risk_score=54.0,
+        risk_level="MEDIUM",
+        risk_breakdown={"portfolio": {"score": 60, "reason": "섹터 집중"}},
+        recommendation_tier="BUY_CONDITIONAL",
+        risk_model_version="v1",
+    )
+    assert event_id
+    with connection.get_db() as db:
+        latest = db.execute(
+            """SELECT opportunity_decision, risk_score, risk_level,
+                      risk_breakdown_json, recommendation_tier,
+                      hard_block_reason, risk_model_version
+               FROM scoring_results WHERE ticker='RISK'"""
+        ).fetchone()
+        event = db.execute(
+            """SELECT opportunity_decision, risk_score, risk_level,
+                      risk_breakdown_json, recommendation_tier,
+                      hard_block_reason, risk_model_version,
+                      risk_snapshot_json
+               FROM decision_events WHERE id=?""",
+            (event_id,),
+        ).fetchone()
+        paper_columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(paper_trades)")
+        }
+
+    assert tuple(latest[:3]) == ("EXECUTE", 54.0, "MEDIUM")
+    assert tuple(event[:3]) == ("EXECUTE", 54.0, "MEDIUM")
+    assert json.loads(latest[3])["portfolio"]["reason"] == "섹터 집중"
+    assert json.loads(event[3])["portfolio"]["score"] == 60
+    assert latest[4:] == ("BUY_CONDITIONAL", None, "v1")
+    assert event[4:7] == ("BUY_CONDITIONAL", None, "v1")
+    event_snapshot = json.loads(event[7])
+    assert event_snapshot["opportunity_score"] == pytest.approx(66.0)
+    assert event_snapshot["risk_score"] == pytest.approx(54.0)
+    assert event_snapshot["recommendation_tier"] == "BUY_CONDITIONAL"
+    assert {
+        "risk_score", "risk_snapshot_json", "risk_acknowledged_at",
+        "risk_acknowledgement_version", "risk_snapshot_hash",
+    } <= paper_columns
+
+
 def test_skip_is_not_sell_in_signal_actions(isolated_db):
     service = ScoringService()
     service.save_scoring_result(
@@ -325,3 +375,46 @@ def test_watch_buy_does_not_open_position(monkeypatch):
 
     assert scanner.position_service.open_calls == []
     assert scanner.scoring_service.marked == [(7, "WATCH_ONLY")]
+
+
+def test_conditional_buy_does_not_open_automatic_strategy_position(monkeypatch):
+    """A high opportunity score still needs manual paper acknowledgement."""
+    import importlib.util
+    import pathlib
+    import sys
+    import types
+
+    package = types.ModuleType("pipeline")
+    package.__path__ = [str(pathlib.Path(__file__).parents[1] / "pipeline")]
+    monkeypatch.setitem(sys.modules, "pipeline", package)
+    spec = importlib.util.spec_from_file_location(
+        "pipeline.daily_scan", pathlib.Path(__file__).parents[1] / "pipeline" / "daily_scan.py"
+    )
+    daily_scan = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "pipeline.daily_scan", daily_scan)
+    spec.loader.exec_module(daily_scan)
+
+    daily_scan._sent_signals_today.clear()
+    scanner = daily_scan.DailyScan.__new__(daily_scan.DailyScan)
+    scanner.discord = _FakeDiscord()
+    scanner.email = _FakeEmail()
+    scanner.signal_service = _FakeSignalService()
+    scanner.position_service = _FakePositionService()
+    scanner.scoring_service = _FakeScoringService()
+    scanner.config = {"notifications": {"email": {"enabled": False}}}
+
+    scanner._send_alerts([{
+        "strategy_name": "test",
+        "ticker": "CONDITIONAL",
+        "ticker_name": "CONDITIONAL",
+        "market": "US",
+        "signal_type": "BUY",
+        "score_decision": "EXECUTE",
+        "recommendation_tier": "BUY_CONDITIONAL",
+        "price": 100.0,
+        "date": "2026-07-28",
+        "decision_event_id": 8,
+    }], "2026-07-28")
+
+    assert scanner.position_service.open_calls == []
+    assert scanner.scoring_service.marked == [(8, "WATCH_ONLY")]

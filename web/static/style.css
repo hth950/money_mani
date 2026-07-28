@@ -185,9 +185,120 @@ dialog.paper-dialog { width: min(680px, calc(100vw - 2rem)); }
 dialog.paper-chart-dialog { width: min(900px, calc(100vw - 2rem)); }
 .paper-chart-wrap { position: relative; min-height: 320px; }
 
+.signal-tier-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    align-items: start;
+}
+
+.signal-tier {
+    min-width: 0;
+}
+
+.signal-tier-sell {
+    grid-column: 1 / -1;
+}
+
+.signal-axis {
+    margin-top: 0.45rem;
+}
+
+.signal-axis > div:first-child {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+}
+
+.signal-axis-track {
+    height: 6px;
+    margin-top: 0.2rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #eceff3;
+}
+
+.signal-axis-track i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+}
+
+.signal-risk-details {
+    margin-top: 0.65rem;
+    padding: 0.6rem;
+    border-left: 3px solid #e09820;
+    border-radius: 5px;
+    background: #fff8e8;
+    font-size: 0.78rem;
+}
+
+.signal-risk-details ul {
+    margin: 0.3rem 0 0;
+    padding-left: 1.1rem;
+}
+
+.signal-risk-details details {
+    margin-top: 0.45rem;
+}
+
+.signal-risk-confirmation {
+    margin: 0.75rem 0;
+    padding: 0.8rem;
+    border: 1px solid #e5b45c;
+    border-radius: 8px;
+    background: #fffaf0;
+}
+
+.signal-risk-ack {
+    display: flex;
+    gap: 0.55rem;
+    align-items: center;
+    margin-top: 0.75rem;
+    padding: 0.65rem;
+    border-radius: 6px;
+    background: #fff;
+    font-weight: 700;
+}
+
+.signal-risk-ack input {
+    width: auto;
+    margin: 0;
+}
+
+.paper-risk-ack {
+    margin: 0.75rem 0;
+    padding: 0.8rem;
+    border: 1px solid #e5b45c;
+    border-radius: 8px;
+    background: #fffaf0;
+}
+
+.paper-risk-ack label {
+    display: flex;
+    gap: 0.55rem;
+    align-items: center;
+    margin: 0.65rem 0 0;
+    font-weight: 700;
+}
+
+.paper-risk-ack input {
+    width: auto;
+    margin: 0;
+}
+
+.paper-risk-list {
+    margin: 0.5rem 0 0;
+    padding-left: 1.2rem;
+    font-size: 0.82rem;
+}
+
 @media (max-width: 760px) {
     .paper-summary-grid,
     .paper-recommendation-grid { grid-template-columns: 1fr; }
     .paper-metrics { grid-template-columns: 1fr 1fr; }
+    .signal-tier-grid { grid-template-columns: 1fr; }
+    .signal-tier-sell { grid-column: auto; }
     nav.container-fluid { overflow-x: auto; }
 }

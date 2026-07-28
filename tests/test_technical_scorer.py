@@ -50,6 +50,7 @@ def test_technical_scorer_returns_score_in_range():
     result = scorer.score("TEST", df)
     assert "score" in result
     assert 0.0 <= result["score"] <= 1.0
+    assert result["details"]["atr_pct"] > 0
 
 
 def test_technical_scorer_bearish_score_in_range():

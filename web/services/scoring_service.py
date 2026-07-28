@@ -9,13 +9,64 @@ logger = logging.getLogger("money_mani.web.services.scoring_service")
 
 class ScoringService:
 
+    @staticmethod
+    def _risk_snapshot(
+        *,
+        ticker,
+        market,
+        scan_date,
+        composite_score,
+        opportunity_decision,
+        risk_score,
+        risk_level,
+        risk_breakdown,
+        recommendation_tier,
+        hard_block_reason,
+        risk_model_version,
+    ):
+        if all(
+            value is None
+            for value in (
+                risk_score, risk_breakdown, recommendation_tier,
+                hard_block_reason, risk_model_version,
+            )
+        ):
+            return None
+        return {
+            "ticker": ticker,
+            "market": market,
+            "scan_date": scan_date,
+            "opportunity_score": (
+                round(float(composite_score) * 100, 4)
+                if composite_score is not None else None
+            ),
+            "opportunity_decision": opportunity_decision,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "risk_breakdown": risk_breakdown,
+            "recommendation_tier": recommendation_tier,
+            "hard_block_reason": hard_block_reason,
+            "risk_model_version": risk_model_version,
+        }
+
+    @classmethod
+    def _risk_snapshot_json(cls, **values):
+        snapshot = cls._risk_snapshot(**values)
+        return (
+            json.dumps(snapshot, ensure_ascii=False)
+            if snapshot is not None else None
+        )
+
     def save_scoring_result(self, ticker, market, scan_date, scores, decision,
                             ticker_name=None, block_reason=None, weights=None,
                             signal_action=None, recommendation=None,
                             execution_state=None, score_details=None,
                             consensus_count=None, consensus_strategies=None,
                             provenance=None, data_quality=None, signal_id=None,
-                            signal_price=None):
+                            signal_price=None, opportunity_decision=None,
+                            risk_score=None, risk_level=None, risk_breakdown=None,
+                            recommendation_tier=None, hard_block_reason=None,
+                            risk_model_version=None):
         """Save the current UI row and an immutable decision snapshot.
 
         ``scoring_results`` remains a latest-value compatibility table because
@@ -35,8 +86,11 @@ class ScoringService:
                          signal_action, recommendation, execution_state, scan_date,
                          composite_score, score_breakdown_json, score_details_json,
                          weights_used_json, consensus_count, consensus_strategies_json,
-                         block_reason, provenance_json, data_quality_json)
-                        VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         block_reason, opportunity_decision, risk_score, risk_level,
+                         risk_breakdown_json, risk_snapshot_json,
+                         recommendation_tier, hard_block_reason,
+                         risk_model_version, provenance_json, data_quality_json)
+                        VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         signal_id,
                         signal_price if signal_price is not None else scores.get("signal_price"),
@@ -55,6 +109,27 @@ class ScoringService:
                         json.dumps(consensus_strategies, ensure_ascii=False)
                         if consensus_strategies is not None else None,
                         block_reason,
+                        opportunity_decision or decision,
+                        risk_score,
+                        risk_level,
+                        json.dumps(risk_breakdown, ensure_ascii=False)
+                        if risk_breakdown is not None else None,
+                        self._risk_snapshot_json(
+                            ticker=ticker,
+                            market=market,
+                            scan_date=scan_date,
+                            composite_score=scores.get("composite"),
+                            opportunity_decision=opportunity_decision or decision,
+                            risk_score=risk_score,
+                            risk_level=risk_level,
+                            risk_breakdown=risk_breakdown,
+                            recommendation_tier=recommendation_tier,
+                            hard_block_reason=hard_block_reason,
+                            risk_model_version=risk_model_version,
+                        ),
+                        recommendation_tier,
+                        hard_block_reason,
+                        risk_model_version,
                         json.dumps(provenance, ensure_ascii=False) if provenance is not None else None,
                         json.dumps(data_quality, ensure_ascii=False) if data_quality is not None else None,
                     ))
@@ -70,8 +145,10 @@ class ScoringService:
                     INSERT INTO scoring_results
                     (ticker, ticker_name, market, scan_date, technical_score, fundamental_score,
                      flow_score, intel_score, macro_score, composite_score, score_breakdown_json,
-                     decision, block_reason, weights_used_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     decision, block_reason, opportunity_decision, risk_score, risk_level,
+                     risk_breakdown_json, recommendation_tier, hard_block_reason,
+                     risk_model_version, weights_used_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     ticker, ticker_name or ticker, market, scan_date,
                     scores.get("technical"), scores.get("fundamental"),
@@ -80,6 +157,14 @@ class ScoringService:
                     scores.get("composite"),
                     json.dumps(scores, ensure_ascii=False),
                     decision, block_reason,
+                    opportunity_decision or decision,
+                    risk_score,
+                    risk_level,
+                    json.dumps(risk_breakdown, ensure_ascii=False)
+                    if risk_breakdown is not None else None,
+                    recommendation_tier,
+                    hard_block_reason,
+                    risk_model_version,
                     json.dumps(weights, ensure_ascii=False) if weights else None,
                 ))
                 if event_id:
@@ -113,6 +198,13 @@ class ScoringService:
         signal_id=None,
         signal_price=None,
         append_decision_event=True,
+        opportunity_decision=None,
+        risk_score=None,
+        risk_level=None,
+        risk_breakdown=None,
+        recommendation_tier=None,
+        hard_block_reason=None,
+        risk_model_version=None,
     ):
         """Atomically update a latest score row and append its audit event.
 
@@ -137,7 +229,9 @@ class ScoringService:
                     SET technical_score=?, fundamental_score=?, flow_score=?,
                         intel_score=?, macro_score=?, composite_score=?,
                         score_breakdown_json=?, decision=?, block_reason=?,
-                        weights_used_json=?
+                        opportunity_decision=?, risk_score=?, risk_level=?,
+                        risk_breakdown_json=?, recommendation_tier=?, hard_block_reason=?,
+                        risk_model_version=?, weights_used_json=?
                     WHERE id=?
                     """,
                     (
@@ -150,6 +244,14 @@ class ScoringService:
                         json.dumps(scores, ensure_ascii=False),
                         decision,
                         block_reason,
+                        opportunity_decision or decision,
+                        risk_score,
+                        risk_level,
+                        json.dumps(risk_breakdown, ensure_ascii=False)
+                        if risk_breakdown is not None else None,
+                        recommendation_tier,
+                        hard_block_reason,
+                        risk_model_version,
                         json.dumps(weights, ensure_ascii=False)
                         if weights is not None else None,
                         scoring_result_id,
@@ -169,8 +271,11 @@ class ScoringService:
                          signal_action, recommendation, execution_state, scan_date,
                          composite_score, score_breakdown_json, score_details_json,
                          weights_used_json, consensus_count, consensus_strategies_json,
-                         block_reason, provenance_json, data_quality_json)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         block_reason, opportunity_decision, risk_score, risk_level,
+                         risk_breakdown_json, risk_snapshot_json,
+                         recommendation_tier, hard_block_reason,
+                         risk_model_version, provenance_json, data_quality_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             scoring_result_id,
@@ -194,6 +299,27 @@ class ScoringService:
                             json.dumps(consensus_strategies, ensure_ascii=False)
                             if consensus_strategies is not None else None,
                             block_reason,
+                            opportunity_decision or decision,
+                            risk_score,
+                            risk_level,
+                            json.dumps(risk_breakdown, ensure_ascii=False)
+                            if risk_breakdown is not None else None,
+                            self._risk_snapshot_json(
+                                ticker=current["ticker"],
+                                market=current["market"],
+                                scan_date=current["scan_date"],
+                                composite_score=scores.get("composite"),
+                                opportunity_decision=opportunity_decision or decision,
+                                risk_score=risk_score,
+                                risk_level=risk_level,
+                                risk_breakdown=risk_breakdown,
+                                recommendation_tier=recommendation_tier,
+                                hard_block_reason=hard_block_reason,
+                                risk_model_version=risk_model_version,
+                            ),
+                            recommendation_tier,
+                            hard_block_reason,
+                            risk_model_version,
                             json.dumps(provenance, ensure_ascii=False)
                             if provenance is not None else None,
                             json.dumps(data_quality, ensure_ascii=False)

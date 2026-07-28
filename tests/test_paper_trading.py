@@ -15,6 +15,7 @@ from web.services.paper_trading_service import (
     PaperTradingConflict,
     PaperTradingService,
 )
+from web.services.signal_service import SignalService
 
 
 class FakeQuotes:
@@ -93,6 +94,7 @@ def paper_db(tmp_path, monkeypatch):
 
 def seed_recommendation(
     ticker="AAA", market="KRX", decision="EXECUTE", scan_date="2026-07-14",
+    composite_score=0.72,
 ):
     with connection.get_db() as db:
         db.execute(
@@ -101,9 +103,12 @@ def seed_recommendation(
               (ticker, ticker_name, market, scan_date, technical_score,
                fundamental_score, flow_score, intel_score, macro_score,
                composite_score, decision, source)
-            VALUES (?, ?, ?, ?, .8, .6, .7, .5, .4, .72, ?, 'live')
+            VALUES (?, ?, ?, ?, .8, .6, .7, .5, .4, ?, ?, 'live')
             """,
-            (ticker, f"Name-{ticker}", market, scan_date, decision),
+            (
+                ticker, f"Name-{ticker}", market, scan_date,
+                composite_score, decision,
+            ),
         )
 
 
@@ -117,6 +122,55 @@ def order(side, ticker="AAA", market="KRX", quantity=1, key="unique-key-0001"):
     }
 
 
+def acknowledged_additional_buy(
+    ticker="AAA", market="KRX", quantity=1, key="additional-buy-001"
+):
+    action = next(
+        item for item in SignalService().get_actions()
+        if item["ticker"] == ticker and item["market"] == market
+    )
+    return {
+        **order("BUY", ticker=ticker, market=market, quantity=quantity, key=key),
+        "risk_acknowledged": True,
+        "risk_snapshot_hash": action["risk_snapshot_hash"],
+    }
+
+
+def previewed_conditional_order(service, payload):
+    """Refresh the conditional hash with the same quote snapshot as the UI."""
+    preview = service.preview_order(payload)
+    snapshot = preview["recommendation_snapshot"]
+    return {
+        **payload,
+        "risk_acknowledged": True,
+        "risk_snapshot_hash": snapshot["risk_snapshot_hash"],
+        "preview_price": preview["estimated_price"],
+    }
+
+
+def seed_conditional_recommendation(
+    ticker="COND", market="US", scan_date="2026-07-14", risk_score=52.0,
+):
+    breakdown = (
+        '{"portfolio":{"score":70,"label":"포트폴리오 집중",'
+        '"reasons":["동일 섹터 집중도가 높습니다."]}}'
+    )
+    with connection.get_db() as db:
+        db.execute(
+            """
+            INSERT INTO scoring_results
+              (ticker, ticker_name, market, scan_date, technical_score,
+               fundamental_score, flow_score, intel_score, macro_score,
+               composite_score, decision, opportunity_decision, risk_score,
+               risk_level, risk_breakdown_json, recommendation_tier,
+               risk_model_version, source)
+            VALUES (?, ?, ?, ?, .7, .6, .5, .6, .5, .68, 'BLOCKED',
+                    'EXECUTE', ?, NULL, ?, 'BUY_CONDITIONAL', 'v1', 'live')
+            """,
+            (ticker, f"Name-{ticker}", market, scan_date, risk_score, breakdown),
+        )
+
+
 def test_first_and_additional_buy_use_weighted_fill_and_fee_cost(paper_db):
     seed_recommendation()
     service = PaperTradingService(
@@ -124,7 +178,12 @@ def test_first_and_additional_buy_use_weighted_fill_and_fee_cost(paper_db):
     )
 
     first = service.place_order(order("BUY", quantity=10, key="buy-first-001"))
-    second = service.place_order(order("BUY", quantity=10, key="buy-second-01"))
+    second_payload = acknowledged_additional_buy(
+        quantity=10, key="buy-second-01"
+    )
+    second = service.place_order(
+        previewed_conditional_order(service, second_payload)
+    )
 
     assert first["position"]["quantity"] == 10
     assert first["position"]["remaining_cost"] == pytest.approx(1000.15)
@@ -146,10 +205,17 @@ def test_first_and_additional_buy_use_weighted_fill_and_fee_cost(paper_db):
 def test_partial_full_sell_and_rebuy_create_a_new_cycle(paper_db):
     seed_recommendation()
     service = PaperTradingService(
-        quote_service=FakeQuotes({("KRX", "AAA"): [100, 120, 130, 130, 90]})
+        quote_service=FakeQuotes(
+            {("KRX", "AAA"): [100, 120, 120, 130, 130, 90]}
+        )
     )
     service.place_order(order("BUY", quantity=10, key="cycle-buy-0001"))
-    bought = service.place_order(order("BUY", quantity=10, key="cycle-buy-0002"))
+    additional_payload = acknowledged_additional_buy(
+        quantity=10, key="cycle-buy-0002"
+    )
+    bought = service.place_order(
+        previewed_conditional_order(service, additional_payload)
+    )
     position_id = bought["position"]["id"]
 
     partial = service.place_order(order("SELL", quantity=5, key="partial-sell-01"))
@@ -207,13 +273,164 @@ def test_idempotency_replays_once_and_rejects_key_reuse(paper_db):
         assert db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0] == 1
 
 
+def test_conditional_buy_requires_current_acknowledged_risk_snapshot(paper_db):
+    seed_conditional_recommendation()
+    service = PaperTradingService(
+        quote_service=FakeQuotes({("US", "COND"): [100]})
+    )
+    action = SignalService().get_actions()[0]
+    base = {"side": "BUY", "market": "US", "ticker": "COND", "quantity": 2}
+
+    with pytest.raises(PaperTradingConflict, match="위험 내용을 확인"):
+        service.preview_order(base)
+    with pytest.raises(PaperTradingConflict, match="위험 정보가 변경"):
+        service.preview_order({
+            **base,
+            "risk_acknowledged": True,
+            "risk_snapshot_hash": "0" * 64,
+        })
+
+    acknowledged = {
+        **base,
+        "risk_acknowledged": True,
+        "risk_snapshot_hash": action["risk_snapshot_hash"],
+        "risk_acknowledged_reasons": ["동일 섹터 집중도가 높습니다."],
+    }
+    preview = service.preview_order(acknowledged)
+    assert preview["recommendation_snapshot"]["recommendation_tier"] == "BUY_CONDITIONAL"
+    result = service.place_order({
+        **acknowledged,
+        "idempotency_key": "conditional-buy-001",
+        "preview_price": preview["estimated_price"],
+    })
+    assert result["trade"]["risk_score"] == pytest.approx(52.0)
+    assert result["trade"]["risk_snapshot_hash"] == action["risk_snapshot_hash"]
+    assert result["trade"]["risk_acknowledged_at"]
+    assert result["trade"]["risk_acknowledgement_version"] == "v1"
+    assert "동일 섹터 집중도가 높습니다." in result["trade"]["risk_snapshot_json"]
+
+
+def test_buy_ready_does_not_record_conditional_acknowledgement(paper_db):
+    seed_recommendation()
+    service = PaperTradingService(
+        quote_service=FakeQuotes({("KRX", "AAA"): [100]})
+    )
+
+    result = service.place_order({
+        **order("BUY", key="ready-with-fake-ack"),
+        "risk_acknowledged": True,
+        "risk_snapshot_hash": "a" * 64,
+    })
+
+    assert result["trade"]["risk_acknowledged_at"] is None
+    assert result["trade"]["risk_acknowledgement_version"] is None
+    snapshot = result["trade"]["risk_snapshot"]
+    assert snapshot["acknowledged_reasons"] == []
+
+
+def test_preview_recalculates_current_model_volatility_with_latest_quote(paper_db):
+    seed_recommendation()
+    service = PaperTradingService(
+        quote_service=FakeQuotes({("KRX", "AAA"): [100]})
+    )
+
+    preview = service.preview_order({
+        "side": "BUY", "market": "KRX", "ticker": "AAA", "quantity": 1
+    })
+
+    snapshot = preview["recommendation_snapshot"]
+    assert snapshot["risk_model_version"] == "entry-risk-v1"
+    volatility = snapshot["risk_breakdown"]["volatility"]["inputs"]
+    assert volatility["atr_pct"] == pytest.approx(0.02)
+    assert volatility["gap_pct"] == pytest.approx(0.0)
+
+
+def test_conditional_buy_rejects_changed_snapshot_without_mutation(paper_db):
+    seed_conditional_recommendation()
+    service = PaperTradingService(
+        quote_service=FakeQuotes({("US", "COND"): [100]})
+    )
+    old_hash = SignalService().get_actions()[0]["risk_snapshot_hash"]
+    with connection.get_db() as db:
+        db.execute(
+            "UPDATE scoring_results SET risk_score=61, risk_level='HIGH' WHERE ticker='COND'"
+        )
+    with pytest.raises(PaperTradingConflict, match="위험 정보가 변경"):
+        service.place_order({
+            "side": "BUY", "market": "US", "ticker": "COND", "quantity": 1,
+            "risk_acknowledged": True, "risk_snapshot_hash": old_hash,
+            "idempotency_key": "conditional-stale-01", "preview_price": 100,
+        })
+    with connection.get_db() as db:
+        assert db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0] == 0
+
+
+def test_hard_block_reason_always_overrides_buy_tier(paper_db):
+    seed_recommendation()
+    with connection.get_db() as db:
+        db.execute(
+            """UPDATE scoring_results
+               SET recommendation_tier='BUY_READY',
+                   hard_block_reason='시세 없음'
+               WHERE ticker='AAA'"""
+        )
+    service = PaperTradingService(
+        quote_service=FakeQuotes({("KRX", "AAA"): [100]})
+    )
+
+    with pytest.raises(PaperTradingConflict, match="시세 없음"):
+        service.preview_order({
+            "side": "BUY", "market": "KRX", "ticker": "AAA", "quantity": 1
+        })
+    with connection.get_db() as db:
+        assert db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0] == 0
+
+
+def test_portfolio_change_invalidates_conditional_snapshot_hash(
+    paper_db, monkeypatch
+):
+    seed_conditional_recommendation()
+    service = PaperTradingService(
+        quote_service=FakeQuotes({("US", "COND"): [100]})
+    )
+    old_hash = SignalService().get_actions()[0]["risk_snapshot_hash"]
+    with connection.get_db() as db:
+        db.execute(
+            """INSERT INTO paper_positions
+               (market, ticker, ticker_name, status, quantity, avg_price,
+                remaining_cost)
+               VALUES ('US', 'HELD', 'Held', 'open', 1, 10, 10)"""
+        )
+
+    with pytest.raises(PaperTradingConflict, match="위험 정보가 변경"):
+        service.preview_order({
+            "side": "BUY", "market": "US", "ticker": "COND", "quantity": 1,
+            "risk_acknowledged": True, "risk_snapshot_hash": old_hash,
+        })
+
+
+def test_stale_production_recommendation_is_rejected(paper_db, monkeypatch):
+    seed_recommendation(scan_date="2020-01-02")
+    monkeypatch.setenv("MONEY_MANI_ENV", "production")
+    service = PaperTradingService(
+        quote_service=FakeQuotes({("KRX", "AAA"): [100]})
+    )
+
+    with pytest.raises(PaperTradingConflict, match="만료"):
+        service.preview_order({
+            "side": "BUY", "market": "KRX", "ticker": "AAA", "quantity": 1
+        })
+
+
 def test_buy_expires_but_held_stock_can_always_be_sold(paper_db):
     seed_recommendation()
     service = PaperTradingService(
         quote_service=FakeQuotes({("KRX", "AAA"): [100, 105]})
     )
     service.place_order(order("BUY", quantity=2, key="active-buy-00001"))
-    seed_recommendation(decision="WATCH", scan_date="2026-07-15")
+    seed_recommendation(
+        decision="WATCH", scan_date="2026-07-15", composite_score=0.50
+    )
 
     with pytest.raises(PaperTradingConflict):
         service.preview_order({"side": "BUY", "market": "KRX", "ticker": "AAA", "quantity": 1})
@@ -433,7 +650,9 @@ def test_api_returns_409_503_and_paginates(paper_db, monkeypatch):
     assert trades.status_code == 200
     assert trades.json()["total"] == 1
 
-    seed_recommendation(decision="WATCH", scan_date="2026-07-15")
+    seed_recommendation(
+        decision="WATCH", scan_date="2026-07-15", composite_score=0.50
+    )
     stale = client.post(
         "/api/paper-trading/orders/preview",
         json={"side": "BUY", "market": "KRX", "ticker": "AAA", "quantity": 1},

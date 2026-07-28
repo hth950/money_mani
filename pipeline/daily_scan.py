@@ -253,18 +253,18 @@ class DailyScan:
         scored_candidates = self._apply_multi_layer_scoring(
             ensemble_signals, len(strategies)
         )
+        # Every scored cohort gets an entry-risk snapshot, including WATCH and
+        # SKIP rows, so the history screen never has a blank risk column for a
+        # valid score.  Only non-SKIP rows may subsequently alert/execute.
+        risk_scored_signals, blocked_signals = self._apply_risk_gate(scored_candidates)
         skipped_signals = [
-            sig for sig in scored_candidates
+            sig for sig in risk_scored_signals
             if sig.get("score_decision") == "SKIP"
         ]
-        alert_candidates = [
-            sig for sig in scored_candidates
+        ensemble_signals = [
+            sig for sig in risk_scored_signals
             if sig.get("score_decision") != "SKIP"
         ]
-
-        # Apply portfolio risk gate to alert candidates (Phase 2). BLOCKED is
-        # audit-only, while WATCH remains an observational recommendation.
-        ensemble_signals, blocked_signals = self._apply_risk_gate(alert_candidates)
         audited_signals = ensemble_signals + blocked_signals + skipped_signals
 
         # --- Phase: Exit Scoring for open positions ---
@@ -563,6 +563,7 @@ class DailyScan:
                     # Attach scoring data to signal
                     sig["composite_score"] = result["composite_score"]
                     sig["score_decision"] = result["decision"]
+                    sig["opportunity_decision"] = result["decision"]
                     sig["score_breakdown"] = result["scores"]
                     sig["score_details"] = result["details"]
                     sig["score_weights"] = result["weights"]
@@ -577,6 +578,7 @@ class DailyScan:
                     logger.warning(f"Scoring failed for {sig['ticker']}, keeping signal: {e}")
                     sig["composite_score"] = None
                     sig["score_decision"] = "FALLBACK"
+                    sig["opportunity_decision"] = "FALLBACK"
                     scored_signals.append(sig)
 
             execute_count = sum(1 for s in scored_signals if s.get("score_decision") == "EXECUTE")
@@ -595,43 +597,105 @@ class DailyScan:
             return ensemble_signals
 
     def _apply_risk_gate(self, ensemble_signals: list[dict]) -> tuple[list[dict], list[dict]]:
-        """Apply portfolio risk management gate (Phase 2).
+        """Attach two-axis entry risk without hiding soft-risk opportunities.
 
-        EXECUTE BUY signals that violate risk constraints are marked BLOCKED;
-        WATCH remains observation-only and is not capacity-gated.
-        Returns (passed_signals, blocked_signals) so blocked can still be saved to DB.
-        Falls back to passing all signals if risk module unavailable.
+        ``decision`` remains the legacy score decision.  A capacity, duplicate,
+        sector, or daily-loss warning is stored inside the entry-risk snapshot,
+        rather than changing an ``EXECUTE`` score to ``BLOCKED``.  Only the
+        entry scorer's explicit ``hard_block_reason`` is allowed to retain the
+        legacy BLOCKED state, because those cases mean a prospective order or
+        its price data cannot be trusted.
+
+        The tuple return shape is retained for callers/tests built around the
+        former risk gate.  The second list now contains hard-blocked rows only.
         """
         try:
             from scoring.risk_manager import PortfolioRiskManager
             manager = PortfolioRiskManager()
+            try:
+                from scoring.entry_risk_scorer import EntryRiskScorer
+                entry_scorer = EntryRiskScorer()
+            except ImportError:
+                entry_scorer = None
 
-            if not manager.enabled:
-                logger.info("Portfolio risk management disabled")
-                return ensemble_signals, []
-
-            passed = []
-            blocked_list = []
-            for sig in ensemble_signals:
-                # Capacity/risk rules apply only to actual entry candidates.
-                # WATCH is observation-only and passes through unchanged.
-                if (
-                    sig["signal_type"] == "BUY"
-                    and sig.get("score_decision") == "EXECUTE"
-                ):
-                    allowed, reason = manager.check_can_buy(
-                        sig["ticker"], sig.get("market", "KRX")
+            try:
+                positions = manager._get_open_positions()
+            except Exception:
+                positions = []
+            # Paper holdings represent the same personal entry concentration
+            # decision as tracked strategy positions.  Keep only one context
+            # entry per market+ticker when the two ledgers overlap.
+            try:
+                with get_db() as db:
+                    paper_positions = db.execute(
+                        """SELECT ticker, ticker_name, market
+                           FROM paper_positions WHERE status='open'"""
+                    ).fetchall()
+                positions.extend(dict(row) for row in paper_positions)
+            except Exception:
+                pass
+            # ``PortfolioRiskManager`` keeps sectors lazy and does not expose
+            # them in its grouped position rows.  The entry-risk model needs
+            # the explicit per-position sector to distinguish a first sector
+            # slot (20%) from a second same-sector slot (40%).
+            position_context = []
+            seen_positions = set()
+            for position in positions:
+                context = dict(position)
+                position_market = context.get("market", "KRX")
+                position_key = (str(position_market).upper(), str(context.get("ticker", "")).upper())
+                if position_key in seen_positions:
+                    continue
+                seen_positions.add(position_key)
+                try:
+                    context["sector"] = manager._get_sector(
+                        context.get("ticker", ""), position_market
                     )
-                    if not allowed:
-                        sig["score_decision"] = "BLOCKED"
-                        sig["block_reason"] = reason
-                        logger.info(f"BLOCKED {sig['ticker']}: {reason}")
-                        blocked_list.append(sig)
-                        continue
+                except Exception:
+                    context["sector"] = "Unknown"
+                position_context.append(context)
+
+            passed, blocked_list = [], []
+            for sig in ensemble_signals:
+                opportunity_decision = sig.get("opportunity_decision") or sig.get("score_decision")
+                sig["opportunity_decision"] = opportunity_decision
+                market = sig.get("market", "KRX")
+                ticker = sig["ticker"]
+                try:
+                    sector = manager._get_sector(ticker, market)
+                except Exception:
+                    sector = "Unknown"
+
+                # Collect every portfolio-policy warning independently.  The
+                # old ``check_can_buy`` returned at the first failure, which
+                # could hide daily-loss or capacity warnings behind sector
+                # concentration.  These are soft evidence, never block_reason.
+                legacy_soft_reason = None
+                if manager.enabled and sig.get("signal_type") == "BUY" and opportunity_decision == "EXECUTE":
+                    warnings = self._portfolio_policy_warnings(
+                        manager, position_context, ticker, market, sector
+                    )
+                    legacy_soft_reason = " | ".join(warnings) or None
+
+                risk_snapshot = self._assess_entry_risk(
+                    entry_scorer,
+                    sig,
+                    positions=position_context,
+                    sector=sector,
+                    legacy_soft_reason=legacy_soft_reason,
+                )
+                sig.update(risk_snapshot)
+                hard_block = risk_snapshot.get("hard_block_reason")
+                if hard_block:
+                    sig["score_decision"] = "BLOCKED"
+                    sig["block_reason"] = hard_block
+                    blocked_list.append(sig)
+                    logger.info("HARD BLOCKED %s: %s", ticker, hard_block)
+                    continue
                 passed.append(sig)
 
             if blocked_list:
-                logger.info(f"Risk gate: {len(blocked_list)} signals blocked, {len(passed)} passed")
+                logger.info("Entry risk: %d hard-blocked, %d available", len(blocked_list), len(passed))
             return passed, blocked_list
 
         except ImportError:
@@ -640,6 +704,139 @@ class DailyScan:
         except Exception as e:
             logger.error(f"Risk gate error, passing all: {e}")
             return ensemble_signals, []
+
+    @staticmethod
+    def _portfolio_policy_warnings(manager, positions: list[dict], ticker: str,
+                                   market: str, sector: str | None) -> list[str]:
+        """Return all legacy portfolio-policy warnings without blocking entry.
+
+        This deliberately does not call ``PortfolioRiskManager.check_can_buy``:
+        that method exits on its first failed rule and therefore loses useful
+        independent warnings (for example a daily-loss stop after a sector
+        warning).  The returned strings feed the explainable entry-risk model.
+        """
+        config = getattr(manager, "config", {}) or {}
+        warnings: list[str] = []
+        max_positions = int(config.get("max_positions", 10) or 10)
+        if max_positions > 0 and len(positions) >= max_positions:
+            warnings.append(f"포지션 한도 도달 ({len(positions)}/{max_positions})")
+
+        normalized_ticker = str(ticker).strip().upper()
+        normalized_market = str(market).strip().upper()
+        if any(
+            str(position.get("ticker", "")).strip().upper() == normalized_ticker
+            and str(position.get("market", "")).strip().upper() == normalized_market
+            for position in positions
+        ):
+            warnings.append(f"이미 포지션 보유 중: {ticker}")
+
+        clean_sector = str(sector or "").strip()
+        if clean_sector and clean_sector.casefold() not in {"unknown", "미상"}:
+            same_sector = sum(
+                str(position.get("sector", "")).strip().casefold()
+                == clean_sector.casefold()
+                for position in positions
+            )
+            assumed_weight = float(config.get("max_single_weight", 0.20) or 0.20)
+            max_sector = float(config.get("max_sector_weight", 0.30) or 0.30)
+            expected_weight = (same_sector + 1) * assumed_weight
+            if expected_weight > max_sector:
+                warnings.append(
+                    f"섹터 집중도 주의: {clean_sector} "
+                    f"({expected_weight:.0%} > {max_sector:.0%})"
+                )
+
+        try:
+            daily_pnl = float(manager._get_daily_pnl())
+            max_loss = float(config.get("max_daily_loss", -0.03))
+            if daily_pnl < max_loss:
+                warnings.append(
+                    f"일일 손실 한도 초과 ({daily_pnl:.1%} < {max_loss:.1%})"
+                )
+        except Exception:
+            # A missing optional P&L collector is not a hard data failure.
+            pass
+        return warnings
+
+    @staticmethod
+    def _assess_entry_risk(entry_scorer, sig: dict, *, positions: list[dict],
+                           sector: str, legacy_soft_reason: str | None) -> dict:
+        """Call the versioned scorer while keeping scan collection resilient.
+
+        The score model owns the numeric formula.  This adapter only supplies
+        the snapshot context and makes a conservative, display-safe fallback
+        during an upgrade where the scorer module is temporarily unavailable.
+        """
+        opportunity_decision = sig.get("opportunity_decision") or sig.get("score_decision")
+        raw_opportunity = sig.get("composite_score")
+        if raw_opportunity is None:
+            raw_opportunity = (
+                0.65 if opportunity_decision == "EXECUTE"
+                else 0.40 if opportunity_decision == "WATCH"
+                else 0.0
+            )
+        opportunity = float(raw_opportunity) * 100
+        breakdown = sig.get("score_breakdown") or {}
+        details = sig.get("score_details") or {}
+        data_quality = {
+            "score_available": sig.get("composite_score") is not None,
+            "score_details_available": bool(details),
+        }
+        signal_price = sig.get("price")
+        if signal_price is not None:
+            try:
+                signal_price = float(signal_price)
+                data_quality["price_available"] = signal_price > 0
+                data_quality["current_price"] = signal_price
+            except (TypeError, ValueError):
+                data_quality["price_available"] = False
+        if entry_scorer is not None:
+            try:
+                result = entry_scorer.assess(
+                    opportunity_score=opportunity,
+                    component_scores=breakdown,
+                    positions=positions,
+                    sector=sector,
+                    ticker=sig.get("ticker"),
+                    market=sig.get("market", "KRX"),
+                    volatility=details.get("technical"),
+                    macro_event=details.get("macro"),
+                    data_quality=data_quality,
+                    hard_block_reason=sig.get("hard_block_reason"),
+                    legacy_soft_reason=legacy_soft_reason,
+                )
+                if isinstance(result, dict):
+                    return result
+            except Exception as error:
+                logger.warning("Entry risk scoring failed for %s: %s", sig.get("ticker"), error)
+
+        # Fallback has no authority to hard-block an otherwise valid signal.
+        # Its explicit model version lets the UI/API identify this degraded
+        # snapshot until the configured model is restored.
+        if opportunity_decision == "EXECUTE":
+            tier = "BUY_CONDITIONAL" if legacy_soft_reason else "BUY_READY"
+        elif opportunity >= 55:
+            tier = "EARLY_WATCH"
+        elif opportunity >= 40:
+            tier = "WATCH"
+        else:
+            tier = "AVOID"
+        fallback_breakdown = {
+            "model_status": "unavailable",
+            "legacy_soft_reason": legacy_soft_reason,
+            "components": breakdown,
+        }
+        return {
+            "opportunity_score": opportunity,
+            "opportunity_decision": opportunity_decision,
+            "risk_score": None,
+            "risk_level": "UNKNOWN",
+            "risk_breakdown": fallback_breakdown,
+            "recommendation_tier": tier,
+            "hard_block_reason": None,
+            "risk_model_version": "unavailable",
+            "upgrade_conditions": [],
+        }
 
     def _apply_ensemble_filter(self, signals: list[dict]) -> tuple[list[dict], dict]:
         """Group signals by ticker, keep only those meeting consensus threshold.
@@ -856,14 +1053,23 @@ class DailyScan:
                         },
                         decision=sig.get("score_decision", "UNKNOWN"),
                         block_reason=sig.get("block_reason"),
+                        opportunity_decision=sig.get("opportunity_decision"),
+                        risk_score=sig.get("risk_score"),
+                        risk_level=sig.get("risk_level"),
+                        risk_breakdown=sig.get("risk_breakdown"),
+                        recommendation_tier=sig.get("recommendation_tier"),
+                        hard_block_reason=sig.get("hard_block_reason"),
+                        risk_model_version=sig.get("risk_model_version"),
                         weights=sig.get("score_weights"),
                         signal_action=sig.get("signal_type"),
                         recommendation=sig.get("score_decision", "UNKNOWN"),
                         execution_state=(
                             "BLOCKED" if sig.get("score_decision") == "BLOCKED" else
-                            "PENDING_OPEN" if sig.get("signal_type") == "BUY" and sig.get("score_decision") == "EXECUTE" else
+                            "PENDING_OPEN" if sig.get("signal_type") == "BUY"
+                            and sig.get("score_decision") == "EXECUTE"
+                            and sig.get("recommendation_tier") in (None, "BUY_READY") else
                             "PENDING_CLOSE" if sig.get("signal_type") == "SELL" and sig.get("score_decision") == "EXECUTE" else
-                            "WATCH_ONLY" if sig.get("score_decision") == "WATCH" else
+                            "WATCH_ONLY" if sig.get("score_decision") in ("WATCH", "EXECUTE") else
                             "NOT_EXECUTED"
                         ),
                         score_details=sig.get("score_details"),
@@ -1025,10 +1231,14 @@ class DailyScan:
                     self.scoring_service.link_decision_event_signal(event_id, sig_id)
 
                 if sig["signal_type"] == "BUY":
-                    # WATCH is an observation state, never a position action.
-                    # Require an explicit scorer decision before opening paper
-                    # positions; scorer failures must not silently trade.
-                    if score_decision == "EXECUTE":
+                    # Conditional entries are a manual paper-trading choice,
+                    # never an automatic strategy position.  Legacy snapshots
+                    # without a tier retain their former EXECUTE behaviour.
+                    buy_ready = (
+                        score_decision == "EXECUTE"
+                        and sig.get("recommendation_tier") in (None, "BUY_READY")
+                    )
+                    if buy_ready:
                         self.position_service.open_position(
                             strategy_name=sig["strategy_name"],
                             ticker=sig["ticker"],
@@ -1043,7 +1253,7 @@ class DailyScan:
                     elif event_id:
                         self.scoring_service.mark_decision_event(
                             event_id,
-                            "WATCH_ONLY" if score_decision == "WATCH" else "NOT_EXECUTED",
+                            "WATCH_ONLY" if score_decision in ("WATCH", "EXECUTE") else "NOT_EXECUTED",
                         )
                 elif sig["signal_type"] == "SELL":
                     # SELL consensus still uses the legacy scorer for now, so

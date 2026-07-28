@@ -12,19 +12,27 @@
   </div>
 </div>
 
-<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem;" id="action-columns">
-  <div>
+<div class="signal-tier-grid" id="action-columns">
+  <section class="signal-tier signal-tier-ready">
     <h3 style="color:#2d9e5f; margin-bottom:0.5rem;">✅ 매수 추천</h3>
     <div id="buy-list"></div>
-  </div>
-  <div>
+  </section>
+  <section class="signal-tier signal-tier-conditional">
+    <h3 style="color:#b56b00; margin-bottom:0.5rem;">⚠️ 조건부 매수 후보</h3>
+    <div id="conditional-list"></div>
+  </section>
+  <section class="signal-tier">
+    <h3 style="color:#2878b5; margin-bottom:0.5rem;">🔎 관심 후보</h3>
+    <div id="early-watch-list"></div>
+  </section>
+  <section class="signal-tier">
+    <h3 style="color:#888; margin-bottom:0.5rem;">👀 관망 · 제외</h3>
+    <div id="watch-list"></div>
+  </section>
+  <section class="signal-tier signal-tier-sell">
     <h3 style="color:#e05252; margin-bottom:0.5rem;">🔴 매도 추천</h3>
     <div id="sell-list"></div>
-  </div>
-  <div>
-    <h3 style="color:#888; margin-bottom:0.5rem;">👀 관망</h3>
-    <div id="watch-list"></div>
-  </div>
+  </section>
 </div>
 
 <div id="no-data" style="display:none; text-align:center; padding:3rem; color:#888;">
@@ -50,6 +58,17 @@
         <label>
           수량
           <input id="signals-paper-quantity" type="number" min="1" step="1" value="1" required>
+        </label>
+      </div>
+      <div id="signals-paper-risk" class="signal-risk-confirmation" hidden>
+        <div class="paper-section-header">
+          <strong>조건부 진입 위험</strong>
+          <span id="signals-paper-risk-score" class="paper-badge warn"></span>
+        </div>
+        <div id="signals-paper-risk-details"></div>
+        <label class="signal-risk-ack">
+          <input id="signals-paper-risk-ack" type="checkbox">
+          <span>위 위험을 이해했습니다</span>
         </label>
       </div>
       <div id="signals-paper-error" class="paper-error-box" role="alert" hidden></div>
@@ -80,6 +99,62 @@ function scoreBar(score) {
   return `<div style="background:#eee; border-radius:4px; height:6px; margin:4px 0;">
     <div style="width:${pct}%; background:${color}; height:6px; border-radius:4px;"></div>
   </div><span style="font-size:0.8rem; color:${color};">${pct}%</span>`;
+}
+
+function dualAxisBars(item) {
+  const opportunity = Number.isFinite(Number(item.opportunity_score))
+    ? Math.round(Number(item.opportunity_score))
+    : Math.round((Number(item.composite_score) || 0) * 100);
+  const riskValue = paperNumber(item.risk_score);
+  const risk = riskValue == null ? null : Math.max(0, Math.min(100, Math.round(riskValue)));
+  const opportunityColor = opportunity >= 65 ? '#2d9e5f' : opportunity >= 55 ? '#2878b5' : opportunity >= 40 ? '#e09820' : '#888';
+  const riskColor = risk == null ? '#9ca3af' : risk <= 35 ? '#2d9e5f' : risk <= 60 ? '#e09820' : '#e05252';
+  return `<div class="signal-axis">
+      <div><span>매수 매력도</span><strong style="color:${opportunityColor}">${opportunity}점</strong></div>
+      <div class="signal-axis-track"><i style="width:${Math.max(0, Math.min(100, opportunity))}%;background:${opportunityColor}"></i></div>
+    </div>
+    <div class="signal-axis">
+      <div><span>진입 위험도</span><strong style="color:${riskColor}">${risk == null ? '산정 전' : risk + '점'}</strong></div>
+      <div class="signal-axis-track"><i style="width:${risk || 0}%;background:${riskColor}"></i></div>
+    </div>`;
+}
+
+function riskReasons(item) {
+  const result = [];
+  const breakdown = item?.risk_breakdown;
+  if (!breakdown || typeof breakdown !== 'object') return result;
+  const collect = (value) => {
+    if (Array.isArray(value)) {
+      for (const nested of value) collect(nested);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    let reasons = value.reasons ?? value.reason ?? [];
+    if (!Array.isArray(reasons)) reasons = [reasons];
+    for (const reason of reasons) if (reason) result.push(String(reason));
+    for (const [key, nested] of Object.entries(value)) {
+      if (!['reasons', 'reason'].includes(key)) collect(nested);
+    }
+  };
+  collect(breakdown);
+  return [...new Set(result)];
+}
+
+function riskDetailHtml(item, limit = 3) {
+  const reasons = riskReasons(item).slice(0, limit);
+  const upgrades = Array.isArray(item.upgrade_conditions) ? item.upgrade_conditions.slice(0, 3) : [];
+  const upgradeText = (condition) => {
+    if (typeof condition === 'string') return condition;
+    if (!condition || typeof condition !== 'object') return String(condition || '');
+    return String(condition.message || condition.reason || condition.label || JSON.stringify(condition));
+  };
+  const reasonHtml = reasons.length
+    ? `<ul>${reasons.map(reason => `<li>${esc(reason)}</li>`).join('')}</ul>`
+    : '<p class="paper-muted">구조화된 위험 사유가 아직 없습니다.</p>';
+  const upgradeHtml = upgrades.length
+    ? `<details><summary>매수 추천으로 올라가려면</summary><ul>${upgrades.map(condition => `<li>${esc(upgradeText(condition))}</li>`).join('')}</ul></details>`
+    : '';
+  return `<div class="signal-risk-details"><strong>왜 조건부인가</strong>${reasonHtml}${upgradeHtml}</div>`;
 }
 
 function esc(s) {
@@ -176,14 +251,15 @@ function renderCard(item) {
     : '';
   const paperOnlyBadge = item._paperOnly ? '<span class="paper-badge muted">모의 보유 추적</span>' : '';
   const mktBadge = `<span style="font-size:0.75rem;color:#888;">${esc(item.market)}</span>`;
-  const scoreDisplay = scoreBar(item.composite_score);
+  const scoreDisplay = dualAxisBars(item);
   const conviction = item.conviction || '-';
   const convColor = convictionColor(conviction);
   const date = item.last_signal_date || '-';
   const price = item.signal_price ? item.signal_price.toLocaleString() : '-';
-  const buyButton = SIGNALS_CAN_PAPER_TRADE && item.action === 'BUY'
+  const tier = item.recommendation_tier || (item.action === 'BUY' ? 'BUY_READY' : 'WATCH');
+  const buyButton = SIGNALS_CAN_PAPER_TRADE && ['BUY_READY', 'BUY_CONDITIONAL'].includes(tier)
     ? `<button type="button" class="paper-compact-button" data-paper-order data-side="BUY"
-        data-market="${escAttr(item.market)}" data-ticker="${escAttr(item.ticker)}" data-name="${escAttr(item.ticker_name || item.ticker)}">모의 매수</button>`
+        data-market="${escAttr(item.market)}" data-ticker="${escAttr(item.ticker)}" data-name="${escAttr(item.ticker_name || item.ticker)}">${tier === 'BUY_CONDITIONAL' ? '조건부 모의매수' : '모의 매수'}</button>`
     : '';
   const sellButton = SIGNALS_CAN_PAPER_TRADE && (item.action === 'SELL' || paperPosition)
     ? `<button type="button" class="secondary paper-compact-button" data-paper-order data-side="SELL"
@@ -201,6 +277,8 @@ function renderCard(item) {
     </a>
     <div style="margin:2px 0;display:flex;gap:4px;align-items:center;flex-wrap:wrap;">${mktBadge}${holdBadge}${paperBadge}${paperExitBadge}${paperOnlyBadge}${eBadge}</div>
     ${scoreDisplay}
+    ${tier === 'BUY_CONDITIONAL' ? riskDetailHtml(item) : ''}
+    ${tier === 'UNAVAILABLE' && item.hard_block_reason ? `<div class="paper-error-box" style="padding:.5rem;margin:.5rem 0 0">${esc(item.hard_block_reason)}</div>` : ''}
     <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
       <span style="color:${convColor}; font-weight:600;">${esc(conviction)}</span>
       <span style="color:#888;">${esc(date)}</span>
@@ -220,6 +298,7 @@ let _exitScores = {};
 let _paperPositions = new Map();
 let _paperOrder = null;
 let _paperPreview = null;
+let _signalActions = new Map();
 
 async function loadExitScores() {
   try {
@@ -248,7 +327,7 @@ async function loadExitScores() {
     }
     _exitScores = {};
     for (const row of data) {
-      _exitScores[row.ticker] = row;
+      _exitScores[paperKey(row.market, row.ticker)] = row;
     }
   } catch (e) { /* non-critical */ }
 }
@@ -278,6 +357,9 @@ function openPaperOrder(button) {
     max_quantity: maxQuantity,
     idempotency_key: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   };
+  const signal = _signalActions.get(paperKey(_paperOrder.market, _paperOrder.ticker)) || {};
+  _paperOrder.recommendation_tier = signal.recommendation_tier || null;
+  _paperOrder.risk_snapshot_hash = signal.risk_snapshot_hash || null;
   _paperPreview = null;
   document.getElementById('signals-paper-title').textContent = `모의 ${side === 'BUY' ? '매수' : '매도'} 주문`;
   document.getElementById('signals-paper-subtitle').textContent = `${_paperOrder.market} · ${_paperOrder.ticker_name} (${_paperOrder.ticker})`;
@@ -290,7 +372,14 @@ function openPaperOrder(button) {
   document.getElementById('signals-paper-preview').hidden = true;
   document.getElementById('signals-paper-preview').innerHTML = '';
   document.getElementById('signals-paper-confirm-button').disabled = true;
-  document.getElementById('signals-paper-preview-button').disabled = false;
+  const conditional = side === 'BUY' && _paperOrder.recommendation_tier === 'BUY_CONDITIONAL';
+  const riskBox = document.getElementById('signals-paper-risk');
+  const riskAck = document.getElementById('signals-paper-risk-ack');
+  riskBox.hidden = !conditional;
+  riskAck.checked = false;
+  document.getElementById('signals-paper-risk-score').textContent = `위험도 ${Math.round(Number(signal.risk_score) || 0)}점`;
+  document.getElementById('signals-paper-risk-details').innerHTML = conditional ? riskDetailHtml(signal, 10) : '';
+  document.getElementById('signals-paper-preview-button').disabled = conditional;
   document.getElementById('signals-paper-dialog').showModal();
 }
 
@@ -301,6 +390,12 @@ function signalOrderPayload(includeIdempotency = false) {
     throw new Error(`모의 보유 수량 ${_paperOrder.max_quantity.toLocaleString('ko-KR')}주를 초과할 수 없습니다.`);
   }
   const payload = { side: _paperOrder.side, market: _paperOrder.market, ticker: _paperOrder.ticker, quantity };
+  if (_paperOrder.side === 'BUY' && _paperOrder.recommendation_tier === 'BUY_CONDITIONAL') {
+    const acknowledged = document.getElementById('signals-paper-risk-ack').checked;
+    if (!acknowledged) throw new Error("위험 내용을 확인하고 '위 위험을 이해했습니다'에 동의해 주세요.");
+    payload.risk_acknowledged = true;
+    payload.risk_snapshot_hash = _paperOrder.risk_snapshot_hash;
+  }
   if (includeIdempotency) {
     payload.idempotency_key = _paperOrder.idempotency_key;
     if (_paperPreview?.estimated_price !== undefined && _paperPreview?.estimated_price !== null) {
@@ -315,6 +410,28 @@ function showSignalOrderError(message) {
   const element = document.getElementById('signals-paper-error');
   element.textContent = message;
   element.hidden = false;
+}
+
+async function refreshConditionalRiskAfterConflict(message) {
+  if (
+    !_paperOrder ||
+    _paperOrder.recommendation_tier !== 'BUY_CONDITIONAL' ||
+    !String(message).includes('위험 정보가 변경')
+  ) return;
+  await loadActions();
+  const latest = _signalActions.get(paperKey(_paperOrder.market, _paperOrder.ticker));
+  if (!latest) return;
+  _paperPreview = null;
+  _paperOrder.recommendation_tier = latest.recommendation_tier;
+  _paperOrder.risk_snapshot_hash = latest.risk_snapshot_hash || null;
+  const conditional = latest.recommendation_tier === 'BUY_CONDITIONAL';
+  document.getElementById('signals-paper-risk').hidden = !conditional;
+  document.getElementById('signals-paper-risk-score').textContent = `위험도 ${Math.round(Number(latest.risk_score) || 0)}점`;
+  document.getElementById('signals-paper-risk-details').innerHTML = riskDetailHtml(latest, 10);
+  document.getElementById('signals-paper-risk-ack').checked = false;
+  document.getElementById('signals-paper-preview-button').disabled = conditional;
+  document.getElementById('signals-paper-confirm-button').disabled = true;
+  document.getElementById('signals-paper-preview').hidden = true;
 }
 
 async function previewSignalOrder(event) {
@@ -332,6 +449,17 @@ async function previewSignalOrder(event) {
     });
     const preview = _paperPreview;
     const market = preview.market || payload.market;
+    const snapshot = preview.recommendation_snapshot;
+    if (_paperOrder.side === 'BUY' && snapshot) {
+      _paperOrder.recommendation_tier = snapshot.recommendation_tier;
+      _paperOrder.risk_snapshot_hash = snapshot.risk_snapshot_hash || null;
+      const conditional = snapshot.recommendation_tier === 'BUY_CONDITIONAL';
+      document.getElementById('signals-paper-risk').hidden = !conditional;
+      document.getElementById('signals-paper-risk-score').textContent =
+        `위험도 ${Math.round(Number(snapshot.risk_score) || 0)}점`;
+      document.getElementById('signals-paper-risk-details').innerHTML =
+        conditional ? riskDetailHtml(snapshot, 10) : '';
+    }
     const money = (value) => {
       const number = paperNumber(value);
       if (number === null) return '-';
@@ -354,8 +482,12 @@ async function previewSignalOrder(event) {
   } catch (error) {
     _paperPreview = null;
     showSignalOrderError(error.message);
+    await refreshConditionalRiskAfterConflict(error.message);
   } finally {
-    previewButton.disabled = false;
+    const tier = _paperOrder?.recommendation_tier;
+    previewButton.disabled = tier === 'BUY_CONDITIONAL'
+      ? !document.getElementById('signals-paper-risk-ack').checked
+      : tier !== 'BUY_READY' && _paperOrder?.side === 'BUY';
     previewButton.removeAttribute('aria-busy');
   }
 }
@@ -376,7 +508,8 @@ async function confirmSignalOrder() {
     setTimeout(() => document.getElementById('signals-paper-dialog').close(), 900);
   } catch (error) {
     showSignalOrderError(error.message);
-    button.disabled = false;
+    await refreshConditionalRiskAfterConflict(error.message);
+    button.disabled = !_paperPreview;
   } finally {
     button.removeAttribute('aria-busy');
   }
@@ -384,31 +517,52 @@ async function confirmSignalOrder() {
 
 async function loadActions() {
   try {
-    await Promise.all([loadExitScores(), loadPaperOverview()]);
+    await loadPaperOverview();
+    await loadExitScores();
     const res = await fetch('/api/signals/actions?days=7');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-
     // Merge exit score fields into each action item
     for (const item of data) {
-      const es = _exitScores[item.ticker];
+      const es = _exitScores[paperKey(item.market, item.ticker)];
       if (es) {
         item.exit_score = es.exit_score;
         item.exit_decision = es.exit_decision;
       }
     }
+    const actionKeys = new Set(data.map(item => paperKey(item.market, item.ticker)));
+    for (const es of Object.values(_exitScores)) {
+      const key = paperKey(es.market, es.ticker);
+      if (actionKeys.has(key)) continue;
+      data.push({
+        ...es,
+        action: 'WATCH',
+        recommendation_tier: 'WATCH',
+        opportunity_score: paperNumber(es.composite_score) == null
+          ? null : Number(es.composite_score) * 100,
+        risk_score: null,
+        _paperOnly: true,
+      });
+    }
+    _signalActions = new Map(data.map(item => [paperKey(item.market, item.ticker), item]));
 
-    const buy = data.filter(d => d.action === 'BUY');
-    const sell = data.filter(d => d.action === 'SELL');
-    const watch = data.filter(d => d.action === 'WATCH' || (
-      ['NONE', 'SKIP'].includes(d.action) && _paperPositions.has(paperKey(d.market, d.ticker))
-    ));
+    const buy = data.filter(d => d.recommendation_tier === 'BUY_READY');
+    const conditional = data.filter(d => d.recommendation_tier === 'BUY_CONDITIONAL');
+    const earlyWatch = data.filter(d => d.recommendation_tier === 'EARLY_WATCH');
+    const sell = data.filter(d => ['SELL_EXECUTE', 'SELL_WATCH'].includes(d.exit_decision));
+    const sellKeys = new Set(sell.map(d => paperKey(d.market, d.ticker)));
+    const watch = data.filter(d =>
+      ['WATCH', 'AVOID', 'UNAVAILABLE'].includes(d.recommendation_tier) &&
+      !sellKeys.has(paperKey(d.market, d.ticker))
+    );
 
     document.getElementById('buy-list').innerHTML = buy.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
+    document.getElementById('conditional-list').innerHTML = conditional.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
+    document.getElementById('early-watch-list').innerHTML = earlyWatch.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
     document.getElementById('sell-list').innerHTML = sell.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
     document.getElementById('watch-list').innerHTML = watch.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
 
-    if (buy.length + sell.length + watch.length === 0) {
+    if (buy.length + conditional.length + earlyWatch.length + sell.length + watch.length === 0) {
       document.getElementById('no-data').style.display = 'block';
       document.getElementById('action-columns').style.display = 'none';
     } else {
@@ -421,6 +575,8 @@ async function loadActions() {
   } catch (err) {
     const message = '<p style="color:var(--pico-del-color,red);text-align:center;">데이터 로딩 실패: ' + esc(err.message) + '</p>';
     document.getElementById('buy-list').innerHTML = message;
+    document.getElementById('conditional-list').innerHTML = message;
+    document.getElementById('early-watch-list').innerHTML = message;
     document.getElementById('sell-list').innerHTML = message;
     document.getElementById('watch-list').innerHTML = message;
     document.getElementById('action-columns').style.display = 'grid';
@@ -442,6 +598,12 @@ document.getElementById('signals-paper-quantity')?.addEventListener('input', () 
   _paperPreview = null;
   document.getElementById('signals-paper-confirm-button').disabled = true;
   document.getElementById('signals-paper-preview').hidden = true;
+});
+document.getElementById('signals-paper-risk-ack')?.addEventListener('change', (event) => {
+  _paperPreview = null;
+  document.getElementById('signals-paper-confirm-button').disabled = true;
+  document.getElementById('signals-paper-preview').hidden = true;
+  document.getElementById('signals-paper-preview-button').disabled = !event.target.checked;
 });
 
 loadActions();
