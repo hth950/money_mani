@@ -3,41 +3,49 @@
 
 {% block content %}
 {% set can_paper_trade = request.state.user.role == 'owner' %}
-<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-  <h1 style="margin:0;">💹 매매 대시보드</h1>
-  <div style="display:flex; gap:0.5rem; align-items:center;">
-    <span id="last-updated" style="font-size:0.85rem; color:#888;"></span>
-    <button onclick="loadActions()" class="outline" style="padding:0.3rem 0.8rem;">🔄 새로고침</button>
-    <a href="/guide" style="padding:0.3rem 0.8rem;" role="button" class="outline">📖 매매 가이드</a>
+<header class="paper-page-header signals-page-header">
+  <h1>💹 매매 대시보드</h1>
+  <div class="paper-inline-actions">
+    <span id="last-updated" class="paper-muted signals-last-updated"></span>
+    <button onclick="loadActions()" class="outline paper-compact-button">🔄 새로고침</button>
+    <a href="/guide" role="button" class="outline paper-compact-button">📖 매매 가이드</a>
   </div>
-</div>
+</header>
 
 <div class="signal-tier-grid" id="action-columns">
   <section class="signal-tier signal-tier-ready">
-    <h3 style="color:#2d9e5f; margin-bottom:0.5rem;">✅ 매수 추천</h3>
-    <div id="buy-list"></div>
+    <header class="signal-row-header">
+      <h3 class="signal-row-title">✅ 매수 추천</h3>
+      <span id="buy-count" class="paper-badge muted signal-row-count" aria-live="polite">0종목</span>
+    </header>
+    <div id="buy-list" class="signal-card-list"></div>
   </section>
   <section class="signal-tier signal-tier-conditional">
-    <h3 style="color:#b56b00; margin-bottom:0.5rem;">⚠️ 조건부 매수 후보</h3>
-    <div id="conditional-list"></div>
+    <header class="signal-row-header">
+      <h3 class="signal-row-title" aria-label="조건부 매수 후보">⚠️ 조건부 매수</h3>
+      <span id="conditional-count" class="paper-badge muted signal-row-count" aria-live="polite">0종목</span>
+    </header>
+    <div id="conditional-list" class="signal-card-list"></div>
   </section>
-  <section class="signal-tier">
-    <h3 style="color:#2878b5; margin-bottom:0.5rem;">🔎 관심 후보</h3>
-    <div id="early-watch-list"></div>
-  </section>
-  <section class="signal-tier">
-    <h3 style="color:#888; margin-bottom:0.5rem;">👀 관망 · 제외</h3>
-    <div id="watch-list"></div>
+  <section class="signal-tier signal-tier-watch">
+    <header class="signal-row-header">
+      <h3 class="signal-row-title">🔎 관심/관망</h3>
+      <span id="watch-count" class="paper-badge muted signal-row-count" aria-live="polite">0종목</span>
+    </header>
+    <div id="watch-list" class="signal-card-list"></div>
   </section>
   <section class="signal-tier signal-tier-sell">
-    <h3 style="color:#e05252; margin-bottom:0.5rem;">🔴 매도 추천</h3>
-    <div id="sell-list"></div>
+    <header class="signal-row-header">
+      <h3 class="signal-row-title">🔴 매도/제외</h3>
+      <span id="sell-count" class="paper-badge muted signal-row-count" aria-live="polite">0종목</span>
+    </header>
+    <div id="sell-list" class="signal-card-list"></div>
   </section>
 </div>
 
-<div id="no-data" style="display:none; text-align:center; padding:3rem; color:#888;">
+<div id="no-data" class="signals-empty-state" hidden>
   <p>아직 매매 신호가 없습니다.</p>
-  <p style="font-size:0.9rem;">일일 스캔(장 마감 후)이 실행되면 여기에 표시됩니다.</p>
+  <p class="signals-empty-note">일일 스캔(장 마감 후)이 실행되면 여기에 표시됩니다.</p>
 </div>
 
 <dialog id="signals-paper-dialog" class="paper-dialog">
@@ -209,6 +217,22 @@ function exitBadge(item) {
   return `<span style="background:${bg};color:#fff;padding:1px 6px;border-radius:4px;font-size:0.72rem;margin-left:4px;">Exit ${pct}% ${label}</span>`;
 }
 
+function signalStateBadge(item) {
+  if (item.exit_decision === 'SELL_EXECUTE') {
+    return '<span class="paper-badge error signal-state-label">매도 실행</span>';
+  }
+  if (item.exit_decision === 'SELL_WATCH') {
+    return '<span class="paper-badge warn signal-state-label">매도 경고</span>';
+  }
+  if (item.recommendation_tier === 'UNAVAILABLE') {
+    return '<span class="paper-badge muted signal-state-label">판단 불가</span>';
+  }
+  if (item.recommendation_tier === 'AVOID') {
+    return '<span class="paper-badge muted signal-state-label">제외</span>';
+  }
+  return '';
+}
+
 async function showSummary(ticker, market, btn) {
   const card = btn.closest('div[data-card]');
   const textEl = card ? card.querySelector('.summary-text') : btn.nextElementSibling;
@@ -234,7 +258,7 @@ async function showSummary(ticker, market, btn) {
   btn.disabled = false;
 }
 
-function renderCard(item) {
+function renderCard(item, row = '') {
   const holdBadge = item.is_holding
     ? `<span style="background:#3b82f6;color:#fff;padding:1px 6px;border-radius:4px;font-size:0.75rem;margin-left:4px;">전략 추적 보유${item.pnl_pct != null ? ' ' + (item.pnl_pct >= 0 ? '+' : '') + item.pnl_pct.toFixed(1) + '%' : ''}</span>`
     : '';
@@ -250,7 +274,8 @@ function renderCard(item) {
     ? `<span class="paper-badge ${paperExit === 'SELL_EXECUTE' ? 'error' : paperExit === 'SELL_WATCH' ? 'warn' : 'muted'}">모의 Exit ${esc(paperExit)}</span>`
     : '';
   const paperOnlyBadge = item._paperOnly ? '<span class="paper-badge muted">모의 보유 추적</span>' : '';
-  const mktBadge = `<span style="font-size:0.75rem;color:#888;">${esc(item.market)}</span>`;
+  const mktBadge = `<span class="signal-market">${esc(item.market)}</span>`;
+  const stateBadge = row === 'sell' ? signalStateBadge(item) : '';
   const scoreDisplay = dualAxisBars(item);
   const conviction = item.conviction || '-';
   const convColor = convictionColor(conviction);
@@ -268,27 +293,27 @@ function renderCard(item) {
         ${paperPosition ? '' : 'disabled'}>모의 매도</button>`
     : '';
 
-  return `<div data-card="1" style="border:1px solid #ddd; border-radius:8px; padding:0.75rem; margin-bottom:0.5rem; background:#fff; transition:box-shadow 0.2s;"
+  return `<div data-card="1" class="signal-card"
     onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)'"
     onmouseout="this.style.boxShadow='none'">
-    <a href="/scoring?ticker=${encodeURIComponent(item.ticker || '')}" style="display:flex; justify-content:space-between; align-items:center; text-decoration:none;color:inherit;">
-      <span style="font-weight:600;">${esc(item.ticker_name)}</span>
-      <span style="font-size:0.8rem; color:#888;">${esc(item.ticker)}</span>
+    <a href="/scoring?ticker=${encodeURIComponent(item.ticker || '')}" class="signal-card-heading">
+      <span class="signal-card-name">${esc(item.ticker_name)}</span>
+      <span class="signal-card-ticker">${esc(item.ticker)}</span>
     </a>
-    <div style="margin:2px 0;display:flex;gap:4px;align-items:center;flex-wrap:wrap;">${mktBadge}${holdBadge}${paperBadge}${paperExitBadge}${paperOnlyBadge}${eBadge}</div>
+    <div class="signal-card-badges">${mktBadge}${stateBadge}${holdBadge}${paperBadge}${paperExitBadge}${paperOnlyBadge}${eBadge}</div>
     ${scoreDisplay}
     ${tier === 'BUY_CONDITIONAL' ? riskDetailHtml(item) : ''}
-    ${tier === 'UNAVAILABLE' && item.hard_block_reason ? `<div class="paper-error-box" style="padding:.5rem;margin:.5rem 0 0">${esc(item.hard_block_reason)}</div>` : ''}
-    <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
+    ${tier === 'UNAVAILABLE' && item.hard_block_reason ? `<div class="paper-error-box signal-unavailable-reason">${esc(item.hard_block_reason)}</div>` : ''}
+    <div class="signal-card-meta">
       <span style="color:${convColor}; font-weight:600;">${esc(conviction)}</span>
-      <span style="color:#888;">${esc(date)}</span>
+      <span class="signal-card-date">${esc(date)}</span>
     </div>
-    <div style="font-size:0.8rem; color:#aaa;">신호가: ${esc(price)}</div>
-    <div style="margin-top:6px; display:flex; align-items:flex-start; gap:6px; flex-wrap:wrap;">
-      ${SIGNALS_CAN_AI_SUMMARY ? `<button type="button" class="outline" style="font-size:0.75rem;padding:2px 8px;" data-signal-summary
+    <div class="signal-card-price">신호가: ${esc(price)}</div>
+    <div class="signal-card-actions">
+      ${SIGNALS_CAN_AI_SUMMARY ? `<button type="button" class="outline paper-compact-button signal-summary-button" data-signal-summary
         data-ticker="${escAttr(item.ticker)}" data-market="${escAttr(item.market)}">AI 요약</button>` : ''}
       ${buyButton}${sellButton}
-      <span class="summary-text" style="font-size:0.8rem;color:#555;display:none;flex:1;"></span>
+      <span class="summary-text signal-summary-text"></span>
     </div>
   </div>`;
 }
@@ -546,41 +571,47 @@ async function loadActions() {
     }
     _signalActions = new Map(data.map(item => [paperKey(item.market, item.ticker), item]));
 
-    const buy = data.filter(d => d.recommendation_tier === 'BUY_READY');
-    const conditional = data.filter(d => d.recommendation_tier === 'BUY_CONDITIONAL');
-    const earlyWatch = data.filter(d => d.recommendation_tier === 'EARLY_WATCH');
     const sell = data.filter(d => ['SELL_EXECUTE', 'SELL_WATCH'].includes(d.exit_decision));
     const sellKeys = new Set(sell.map(d => paperKey(d.market, d.ticker)));
+    const buy = data.filter(d => d.recommendation_tier === 'BUY_READY');
+    const conditional = data.filter(d => d.recommendation_tier === 'BUY_CONDITIONAL');
     const watch = data.filter(d =>
-      ['WATCH', 'AVOID', 'UNAVAILABLE'].includes(d.recommendation_tier) &&
+      ['EARLY_WATCH', 'WATCH'].includes(d.recommendation_tier) &&
       !sellKeys.has(paperKey(d.market, d.ticker))
     );
+    const excluded = data.filter(d =>
+      ['AVOID', 'UNAVAILABLE'].includes(d.recommendation_tier) &&
+      !sellKeys.has(paperKey(d.market, d.ticker))
+    );
+    const sellOrExcluded = [...sell, ...excluded];
+    const displayRows = [
+      { listId: 'buy-list', countId: 'buy-count', items: buy },
+      { listId: 'conditional-list', countId: 'conditional-count', items: conditional },
+      { listId: 'watch-list', countId: 'watch-count', items: watch },
+      { listId: 'sell-list', countId: 'sell-count', items: sellOrExcluded, cardRow: 'sell' },
+    ];
 
-    document.getElementById('buy-list').innerHTML = buy.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
-    document.getElementById('conditional-list').innerHTML = conditional.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
-    document.getElementById('early-watch-list').innerHTML = earlyWatch.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
-    document.getElementById('sell-list').innerHTML = sell.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
-    document.getElementById('watch-list').innerHTML = watch.map(renderCard).join('') || '<p style="color:#aaa; font-size:0.9rem;">없음</p>';
-
-    if (buy.length + conditional.length + earlyWatch.length + sell.length + watch.length === 0) {
-      document.getElementById('no-data').style.display = 'block';
-      document.getElementById('action-columns').style.display = 'none';
-    } else {
-      document.getElementById('no-data').style.display = 'none';
-      document.getElementById('action-columns').style.display = 'grid';
+    for (const row of displayRows) {
+      document.getElementById(row.listId).innerHTML = row.items.map(item => renderCard(item, row.cardRow)).join('') || '<p class="signal-empty">없음</p>';
+      document.getElementById(row.countId).textContent = `${row.items.length.toLocaleString('ko-KR')}종목`;
     }
+
+    const hasData = displayRows.some(row => row.items.length > 0);
+    document.getElementById('no-data').hidden = hasData;
+    document.getElementById('action-columns').hidden = !hasData;
 
     const now = new Date().toLocaleTimeString('ko-KR');
     document.getElementById('last-updated').textContent = `최근 업데이트: ${now}`;
   } catch (err) {
     const message = '<p style="color:var(--pico-del-color,red);text-align:center;">데이터 로딩 실패: ' + esc(err.message) + '</p>';
-    document.getElementById('buy-list').innerHTML = message;
-    document.getElementById('conditional-list').innerHTML = message;
-    document.getElementById('early-watch-list').innerHTML = message;
-    document.getElementById('sell-list').innerHTML = message;
-    document.getElementById('watch-list').innerHTML = message;
-    document.getElementById('action-columns').style.display = 'grid';
-    document.getElementById('no-data').style.display = 'none';
+    for (const listId of ['buy-list', 'conditional-list', 'watch-list', 'sell-list']) {
+      document.getElementById(listId).innerHTML = message;
+    }
+    for (const countId of ['buy-count', 'conditional-count', 'watch-count', 'sell-count']) {
+      document.getElementById(countId).textContent = '-';
+    }
+    document.getElementById('action-columns').hidden = false;
+    document.getElementById('no-data').hidden = true;
   }
 }
 

@@ -185,19 +185,186 @@ dialog.paper-dialog { width: min(680px, calc(100vw - 2rem)); }
 dialog.paper-chart-dialog { width: min(900px, calc(100vw - 2rem)); }
 .paper-chart-wrap { position: relative; min-height: 320px; }
 
+.signals-page-header .paper-compact-button {
+    min-height: 2.5rem;
+}
+
+.signals-last-updated {
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
 .signal-tier-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-direction: column;
     gap: 1rem;
-    align-items: start;
+    align-items: stretch;
+    width: 100%;
 }
 
 .signal-tier {
+    width: 100%;
     min-width: 0;
+    padding-top: 1rem;
+    border-top: 1px solid var(--pico-muted-border-color, #d8dee4);
 }
 
-.signal-tier-sell {
-    grid-column: 1 / -1;
+.signal-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.65rem;
+}
+
+.signal-row-title {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.signal-tier-ready .signal-row-title { color: #2d9e5f; }
+.signal-tier-conditional .signal-row-title { color: #b56b00; }
+.signal-tier-watch .signal-row-title { color: #2878b5; }
+.signal-tier-sell .signal-row-title { color: #e05252; }
+
+.signal-row-count {
+    flex: 0 0 auto;
+}
+
+.signal-card-list {
+    display: flex;
+    gap: 0.75rem;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 0.1rem 0.15rem 0.45rem;
+    scroll-snap-type: x proximity;
+}
+
+.signal-card-list > .signal-card {
+    flex: 0 0 min(22rem, calc(100vw - 3rem));
+    min-width: 0;
+    scroll-snap-align: start;
+}
+
+.signal-card {
+    border: 1px solid var(--pico-muted-border-color, #d8dee4);
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: var(--pico-card-background-color, #fff);
+    transition: box-shadow 0.2s;
+}
+
+.signal-card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.signal-card-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-height: 2.5rem;
+    color: inherit;
+    text-decoration: none;
+}
+
+.signal-card-name {
+    min-width: 0;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.signal-card-ticker,
+.signal-market {
+    color: var(--pico-muted-color, #667085);
+    font-size: 0.8rem;
+}
+
+.signal-card-ticker {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.signal-market {
+    font-size: 0.75rem;
+}
+
+.signal-card-badges {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    min-height: 1.3rem;
+    margin: 0.15rem 0;
+}
+
+.signal-state-label {
+    padding: 0.1rem 0.4rem;
+    font-size: 0.68rem;
+}
+
+.signal-unavailable-reason {
+    margin: 0.5rem 0 0;
+    padding: 0.5rem;
+}
+
+.signal-card-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+}
+
+.signal-card-date {
+    color: var(--pico-muted-color, #667085);
+}
+
+.signal-card-price {
+    color: var(--pico-muted-color, #98a2b3);
+    font-size: 0.8rem;
+}
+
+.signal-card-actions {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.65rem;
+}
+
+.signal-card-actions .paper-compact-button {
+    min-height: 2.5rem;
+}
+
+.signal-summary-text {
+    display: none;
+    flex: 1 1 12rem;
+    min-width: 0;
+    color: #555;
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+}
+
+.signal-empty {
+    flex: 1 0 100%;
+    margin: 0.25rem 0;
+    color: var(--pico-muted-color, #98a2b3);
+    font-size: 0.9rem;
+}
+
+.signals-empty-state {
+    padding: 3rem 1rem;
+    color: var(--pico-muted-color, #667085);
+    text-align: center;
+}
+
+.signals-empty-state p {
+    margin: 0.25rem 0;
+}
+
+.signals-empty-note {
+    font-size: 0.9rem;
 }
 
 .signal-axis {
@@ -298,7 +465,16 @@ dialog.paper-chart-dialog { width: min(900px, calc(100vw - 2rem)); }
     .paper-summary-grid,
     .paper-recommendation-grid { grid-template-columns: 1fr; }
     .paper-metrics { grid-template-columns: 1fr 1fr; }
-    .signal-tier-grid { grid-template-columns: 1fr; }
-    .signal-tier-sell { grid-column: auto; }
+    .signal-card-list {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        overflow-x: visible;
+        padding-right: 0;
+        padding-left: 0;
+    }
+    .signal-card-list > .signal-card {
+        width: 100%;
+        flex: none;
+    }
     nav.container-fluid { overflow-x: auto; }
 }
