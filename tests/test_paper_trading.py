@@ -126,7 +126,9 @@ def acknowledged_additional_buy(
     ticker="AAA", market="KRX", quantity=1, key="additional-buy-001"
 ):
     action = next(
-        item for item in SignalService().get_actions()
+        item for item in SignalService().get_actions(
+            include_paper_risk=True
+        )
         if item["ticker"] == ticker and item["market"] == market
     )
     return {

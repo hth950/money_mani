@@ -157,12 +157,19 @@ class SignalService:
                 logger.warning("Ticker-name ledger backfill failed: %s", exc)
         return resolved
 
-    def get_actions(self, days: int = 7) -> list[dict]:
+    def get_actions(
+        self, days: int = 7, *, include_paper_risk: bool = False
+    ) -> list[dict]:
         """Return latest scoring-based actions per ticker for the trading dashboard.
 
         Queries scoring_results for the latest scan_date (same as /scoring page).
         signal_id is NULL for BLOCKED decisions, so we derive action from composite_score.
         Returns one entry per ticker.
+
+        The signals dashboard is a production recommendation surface, so paper
+        trades do not alter its tier, risk, or signed snapshot by default.
+        Paper-order flows opt in to the isolated paper ledger when they need to
+        assess the risk of an additional simulated purchase.
         """
         import json as _json
         with get_db() as db:
@@ -209,7 +216,9 @@ class SignalService:
                 """,
                 (scan_date,),
             ).fetchall()
-            portfolio_state_rows = self._portfolio_state_rows(db)
+            portfolio_state_rows = self._portfolio_state_rows(
+                db, include_paper_risk=include_paper_risk
+            )
 
         resolved_names = self._resolve_action_ticker_names(rows)
         portfolio_revision = self._portfolio_revision(portfolio_state_rows)
@@ -294,11 +303,11 @@ class SignalService:
                     }
                 }
 
-            # Current-model rows are re-evaluated against the portfolio at read
-            # time.  This makes the hash and displayed risk change immediately
-            # after a paper fill instead of waiting for the next scheduled
-            # rescore.  Legacy rows keep their stored score but still carry the
-            # portfolio revision in the signed snapshot.
+            # Current-model rows are re-evaluated against the selected ledger
+            # context at read time. Dashboard reads exclude paper positions;
+            # paper-order reads opt in so their signed risk snapshot changes
+            # immediately after a simulated fill. Legacy rows keep their stored
+            # score but still carry the selected ledger revision.
             if (
                 not hard_block_reason
                 and (row["risk_model_version"] or "") in {"", "entry-risk-v1"}
@@ -385,7 +394,9 @@ class SignalService:
         return actions
 
     @staticmethod
-    def _portfolio_state_rows(db) -> list[dict]:
+    def _portfolio_state_rows(
+        db, *, include_paper_risk: bool = False
+    ) -> list[dict]:
         """Read only the ledger fields that affect entry-risk state.
 
         This helper deliberately performs no market/sector lookup so it is safe
@@ -405,20 +416,21 @@ class SignalService:
                    FROM positions WHERE status='open'"""
             ).fetchall()
         ]
-        rows.extend(
-            {
-                "ledger": "paper",
-                "id": row["id"],
-                "market": row["market"],
-                "ticker": row["ticker"],
-                "quantity": row["quantity"],
-                "updated_at": row["updated_at"],
-            }
-            for row in db.execute(
-                """SELECT id, market, ticker, quantity, updated_at
-                   FROM paper_positions WHERE status='open'"""
-            ).fetchall()
-        )
+        if include_paper_risk:
+            rows.extend(
+                {
+                    "ledger": "paper",
+                    "id": row["id"],
+                    "market": row["market"],
+                    "ticker": row["ticker"],
+                    "quantity": row["quantity"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in db.execute(
+                    """SELECT id, market, ticker, quantity, updated_at
+                       FROM paper_positions WHERE status='open'"""
+                ).fetchall()
+            )
         return rows
 
     @staticmethod

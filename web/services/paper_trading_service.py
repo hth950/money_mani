@@ -308,7 +308,9 @@ class PaperTradingService:
             )
 
         with get_db() as db:
-            portfolio_rows = SignalService._portfolio_state_rows(db)
+            portfolio_rows = SignalService._portfolio_state_rows(
+                db, include_paper_risk=True
+            )
         context = SignalService._live_portfolio_context(portfolio_rows)
         stored_breakdown = recommendation.get("risk_breakdown") or {}
         live = SignalService._assess_live_entry_risk(
@@ -392,15 +394,16 @@ class PaperTradingService:
             )
         self._require_fresh_recommendation(recommendation)
 
-        # Use the same live portfolio-aware snapshot shown on /signals.  The
-        # action service recomputes entry risk for entry-risk-v1 rows and signs
-        # the current strategy+paper ledger revision, so a previous approval
-        # becomes stale immediately after another fill.
+        # Paper orders explicitly include the simulated ledger. /signals keeps
+        # its production-only default, while an additional simulated purchase
+        # must be reassessed against existing paper holdings.
         from web.services.signal_service import SignalService
 
         live_action = next(
             (
-                item for item in SignalService().get_actions(days=7)
+                item for item in SignalService().get_actions(
+                    days=7, include_paper_risk=True
+                )
                 if str(item.get("market") or "").upper() == market
                 and str(item.get("ticker") or "").upper() == ticker
             ),
@@ -585,7 +588,9 @@ class PaperTradingService:
                         "추천 정보가 변경되었습니다. 최신 추천을 다시 확인해 주세요."
                     )
                 current_portfolio_revision = SignalService._portfolio_revision(
-                    SignalService._portfolio_state_rows(db)
+                    SignalService._portfolio_state_rows(
+                        db, include_paper_risk=True
+                    )
                 )
                 if (
                     current_portfolio_revision
@@ -1031,7 +1036,9 @@ class PaperTradingService:
         from web.services.signal_service import SignalService
 
         actions = [
-            item for item in SignalService().get_actions(days=7)
+            item for item in SignalService().get_actions(
+                days=7, include_paper_risk=True
+            )
             if item.get("recommendation_tier") in {
                 "BUY_READY", "BUY_CONDITIONAL"
             }

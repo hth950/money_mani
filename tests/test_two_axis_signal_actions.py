@@ -105,6 +105,20 @@ def test_signal_template_requires_conditional_risk_acknowledgement():
     assert "} finally {\n      syncPreviewButtonState();" in paper_template
 
 
+def test_signal_template_separates_display_recommendation_from_order_risk():
+    template = (
+        __import__("pathlib").Path(__file__).parents[1]
+        / "web" / "templates" / "signals" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert "let _paperOrderRecommendations = new Map();" in template
+    assert "overview.buy_recommendations" in template
+    assert "_paperOrderRecommendations.get(key) || _signalActions.get(key)" in template
+    assert "const orderTier = orderRecommendation.recommendation_tier || tier;" in template
+    assert "조건부 추가 모의매수" in template
+    assert "const buy = data.filter(d => d.recommendation_tier === 'BUY_READY');" in template
+
+
 def test_legacy_watch_at_55_to_64_is_promoted_to_early_watch(isolated_db):
     with connection.get_db() as db:
         db.execute(
@@ -165,3 +179,73 @@ def test_live_recalculation_preserves_stored_volatility_inputs(isolated_db):
     assert inputs["atr_pct"] == pytest.approx(0.08)
     assert inputs["volatility_percentile"] == pytest.approx(90.0)
     assert action["risk_breakdown"]["volatility"]["score"] > 45
+
+
+def test_paper_position_does_not_change_dashboard_recommendation(
+    isolated_db, monkeypatch
+):
+    from scoring.risk_manager import PortfolioRiskManager
+
+    monkeypatch.setattr(
+        PortfolioRiskManager, "_get_sector",
+        lambda self, ticker, market: "Technology",
+    )
+    monkeypatch.setattr(
+        PortfolioRiskManager, "_get_daily_pnl", lambda self: 0.0
+    )
+    breakdown = {
+        "portfolio": {"inputs": {"sector": "Technology"}},
+        "volatility": {
+            "inputs": {
+                "atr_pct": 0.01,
+                "volatility_percentile": 0.20,
+                "gap_pct": 0.0,
+            }
+        },
+    }
+    scores = {
+        "technical": 0.80,
+        "fundamental": 0.60,
+        "flow": 0.70,
+        "intel": 0.50,
+        "macro": 0.40,
+    }
+    with connection.get_db() as db:
+        db.execute(
+            """
+            INSERT INTO scoring_results
+              (ticker, ticker_name, market, scan_date, composite_score,
+               decision, opportunity_decision, risk_score,
+               risk_breakdown_json, score_breakdown_json,
+               recommendation_tier, risk_model_version, source)
+            VALUES ('PAPER', 'Paper Test', 'US', '2026-08-10', .69,
+                    'EXECUTE', 'EXECUTE', 20, ?, ?, 'BUY_READY',
+                    'entry-risk-v1', 'live')
+            """,
+            (json.dumps(breakdown), json.dumps(scores)),
+        )
+
+    before = SignalService().get_actions()[0]
+    assert before["recommendation_tier"] == "BUY_READY"
+
+    with connection.get_db() as db:
+        db.execute(
+            """
+            INSERT INTO paper_positions
+              (market, ticker, ticker_name, status, quantity,
+               avg_price, remaining_cost)
+            VALUES ('US', 'PAPER', 'Paper Test', 'open', 5, 100, 500)
+            """
+        )
+
+    display = SignalService().get_actions()[0]
+    order_risk = SignalService().get_actions(
+        include_paper_risk=True
+    )[0]
+
+    assert display["recommendation_tier"] == before["recommendation_tier"]
+    assert display["risk_score"] == pytest.approx(before["risk_score"])
+    assert display["risk_snapshot_hash"] == before["risk_snapshot_hash"]
+    assert order_risk["recommendation_tier"] == "BUY_CONDITIONAL"
+    assert order_risk["risk_score"] > display["risk_score"]
+    assert order_risk["risk_snapshot_hash"] != display["risk_snapshot_hash"]

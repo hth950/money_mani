@@ -258,6 +258,10 @@ async function showSummary(ticker, market, btn) {
   btn.disabled = false;
 }
 
+// Display recommendations stay independent from the paper ledger. This map
+// holds the stricter paper-order snapshot used only by buy-order controls.
+let _paperOrderRecommendations = new Map();
+
 function renderCard(item, row = '') {
   const holdBadge = item.is_holding
     ? `<span style="background:#3b82f6;color:#fff;padding:1px 6px;border-radius:4px;font-size:0.75rem;margin-left:4px;">전략 추적 보유${item.pnl_pct != null ? ' ' + (item.pnl_pct >= 0 ? '+' : '') + item.pnl_pct.toFixed(1) + '%' : ''}</span>`
@@ -282,9 +286,15 @@ function renderCard(item, row = '') {
   const date = item.last_signal_date || '-';
   const price = item.signal_price ? item.signal_price.toLocaleString() : '-';
   const tier = item.recommendation_tier || (item.action === 'BUY' ? 'BUY_READY' : 'WATCH');
-  const buyButton = SIGNALS_CAN_PAPER_TRADE && ['BUY_READY', 'BUY_CONDITIONAL'].includes(tier)
+  const orderRecommendation = _paperOrderRecommendations.get(
+    paperKey(item.market, item.ticker)
+  ) || item;
+  const orderTier = orderRecommendation.recommendation_tier || tier;
+  const buyButton = SIGNALS_CAN_PAPER_TRADE &&
+      ['BUY_READY', 'BUY_CONDITIONAL'].includes(tier) &&
+      ['BUY_READY', 'BUY_CONDITIONAL'].includes(orderTier)
     ? `<button type="button" class="paper-compact-button" data-paper-order data-side="BUY"
-        data-market="${escAttr(item.market)}" data-ticker="${escAttr(item.ticker)}" data-name="${escAttr(item.ticker_name || item.ticker)}">${tier === 'BUY_CONDITIONAL' ? '조건부 모의매수' : '모의 매수'}</button>`
+        data-market="${escAttr(item.market)}" data-ticker="${escAttr(item.ticker)}" data-name="${escAttr(item.ticker_name || item.ticker)}">${orderTier === 'BUY_CONDITIONAL' ? (paperPosition ? '조건부 추가 모의매수' : '조건부 모의매수') : (paperPosition ? '추가 모의매수' : '모의 매수')}</button>`
     : '';
   const sellButton = SIGNALS_CAN_PAPER_TRADE && (item.action === 'SELL' || paperPosition)
     ? `<button type="button" class="secondary paper-compact-button" data-paper-order data-side="SELL"
@@ -361,13 +371,18 @@ async function loadPaperOverview() {
   try {
     const overview = await paperRequest('/overview');
     _paperPositions = new Map();
+    _paperOrderRecommendations = new Map();
     for (const position of Array.isArray(overview.positions) ? overview.positions : []) {
       if (String(position?.status || 'open').toLowerCase() === 'closed') continue;
       _paperPositions.set(paperKey(position.market, position.ticker), position);
     }
+    for (const item of Array.isArray(overview.buy_recommendations) ? overview.buy_recommendations : []) {
+      _paperOrderRecommendations.set(paperKey(item.market, item.ticker), item);
+    }
   } catch (e) {
     // The signal recommendations remain usable when the paper ledger is unavailable.
     _paperPositions = new Map();
+    _paperOrderRecommendations = new Map();
   }
 }
 
@@ -382,7 +397,8 @@ function openPaperOrder(button) {
     max_quantity: maxQuantity,
     idempotency_key: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   };
-  const signal = _signalActions.get(paperKey(_paperOrder.market, _paperOrder.ticker)) || {};
+  const key = paperKey(_paperOrder.market, _paperOrder.ticker);
+  const signal = _paperOrderRecommendations.get(key) || _signalActions.get(key) || {};
   _paperOrder.recommendation_tier = signal.recommendation_tier || null;
   _paperOrder.risk_snapshot_hash = signal.risk_snapshot_hash || null;
   _paperPreview = null;
@@ -444,7 +460,8 @@ async function refreshConditionalRiskAfterConflict(message) {
     !String(message).includes('위험 정보가 변경')
   ) return;
   await loadActions();
-  const latest = _signalActions.get(paperKey(_paperOrder.market, _paperOrder.ticker));
+  const key = paperKey(_paperOrder.market, _paperOrder.ticker);
+  const latest = _paperOrderRecommendations.get(key) || _signalActions.get(key);
   if (!latest) return;
   _paperPreview = null;
   _paperOrder.recommendation_tier = latest.recommendation_tier;
