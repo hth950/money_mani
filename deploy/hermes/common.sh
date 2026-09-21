@@ -100,13 +100,22 @@ PY
 write_deploy_env() {
     local sha="$1"
     local temporary="${DEPLOY_ENV}.tmp"
+    # Deployments can be invoked through an administrator SSH account.  The
+    # image user must nevertheless match the persistent state directory, not
+    # the invoking account (which is commonly root and has uid/gid 0).
+    local state_uid
+    local state_gid
+    state_uid="$(stat -c '%u' "$STATE_DIR")"
+    state_gid="$(stat -c '%g' "$STATE_DIR")"
+    [[ "$state_uid" =~ ^[0-9]+$ && "$state_gid" =~ ^[0-9]+$ ]] \
+        || die "Could not determine numeric owner for ${STATE_DIR}"
     umask 077
     {
         printf 'APP_GIT_SHA=%s\n' "$sha"
         printf 'MONEY_MANI_STATE_DIR=%s\n' "$STATE_DIR"
         printf 'MONEY_MANI_ENV_FILE=%s\n' "${SECRETS_DIR}/app.env"
-        printf 'MONEY_MANI_UID=%s\n' "$(id -u)"
-        printf 'MONEY_MANI_GID=%s\n' "$(id -g)"
+        printf 'MONEY_MANI_UID=%s\n' "$state_uid"
+        printf 'MONEY_MANI_GID=%s\n' "$state_gid"
         printf 'MONEY_MANI_DOCKER_SUBNET=%s\n' \
             "${MONEY_MANI_DOCKER_SUBNET:-172.30.77.0/24}"
         printf 'MONEY_MANI_DOCKER_GATEWAY=%s\n' \
