@@ -104,10 +104,14 @@ class PipelineRunner:
     def run_backtest(self, strategy_name: str = None, tickers: list[str] = None,
                      market: str = "KRX") -> list:
         """Stage 4: Backtest strategies against historical data."""
-        cfg = self.config["pipeline"]["backtest"]
+        # Backtest thresholds and trading costs have one canonical source.
+        # Keeping a second copy under pipeline previously allowed research
+        # runs to certify a strategy by weaker/different rules than the web.
+        cfg = self.config["backtest"]
         start_date = cfg.get("default_period", "2020-01-01")
         capital = cfg.get("initial_capital", 10_000_000)
-        commission = cfg.get("commission_krx", cfg.get("commission", 0.00105))
+        commission_key = "commission_us" if market == "US" else "commission_krx"
+        commission = cfg.get(commission_key, cfg.get("commission", 0.00105))
 
         # Load strategies
         if strategy_name:
@@ -126,7 +130,11 @@ class PipelineRunner:
                 tickers = self.config["pipeline"]["targets"].get("custom_tickers", ["005930"])
 
         fetcher = KRXFetcher(delay=0.5) if market == "KRX" else USFetcher()
-        engine = BacktestEngine(initial_capital=capital, commission=commission)
+        engine = BacktestEngine(
+            initial_capital=capital,
+            commission=commission,
+            slippage=cfg.get("slippage", 0.0),
+        )
         interpreter = BacktestInterpreter()
         results = []
 

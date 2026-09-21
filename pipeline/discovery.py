@@ -134,10 +134,12 @@ class StrategyDiscovery:
 
     def _backtest_all(self, market: str) -> list:
         """Backtest all strategies in registry against configured tickers."""
-        cfg = self.config["pipeline"]["backtest"]
+        # Use the same validation/cost assumptions as API-triggered backtests.
+        cfg = self.config["backtest"]
         start_date = cfg.get("default_period", "2020-01-01")
         capital = cfg.get("initial_capital", 10_000_000)
-        commission = cfg.get("commission_krx", cfg.get("commission", 0.00105))
+        commission_key = "commission_us" if market == "US" else "commission_krx"
+        commission = cfg.get(commission_key, cfg.get("commission", 0.00105))
 
         # Get tickers
         if market == "US":
@@ -155,7 +157,11 @@ class StrategyDiscovery:
         from backtester.engine import BacktestEngine
 
         fetcher = KRXFetcher(delay=0.5) if market == "KRX" else USFetcher()
-        engine = BacktestEngine(initial_capital=capital, commission=commission)
+        engine = BacktestEngine(
+            initial_capital=capital,
+            commission=commission,
+            slippage=cfg.get("slippage", 0.0),
+        )
         results = []
 
         for strat in strategies:

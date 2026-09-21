@@ -35,9 +35,18 @@ class BacktestService:
         )
 
         fetcher = KRXFetcher(delay=0.5) if market == "KRX" else USFetcher()
+        try:
+            from utils.config_loader import load_config
+            backtest_config = load_config().get("backtest", {})
+        except Exception:
+            backtest_config = {}
+        commission_key = "commission_us" if market == "US" else "commission_krx"
         engine = BacktestEngine(
             initial_capital=10_000_000 if market == "KRX" else 100_000,
-            commission=0.00105 if market == "KRX" else 0.0,
+            commission=backtest_config.get(
+                commission_key, 0.00105 if market == "KRX" else 0.0
+            ),
+            slippage=backtest_config.get("slippage", 0.0),
         )
 
         results = []

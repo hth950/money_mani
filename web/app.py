@@ -114,3 +114,5 @@ from web.routers.settings import router as settings_router
 app.include_router(settings_router)
 from web.routers.paper_trading import router as paper_trading_router
 app.include_router(paper_trading_router)
+from web.routers.validation import router as validation_router
+app.include_router(validation_router)

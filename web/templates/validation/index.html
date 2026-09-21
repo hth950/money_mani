@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}전략 검증 - Money Mani{% endblock %}
+{% block content %}
+<h1>전략 검증</h1>
+<p>백테스트 근거와 실제 의사결정의 비용 차감 전진 성과를 함께 확인합니다. 이 화면은 읽기 전용이며 전략 상태나 추천을 자동 변경하지 않습니다.</p>
+
+<article id="validation-policy">검증 정책을 불러오는 중입니다.</article>
+
+<div class="grid">
+  <label>시장
+    <select id="market">
+      <option value="">KRX + US</option>
+      <option value="KRX">KRX</option>
+      <option value="US">US</option>
+    </select>
+  </label>
+  <label>주요 보유 기간
+    <select id="horizon">
+      <option value="5">5 거래일</option>
+      <option value="10" selected>10 거래일</option>
+      <option value="20">20 거래일</option>
+    </select>
+  </label>
+  <div><button id="reload" type="button">새로고침</button></div>
+</div>
+
+<section class="grid" id="summary">
+  <article><header>전략 수</header><strong id="strategy-count">-</strong></article>
+  <article><header>백테스트·워크포워드 통과</header><strong id="evidence-ready">-</strong></article>
+  <article><header>전진 성과 통과</header><strong id="forward-ready">-</strong></article>
+  <article><header>재도입 가능</header><strong id="activation-ready">-</strong></article>
+</section>
+
+<section>
+  <h2>전략별 판정</h2>
+  <div style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>전략</th><th>시장</th><th>현재 상태</th><th>백테스트 근거</th>
+        <th>전진 표본/커버리지</th><th>순수익 / 초과수익</th><th>재도입</th><th>사유</th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="8">로딩 중...</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+const esc = value => String(value ?? '-').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pct = value => value == null ? '-' : `${Number(value).toFixed(2)}%`;
+function badge(ready, yes, no) { return `<mark class="${ready ? 'valid' : 'invalid'}">${ready ? yes : no}</mark>`; }
+function render(data) {
+  const policy = data.policy || {};
+  const summary = data.summary || {};
+  document.getElementById('validation-policy').innerHTML =
+    `<strong>${esc(policy.version)}</strong> · ${policy.rollout_mode === 'shadow' ? '그림자 검증 중: 추천은 아직 차단하지 않습니다.' : '강제 게이트 적용 중.'} ` +
+    `그림자 기간 ${esc(policy.shadow_days)}일, 주요 평가 ${esc(policy.horizon_days)}거래일.`;
+  document.getElementById('strategy-count').textContent = summary.strategies ?? 0;
+  document.getElementById('evidence-ready').textContent = summary.evidence_ready ?? 0;
+  document.getElementById('forward-ready').textContent = summary.forward_ready ?? 0;
+  document.getElementById('activation-ready').textContent = summary.activation_ready ?? 0;
+  const rows = data.strategies || [];
+  document.getElementById('rows').innerHTML = rows.length ? rows.map(item => {
+    const forward = item.forward || {};
+    const reason = (item.reasons || []).join('; ') || '검증 조건 충족';
+    return `<tr><td>${esc(item.name)}</td><td>${esc(item.market)}</td><td>${esc(item.yaml_status)}</td>` +
+      `<td>${badge(item.evidence_ready, '통과', esc(item.evidence_state))}</td>` +
+      `<td>${esc(forward.evaluated)}/${esc(forward.total)} · ${pct(forward.coverage_pct)}</td>` +
+      `<td>${pct(forward.avg_net_return_pct)} / ${pct(forward.avg_excess_return_pct)}</td>` +
+      `<td>${badge(item.activation_ready, '가능', '대기')}</td><td><small>${esc(reason)}</small></td></tr>`;
+  }).join('') : '<tr><td colspan="8">표시할 전략이 없습니다.</td></tr>';
+}
+async function load() {
+  const market = document.getElementById('market').value;
+  const horizon = document.getElementById('horizon').value;
+  const query = new URLSearchParams({horizon});
+  if (market) query.set('market', market);
+  try {
+    const response = await fetch(`/api/validation/overview?${query}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    render(await response.json());
+  } catch (error) {
+    document.getElementById('validation-policy').textContent = `검증 결과를 불러오지 못했습니다: ${error.message}`;
+  }
+}
+document.getElementById('reload').addEventListener('click', load);
+document.getElementById('market').addEventListener('change', load);
+document.getElementById('horizon').addEventListener('change', load);
+load();
+</script>
+{% endblock %}

@@ -32,6 +32,10 @@ async def strategy_detail_page(request: Request, strategy_id: int):
 async def backtest_page(request: Request):
     return templates.TemplateResponse(request, "backtest/index.html", {"request": request})
 
+@router.get("/validation", response_class=HTMLResponse)
+async def validation_page(request: Request):
+    return templates.TemplateResponse(request, "validation/index.html", {"request": request})
+
 @router.get("/backtest/{result_id}", response_class=HTMLResponse)
 async def backtest_detail_page(request: Request, result_id: int):
     from web.services.backtest_service import BacktestService

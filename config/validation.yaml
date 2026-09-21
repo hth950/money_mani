@@ -1,0 +1,33 @@
+# Strategy validation policy.  This file is deliberately separate from the
+# scanner configuration so a validation decision is reproducible from the
+# policy version stored with its evidence.
+version: "strategy-validation-v1"
+
+rollout:
+  # Shadow mode records and displays the gate decision but never suppresses a
+  # recommendation.  Switch to enforce only after the review window.
+  mode: shadow
+  shadow_days: 28
+
+evidence:
+  min_tested_tickers: 5
+  min_ticker_pass_rate: 0.20
+  min_walk_forward_tickers: 1
+  min_walk_forward_windows: 3
+
+forward_evaluation:
+  # The product's intended daily-bar swing horizon.  One-day labels remain
+  # available as diagnostics, but do not qualify a strategy for activation.
+  primary_horizons: [5, 10, 20]
+  min_evaluated_decisions: 30
+  min_label_coverage_pct: 80.0
+  min_avg_net_return_pct: 0.0
+  min_avg_excess_return_pct: 0.0
+
+costs:
+  # Percentage points for an entire round trip.  Outcome labels consume these
+  # values directly; backtests retain their explicit commission/spread inputs.
+  KRX:
+    round_trip_pct: 0.21
+  US:
+    round_trip_pct: 0.0
