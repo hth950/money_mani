@@ -8,7 +8,8 @@
 ## 프로젝트 개요
 
 - **목적**: KRX(국내) + US(미국) 주식 대상 5축 스코어링 → 매수/관망/스킵 결정 → Discord 알림
-- **현재 운영**: 로컬 PC `http://localhost:31234` (`config/settings.yaml`의 `web` 설정)
+- **현재 운영**: Hostinger Hermes VPS의 `compose.hermes.yml` 웹·스케줄러와 `/srv/money-mani/shared/data/money_mani.db`. 로컬 개발용 웹은 `http://localhost:31234`.
+- **매수 후보 검증**: 관리자 `/validation`에서 한국·미국의 다음 시가 기준 성과와 병렬 실험을 확인합니다. 운영·재평가 명령은 README의 ‘매수 후보 병렬 검증’에 있습니다.
 - **레거시 원격 서버**: `168.107.42.41:8000` (현재 운영 대상 아님)
 - **Python**: 로컬·원격 모두 프로젝트 `.venv/bin/python` 사용
 

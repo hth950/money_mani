@@ -178,8 +178,15 @@ class MarketIntelService:
                 continue
             tickers = issue.get("affected_tickers") or []
             for t in tickers:
-                code = t.get("ticker", "").strip()
-                if not code or code in seen:
+                if not isinstance(t, dict):
+                    continue
+                value = t.get("ticker")
+                if not isinstance(value, str):
+                    continue
+                code = value.strip()
+                # A numeric fragment from a headline is not a US ticker.
+                # Keep fully qualified Korean codes, including their leading zeroes.
+                if not code or (code.isdigit() and len(code) != 6) or code in seen:
                     continue
                 seen.add(code)
 

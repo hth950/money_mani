@@ -122,7 +122,15 @@ function inputSummary(report) {
   return `<details><summary>입력 데이터 품질</summary><table><thead><tr><th>평가 축</th><th>확보</th><th>일부 확보</th><th>누락·근거 없음</th></tr></thead>
     <tbody>${axisRows.join('')}</tbody></table>${providers.length ? '<ul>' + providers.join('') + '</ul>' : ''}${comparison}</details>`;
 }
-function marketCard(market, report, horizon, modelCost) {
+function modelVerdict(comparison) {
+  const labels = {switch_review: 'Flash 교체 검토', hold: 'Flash Lite 유지', pending: '비교 표본 수집 중'};
+  const stats = comparison?.prospective || {};
+  const text = labels[comparison?.status] || labels.pending;
+  return `<details><summary>뉴스 모델 비교 · ${text}</summary>
+    <p>실제 진입 전에 두 모델의 답이 도착한 날 중 10거래일 성과를 비교한 날은 ${esc(stats.days ?? 0)}일입니다.
+    1위 변경 ${esc(stats.top1_changes ?? 0)}일 · Flash의 Lite 대비 순성과 차이 ${points(stats.mean_flash_minus_lite_pct)}</p></details>`;
+}
+function marketCard(market, report, horizon, modelCost, modelComparison) {
   const result = report.horizons[horizon];
   const decision = report.decision;
   const paired = result.paired?.top1 || {};
@@ -163,7 +171,7 @@ function marketCard(market, report, horizon, modelCost) {
     ${interval}</p>
     <details><summary>평가 축별 비교</summary>
     <table><thead><tr><th>제외한 정보</th><th>평가 일수</th><th>평균 순수익</th><th>지수 대비</th></tr></thead>
-    <tbody>${ablations}</tbody></table></details>${inputSummary(report)}${historicalText}</article>`;
+    <tbody>${ablations}</tbody></table></details>${modelVerdict(modelComparison)}${inputSummary(report)}${historicalText}</article>`;
 }
 async function loadSelection(market, horizon, id) {
   const container = document.getElementById('selection-markets');
@@ -174,7 +182,7 @@ async function loadSelection(market, horizon, id) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (id === requestId) container.innerHTML = Object.entries(data.markets)
-      .map(([key, report]) => marketCard(key, report, horizon, data.model_cost?.markets?.[key])).join('');
+      .map(([key, report]) => marketCard(key, report, horizon, data.model_cost?.markets?.[key], data.model_comparison?.markets?.[key])).join('');
   } catch (error) {
     if (id === requestId) container.textContent = `후보 선별 결과를 불러오지 못했습니다 (${error.message}).`;
   }

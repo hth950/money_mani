@@ -288,6 +288,7 @@ class SelectionEvaluationService:
                 "candidate_axis_weights": {name: {axis: weight} for name, (axis, weight) in CANDIDATE_AXES.items()},
             },
             "model_cost": data["model_cost"],
+            "model_comparison": data["model_comparison"],
             "markets": {
                 name: self._market_report(name, data, cutoff) for name in chosen_markets
             },
@@ -297,6 +298,7 @@ class SelectionEvaluationService:
         data = {
             "events": [], "labels": {}, "shadow": [], "shadow_labels": {}, "providers": [], "snapshots": [],
             "observed_from": {}, "scan_days": defaultdict(set),
+            "model_comparison": {"markets": {}},
             "model_cost": {
                 "scope": "global",
                 "markets": {market: {"projected_flash_increment_usd": None} for market in MARKETS},
@@ -317,9 +319,10 @@ class SelectionEvaluationService:
             db.execute("PRAGMA busy_timeout=5000")
             db.execute("BEGIN")
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            from llm.selection_experiment_report import monthly_cost_summary
+            from llm.selection_experiment_report import model_selection_summary, monthly_cost_summary
 
             data["model_cost"] = {"scope": "global", **monthly_cost_summary(db, cutoff)}
+            data["model_comparison"] = model_selection_summary(db, cutoff)
             if "decision_events" in tables:
                 data["observed_from"] = {
                     row["market"]: row["first_date"] for row in db.execute(

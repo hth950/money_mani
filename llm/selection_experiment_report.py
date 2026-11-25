@@ -155,6 +155,13 @@ def _monthly(costs, traffic):
     return {"markets": result, "projected_total_flash_increment_usd": total}
 
 
+def model_selection_summary(db, as_of):
+    """Return only aggregate, point-in-time model evidence for the dashboard."""
+    from llm.selection_experiment_outcomes import summarize_model_outcomes
+
+    return summarize_model_outcomes(db, as_of)
+
+
 def build_report(annotations=None, *, now=None):
     data = read_experiment()
     annotations = (annotations or {}).get("annotations", annotations or {})
