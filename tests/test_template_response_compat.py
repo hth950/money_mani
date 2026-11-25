@@ -50,7 +50,7 @@ def test_router_template_responses_use_request_first_signature():
             if not request_first:
                 violations.append(f"{path.relative_to(ROOT)}:{call.lineno}")
 
-    assert call_count == 29
+    assert call_count == 30
     assert not violations, (
         "TemplateResponse must use (request, name, context): "
         + ", ".join(violations)

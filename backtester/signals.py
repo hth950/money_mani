@@ -198,7 +198,10 @@ class SignalGenerator:
             tenkan = ind.get("tenkan", 9)
             kijun = ind.get("kijun", 26)
             senkou = ind.get("senkou", 52)
-            result = ta.ichimoku(high, low, series, tenkan=tenkan, kijun=kijun, senkou=senkou)
+            result = ta.ichimoku(
+                high, low, series, tenkan=tenkan, kijun=kijun, senkou=senkou,
+                lookahead=False,
+            )
             if result is not None:
                 # ichimoku returns a tuple of (ichimoku_df, span_df)
                 if isinstance(result, tuple):

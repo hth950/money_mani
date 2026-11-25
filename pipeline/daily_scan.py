@@ -221,7 +221,7 @@ class DailyScan:
 
         # KRX scan (KRX/ALL strategies only)
         if is_krx_day:
-            krx_tickers = self.config["pipeline"]["targets"].get("custom_tickers", [])
+            krx_tickers = list(self.config["pipeline"]["targets"].get("custom_tickers", []))
             # Merge intel tickers (deduplicated)
             for t in intel_krx_extras:
                 if t not in krx_tickers:
@@ -233,7 +233,7 @@ class DailyScan:
 
         # US scan (US/ALL strategies only)
         if is_nyse_day:
-            us_tickers = self.config["pipeline"].get("us_targets", {}).get("custom_tickers", [])
+            us_tickers = list(self.config["pipeline"].get("us_targets", {}).get("custom_tickers", []))
             # Merge intel tickers (deduplicated)
             for t in intel_us_extras:
                 if t not in us_tickers:
@@ -284,6 +284,22 @@ class DailyScan:
 
         # Save all scored cohorts, including BLOCKED and SKIP, exactly once.
         self._save_scoring_results(audited_signals, str(today))
+
+        # Freeze the scan universe, including names that did not reach consensus.
+        # The scheduled collector performs all additional provider requests.
+        for market in markets_open:
+            try:
+                from pipeline.selection_shadow import capture_scan
+
+                is_krx = market == "KRX"
+                capture_scan(
+                    str(today), market,
+                    getattr(self, "_last_krx_ohlcv" if is_krx else "_last_us_ohlcv", {}),
+                    tickers=krx_tickers if is_krx else us_tickers,
+                    sectors={} if is_krx else getattr(self, "_last_us_sectors", {}),
+                )
+            except Exception:
+                logger.exception("Could not record %s selection research inputs", market)
 
         # Classify conviction for each consensus signal
         for sig in ensemble_signals:
@@ -409,6 +425,7 @@ class DailyScan:
         # --- Phase 1: Pre-fetch OHLCV data (once per ticker) ---
         ohlcv_cache: dict = {}
         ticker_names: dict = {}
+        sectors: dict = {}
 
         start_date = (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
 
@@ -448,6 +465,8 @@ class DailyScan:
                             try:
                                 import yfinance as yf
                                 info = yf.Ticker(ticker).info
+                                if info.get("sector"):
+                                    sectors[ticker] = info["sector"]
                                 name = info.get("shortName") or info.get("longName") or ticker
                                 ticker_names[ticker] = name
                             except Exception:
@@ -457,6 +476,12 @@ class DailyScan:
 
         fetch_time = time.time() - scan_start
         logger.info(f"[{market}] OHLCV fetch: {len(ohlcv_cache)}/{len(tickers)} tickers in {fetch_time:.1f}s")
+
+        if market == "KRX":
+            self._last_krx_ohlcv = ohlcv_cache
+        else:
+            self._last_us_ohlcv = ohlcv_cache
+            self._last_us_sectors = sectors
 
         if not ohlcv_cache:
             return signals
@@ -519,12 +544,6 @@ class DailyScan:
             f"[{market}] Compute: {len(signals)} signals from {len(strategies)}x{len(ohlcv_cache)} "
             f"pairs in {compute_time:.1f}s (total: {total_time:.1f}s)"
         )
-
-        # Cache OHLCV data for exit scoring
-        if market == "KRX":
-            self._last_krx_ohlcv = ohlcv_cache
-        else:
-            self._last_us_ohlcv = ohlcv_cache
 
         gc.collect()
         return signals

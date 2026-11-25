@@ -16,6 +16,8 @@ backtesting>=0.3.3
 
 # 미국 주식 데이터
 yfinance>=0.2.0
+# Exchange sessions, holidays and special opens/closes for outcome labels.
+exchange-calendars==4.13.3
 
 # 설정
 pyyaml>=6.0

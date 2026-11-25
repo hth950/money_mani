@@ -386,6 +386,22 @@ DB(market_intel_issues) 저장
 
 ---
 
+### 매수 후보 병렬 검증
+
+관리자 화면 `/validation`과 읽기 API `GET /api/validation/selection?market=KRX`에서 시장별 후보 수, 5·10·20거래일 순성과와 1위·상위 3개를 볼 수 있습니다. 기본 비교 대상은 당시 기록된 적격 매수 신호입니다. 종목·지수 모두 판단 이후 첫 시가에서 진입하고, 진입일을 1일로 세어 같은 세션 종가에 청산합니다. `next_open_v1`의 왕복 비용 가정은 한국 수수료·세금 0.21%와 슬리피지 0.10%, 미국 수수료 0%와 슬리피지 0.04%입니다. 수익률은 현지 통화 가격 기준입니다.
+
+일일 스캔이 후보와 입력을 기록하면 별도 스케줄러 작업이 수급·공시·상대강도 정보를 수집합니다. 한국은 수급 지속성, 미국은 새 뉴스·거래량·업종 대비 강도를 시험합니다. 외부 입력 수집이 끝난 시각을 해당 시장 실험의 판단 시각으로 기록합니다. SEC 공시를 수집하려면 운영 환경의 `SEC_USER_AGENT`에 연락 가능한 식별자를 설정합니다. 데이터 누락과 만기가 남은 판단은 검증 화면에서 확인할 수 있습니다.
+
+과거 기록 재평가는 별도 SQLite 사본에서 실행할 수 있습니다. 일봉 캐시 파일 이름은 `US_AAPL.csv`, `KRX_005930.csv`, `US_^GSPC.csv`, `KRX_^KS11.csv` 형식이고 날짜·시가·종가 열은 `Date,Open,Close`입니다.
+
+```bash
+python scripts/relabel_decisions.py --input-db backup.db --output-db research.db --cache-dir bars
+python scripts/evaluate_selection.py --db research.db --market US
+python scripts/compare_intel_models.py
+```
+
+마지막 명령은 저장된 뉴스 실험의 결과를 조회합니다. 같은 기사 묶음으로 Flash Lite와 Flash를 유료 비교하려면 운영 키와 분리한 `OPENROUTER_EXPERIMENT_KEY`를 실험 실행 환경에 지정합니다. 일회성 USD 8 한도에서 `--run --stage calibration`으로 20쌍을 측정한 뒤 `--run --stage holdout`으로 후속 표본을 평가합니다. `--review`로 종목 연결·중복·방향 근거를 검토할 입력을 내보낼 수 있습니다. 스케줄러의 실험 작업은 입력만 보존하며 유료 모델 비교는 명령 실행 시에만 시작됩니다.
+
 ## 10. 데이터 소스 & 캐시 전략
 
 ### 데이터 소스

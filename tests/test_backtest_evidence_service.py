@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from backtester.engine import EXECUTION_MODEL, WARMUP_BARS
 from strategy.models import Strategy
 from web.db import connection, migrate
 from web.services.backtest_evidence_service import BacktestEvidenceService
@@ -35,6 +36,18 @@ def _strategy(name, status="validated_v2", strategy_type="indicator"):
         market="KRX",
         strategy_type=strategy_type,
     )
+
+
+def _policy(market="KRX", *, windows=None):
+    policy = {"execution": {"model": EXECUTION_MODEL, "market": market, "warmup_bars": WARMUP_BARS}}
+    if windows is not None:
+        policy["windows"] = windows
+    return json.dumps(policy)
+
+
+def _windows(valid):
+    return [{"valid": idx < valid, "train_trades": 1, "test_trades": int(idx < valid)}
+            for idx in range(4)]
 
 
 @pytest.fixture
@@ -99,9 +112,9 @@ def test_evidence_report_uses_latest_rows_without_promoting_status(evidence_db):
             db.execute(
                 """INSERT INTO backtest_results
                    (strategy_name, ticker, market, is_valid, created_at,
-                    avg_holding_days, annual_trade_rate, validation_policy_json)
-                   VALUES ('ready', ?, 'KRX', ?, ?, 8.0, 4.0, '{}')""",
-                (ticker, valid, created_at),
+                    num_trades, avg_holding_days, annual_trade_rate, validation_policy_json)
+                   VALUES ('ready', ?, 'KRX', ?, ?, 9, 8.0, 4.0, ?)""",
+                (ticker, valid, created_at, _policy()),
             )
         for idx in range(5):
             db.execute(
@@ -112,8 +125,9 @@ def test_evidence_report_uses_latest_rows_without_promoting_status(evidence_db):
         db.execute(
             """INSERT INTO walk_forward_results
                (strategy_name, ticker, market, total_windows, valid_windows,
-                is_overfit, min_windows)
-               VALUES ('ready', 'K0', 'KRX', 4, 3, 0, 3)"""
+                is_overfit, min_windows, windows_json)
+               VALUES ('ready', 'K0', 'KRX', 4, 3, 0, 3, ?)""",
+            (_policy(windows=_windows(3)),),
         )
 
     service = BacktestEvidenceService(
@@ -155,15 +169,16 @@ def test_walk_forward_overfit_is_not_ready(evidence_db):
             db.execute(
                 """INSERT INTO backtest_results
                    (strategy_name, ticker, market, is_valid, avg_holding_days,
-                    annual_trade_rate, validation_policy_json)
-                   VALUES ('overfit', ?, 'KRX', 1, 8.0, 4.0, '{}')""",
-                (f"K{idx}",),
+                    annual_trade_rate, validation_policy_json, num_trades)
+                   VALUES ('overfit', ?, 'KRX', 1, 8.0, 4.0, ?, 10)""",
+                (f"K{idx}", _policy()),
             )
         db.execute(
             """INSERT INTO walk_forward_results
                (strategy_name, ticker, market, total_windows, valid_windows,
-                is_overfit, overfit_reason, min_windows)
-               VALUES ('overfit', 'K0', 'KRX', 4, 4, 1, 'degradation', 3)"""
+                is_overfit, overfit_reason, min_windows, windows_json)
+               VALUES ('overfit', 'K0', 'KRX', 4, 4, 1, 'degradation', 3, ?)""",
+            (_policy(windows=_windows(4)),),
         )
 
     row = BacktestEvidenceService(
@@ -183,8 +198,8 @@ def test_legacy_is_valid_rows_cannot_become_policy_ready(evidence_db):
             # Legacy rows have a recorded is_valid bit but no threshold policy,
             # holding-period, or annual-trade metadata to audit that claim.
             db.execute(
-                "INSERT INTO backtest_results(strategy_name, ticker, market, is_valid) "
-                "VALUES ('legacy', ?, 'KRX', 1)",
+                "INSERT INTO backtest_results(strategy_name, ticker, market, is_valid, num_trades) "
+                "VALUES ('legacy', ?, 'KRX', 1, 10)",
                 (f"K{idx}",),
             )
         db.execute(
@@ -255,3 +270,27 @@ def test_new_backtests_store_the_policy_needed_for_audit(evidence_db):
         ).fetchone()
     assert row[0:2] == (8.5, 5.0)
     assert "min_ticker_pass_rate" in json.loads(row[2])
+
+
+def test_latest_evidence_cannot_pass_using_other_markets_or_no_trade_windows(evidence_db):
+    strategy = _strategy("both")
+    strategy.market = "ALL"
+    with connection.get_db() as db:
+        db.execute("INSERT INTO strategies(name, status) VALUES ('both', 'validated_v2')")
+        db.execute(
+            """INSERT INTO backtest_results (strategy_name, ticker, market, is_valid, num_trades,
+                   avg_holding_days, annual_trade_rate, validation_policy_json)
+               VALUES ('both', 'K0', 'KRX', 1, 20, 8, 4, ?)""", (_policy(),),
+        )
+        db.executemany(
+            """INSERT INTO walk_forward_results (strategy_name, ticker, market, total_windows,
+                   valid_windows, is_overfit, min_windows, windows_json)
+               VALUES ('both', 'K0', ?, 4, 3, 0, 3, ?)""",
+            [("KRX", _policy(windows=_windows(0))), ("US", _policy("US", windows=_windows(3)))],
+        )
+    service = BacktestEvidenceService(_Registry([strategy]), min_tested_tickers=1)
+    result = service.build_report()["strategies"][0]
+    assert result["evidence_ready"] is False
+    assert result["evidence_by_market"]["KRX"]["walk_forward"]["usable_latest_results"] == 0
+    assert result["evidence_by_market"]["US"]["walk_forward"]["usable_latest_results"] == 1
+    assert service.build_report(market="US")["strategies"][0]["backtest"]["latest_results"] == 0

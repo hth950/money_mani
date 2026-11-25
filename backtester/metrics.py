@@ -42,7 +42,8 @@ class BacktestResult:
         min_avg_holding = th.get("min_avg_holding_days", 5)
 
         self.is_valid = (
-            self.num_trades >= min_trades
+            self.num_trades > 0
+            and self.num_trades >= min_trades
             and self.total_return > min_return
             and self.sharpe_ratio >= min_sharpe
             and self.max_drawdown >= -max_dd

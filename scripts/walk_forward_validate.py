@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from strategy.registry import StrategyRegistry
+from backtester.engine import history_start
 from backtester.walk_forward import WalkForwardValidator
 from market_data.krx_fetcher import KRXFetcher
 from market_data.us_fetcher import USFetcher
@@ -44,18 +45,16 @@ def main():
 
     validator = WalkForwardValidator()
     fetcher = KRXFetcher(delay=0.5) if args.market == "KRX" else USFetcher()
+    fetch_start = history_start(args.start, validator.warmup_bars)
 
     overfit_strategies = set()
 
     for ticker in args.tickers:
         logger.info(f"\n--- Ticker: {ticker} ---")
-        df = fetcher.get_ohlcv(ticker, args.start)
-        if df.empty or len(df) < 315:  # need at least train+test
-            logger.warning(f"Insufficient data for {ticker}: {len(df)} rows")
-            continue
+        df = fetcher.get_ohlcv(ticker, fetch_start)
 
         for strat in strategies:
-            result = validator.validate(strat, df, ticker)
+            result = validator.validate(strat, df, ticker, args.market, evaluation_start=args.start)
 
             # Save to DB
             windows_data = [
@@ -65,6 +64,12 @@ def main():
                     "test": f"{w.test_start}~{w.test_end}",
                     "train_sharpe": round(w.train_sharpe, 3),
                     "test_sharpe": round(w.test_sharpe, 3),
+                    "train_return": w.train_return,
+                    "test_return": w.test_return,
+                    "train_trades": w.train_trades,
+                    "test_trades": w.test_trades,
+                    "valid": w.valid,
+                    "invalid_reason": w.invalid_reason,
                 }
                 for w in result.windows
             ]
@@ -85,7 +90,8 @@ def main():
                     round(result.sharpe_degradation, 4),
                     1 if result.is_overfit else 0,
                     result.overfit_reason,
-                    json.dumps(windows_data, ensure_ascii=False),
+                    json.dumps({"execution": result.execution_policy, "windows": windows_data},
+                               ensure_ascii=False),
                     validator.train_days,
                     validator.test_days,
                     validator.step_days,

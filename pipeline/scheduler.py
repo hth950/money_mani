@@ -50,6 +50,23 @@ def _run_daily_scan():
 
 
 
+def _collect_selection_shadow():
+    from pipeline.selection_shadow import collect_pending
+
+    logger.info("Selection shadow collection: %s", collect_pending(load_config()))
+
+
+def _refresh_selection_labels():
+    from web.services.decision_label_service import DecisionLabelService
+
+    service = DecisionLabelService()
+    for update in (service.label_pending, service.label_shadow_pending):
+        try:
+            logger.info("Selection label refresh %s: %s", update.__name__, update(limit=200))
+        except Exception:
+            logger.exception("Selection label refresh failed for %s", update.__name__)
+
+
 def _run_evening_report():
     """Job: nightly orchestrator (19:00 KST) - P&L, positions, analytics, knowledge."""
     try:
@@ -254,6 +271,17 @@ def start_scheduler():
         )
         scheduler.add_job(_run_daily_scan, trigger, id="daily_scan", name="Daily Scan")
         logger.info(f"Scheduled daily scan: {daily_cfg['cron']} ({tz})")
+
+        scheduler.add_job(
+            _collect_selection_shadow,
+            CronTrigger(day_of_week="mon-fri", hour="8-10", minute="5,15,25,35,45,55", timezone=tz),
+            id="selection_shadow", name="Collect prospective selection inputs",
+        )
+        scheduler.add_job(
+            _refresh_selection_labels,
+            CronTrigger(hour=7, minute=10, timezone=tz),
+            id="selection_labels", name="Refresh executable-price outcomes",
+        )
 
     # Realtime monitor auto-start/stop. Start jobs are not registered while
     # the fail-closed switch is active; stop jobs remain available so an

@@ -74,13 +74,13 @@ def auth_app(tmp_path, monkeypatch):
     @app.get("/signals")
     async def signals_page(request: Request):
         return templates.TemplateResponse(
-            "signals/index.html", {"request": request}
+            request, "signals/index.html", {"request": request}
         )
 
     @app.get("/paper-trading")
     async def paper_page(request: Request):
         return templates.TemplateResponse(
-            "paper_trading/index.html", {"request": request}
+            request, "paper_trading/index.html", {"request": request}
         )
 
     @app.get("/portfolio")

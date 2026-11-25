@@ -2,7 +2,7 @@
 {% block title %}전략 검증 - Money Mani{% endblock %}
 {% block content %}
 <h1>전략 검증</h1>
-<p>백테스트 근거와 실제 의사결정의 비용 차감 전진 성과를 함께 확인합니다. 이 화면은 읽기 전용이며 전략 상태나 추천을 자동 변경하지 않습니다.</p>
+
 
 <article id="validation-policy">검증 정책을 불러오는 중입니다.</article>
 
@@ -23,6 +23,12 @@
   </label>
   <div><button id="reload" type="button">새로고침</button></div>
 </div>
+
+<section aria-labelledby="selection-title">
+  <h2 id="selection-title">매수 후보 선별력</h2>
+  <p>하루 1위 후보가 같은 기간 시장 지수와 그날의 적격 후보 평균을 얼마나 앞섰는지 비교합니다. 운영 변경 판정에는 10거래일 성과를 사용합니다.</p>
+  <div id="selection-markets" aria-live="polite">시장별 결과를 불러오는 중입니다.</div>
+</section>
 
 <section class="grid" id="summary">
   <article><header>전략 수</header><strong id="strategy-count">-</strong></article>
@@ -52,8 +58,8 @@ function render(data) {
   const policy = data.policy || {};
   const summary = data.summary || {};
   document.getElementById('validation-policy').innerHTML =
-    `<strong>${esc(policy.version)}</strong> · ${policy.rollout_mode === 'shadow' ? '그림자 검증 중: 추천은 아직 차단하지 않습니다.' : '강제 게이트 적용 중.'} ` +
-    `그림자 기간 ${esc(policy.shadow_days)}일, 주요 평가 ${esc(policy.horizon_days)}거래일.`;
+    `<strong>${esc(policy.version)}</strong> · 운영 추천과 병렬 평가 · ` +
+    `관찰 기간 ${esc(policy.shadow_days)}일, 주요 평가 ${esc(policy.horizon_days)}거래일.`;
   document.getElementById('strategy-count').textContent = summary.strategies ?? 0;
   document.getElementById('evidence-ready').textContent = summary.evidence_ready ?? 0;
   document.getElementById('forward-ready').textContent = summary.forward_ready ?? 0;
@@ -62,24 +68,115 @@ function render(data) {
   document.getElementById('rows').innerHTML = rows.length ? rows.map(item => {
     const forward = item.forward || {};
     const reason = (item.reasons || []).join('; ') || '검증 조건 충족';
-    return `<tr><td>${esc(item.name)}</td><td>${esc(item.market)}</td><td>${esc(item.yaml_status)}</td>` +
+    return `<tr><td>${esc(item.name)}</td><td>${esc(item.evaluation_market || item.market)}</td><td>${esc(item.yaml_status)}</td>` +
       `<td>${badge(item.evidence_ready, '통과', esc(item.evidence_state))}</td>` +
       `<td>${esc(forward.evaluated)}/${esc(forward.total)} · ${pct(forward.coverage_pct)}</td>` +
       `<td>${pct(forward.avg_net_return_pct)} / ${pct(forward.avg_excess_return_pct)}</td>` +
       `<td>${badge(item.activation_ready, '가능', '대기')}</td><td><small>${esc(reason)}</small></td></tr>`;
   }).join('') : '<tr><td colspan="8">표시할 전략이 없습니다.</td></tr>';
 }
+let requestId = 0;
 async function load() {
+  const id = ++requestId;
   const market = document.getElementById('market').value;
   const horizon = document.getElementById('horizon').value;
   const query = new URLSearchParams({horizon});
   if (market) query.set('market', market);
+  loadSelection(market, horizon, id);
   try {
     const response = await fetch(`/api/validation/overview?${query}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    render(await response.json());
+    const data = await response.json();
+    if (id === requestId) render(data);
   } catch (error) {
+    if (id !== requestId) return;
     document.getElementById('validation-policy').textContent = `검증 결과를 불러오지 못했습니다: ${error.message}`;
+  }
+}
+function points(value) {
+  return Number.isFinite(value) ? `${value > 0 ? '+' : ''}${value.toFixed(2)}%p` : '자료 없음';
+}
+const actions = {promote: '신규 방식 승격', hold: '현행 유지', reduce: '추천 축소',
+                 insufficient: '판단 보류', pending: '판단 보류'};
+const axes = {technical: '기술', fundamental: '재무', flow: '수급', intel: '뉴스', macro: '매크로'};
+
+const reasons = {
+  shadow_window_incomplete: '병렬 관찰 28일 필요',
+  insufficient_common_mature_days: '공통 평가일 30일 필요',
+  insufficient_paired_event_coverage: '만기 표본의 가격 확보율 80% 필요',
+  insufficient_action_coverage: '매수 여부를 확인할 수 있는 표본 80% 필요',
+  paired_evidence_inconclusive: '현행 대비 개선 여부가 아직 불확실합니다.',
+  candidate_uplift_and_baseline_outperformance: '신규 1위가 현행 1위와 당일 후보 평균을 앞섰습니다.',
+  both_rankers_underperform_same_day_baseline: '두 방식 모두 당일 후보 평균을 밑돌았습니다.',
+};
+function inputSummary(report) {
+  const missing = report.missingness || {};
+  const axisRows = Object.entries(missing.axes || {}).map(([axis, counts]) =>
+    `<tr><th>${esc(axes[axis] || axis)}</th><td>${esc(counts.available || 0)}</td>
+      <td>${esc(counts.partial || 0)}</td><td>${esc((counts.unavailable || 0) + (counts.missing_score || 0) + (counts.no_evidence || 0))}</td></tr>`);
+  const providers = Object.entries(missing.provider_evidence?.providers || {}).map(([key, value]) =>
+    `<li>${esc(key)} · 관측 ${esc(value.observations)}건 · 사용 가능 ${esc(value.statuses.available || 0)}건</li>`);
+  const flow = missing.provider_evidence?.krx_flow_comparison;
+  const comparison = flow?.matched_ticker_dates ?
+    `<p>KIS·네이버 수급 ${esc(flow.matched_ticker_dates)}개 종목·일자 쌍 · 방향 일치율 ${pct(flow.direction_agreement_pct)} · 공급자 교체로 1위 변경 ${esc(flow.top1_changed_days ?? 0)} / ${esc(flow.eligible_comparison_days ?? 0)}일</p>` : '';
+  return `<details><summary>입력 데이터 품질</summary><table><thead><tr><th>평가 축</th><th>확보</th><th>일부 확보</th><th>누락·근거 없음</th></tr></thead>
+    <tbody>${axisRows.join('')}</tbody></table>${providers.length ? '<ul>' + providers.join('') + '</ul>' : ''}${comparison}</details>`;
+}
+function marketCard(market, report, horizon, modelCost) {
+  const result = report.horizons[horizon];
+  const decision = report.decision;
+  const paired = result.paired?.top1 || {};
+  const vsBaseline = result.incumbent?.top1?.vs_baseline || {};
+  const sample = decision.common_mature_days ?? 0;
+  const rows = [
+    ['전체 적격 후보 평균', result.baseline],
+    ['현행 1위', result.incumbent?.top1], ['현행 상위 3개', result.incumbent?.top3],
+    ['병렬 실험 1위', result.candidate?.top1], ['병렬 실험 상위 3개', result.candidate?.top3],
+  ];
+  function metricRow([label, r]) {
+    return `<tr><th scope="row">${esc(label)}</th><td>${esc(r?.days ?? 0)}</td>
+      <td>${pct(r?.avg_net_return_pct)}</td><td>${points(r?.avg_net_excess_pct)}</td></tr>`;
+  }
+  const ablations = Object.entries(result.ablations || {}).map(([name, arm]) =>
+    metricRow([`${axes[name] || name} 중립화`, arm.top1])).join('');
+  const historical = report.research_sample;
+  const historicalText = historical ? `<details><summary>과거 전략 재검증 · ${esc(historical.end)} 기준</summary>
+      <p>${esc(historical.tickers.join(', '))}에서 백테스트하고, ${esc(historical.walk_forward_ticker)}에서
+      워크포워드 검증을 실행했습니다. 두 조건을 통과한 전략은 ${esc(historical.strategy_count)}개 중
+      ${esc(historical.diagnostics_both_pass)}개입니다.</p></details>` : '';
+  const addedCost = modelCost?.projected_flash_increment_usd;
+  const monthly = Number.isFinite(addedCost) ? `$${addedCost.toFixed(2)}` : '측정 대기';
+  const coverage = report.recommendation_coverage || {};
+  const interval = Number.isFinite(paired.ci_low_pct) && Number.isFinite(paired.ci_high_pct)
+    ? `95% 신뢰구간 ${points(paired.ci_low_pct)} ~ ${points(paired.ci_high_pct)}` : '신뢰구간 산출 대기';
+  return `<article><header><strong>${market === 'KRX' ? '한국' : '미국'}</strong> ·
+    ${esc(actions[decision.status] || decision.status)}</header>
+    <p>병렬 관찰 ${esc(decision.shadow_days ?? 0)}일 · 10일 성과 비교 ${esc(sample)}일 ·
+      공통 만기 표본 확보율 ${pct(decision.coverage_pct)} · 예상 월 추가 모델 비용 ${monthly}</p>
+    <p>${esc((decision.reasons || []).map(key => reasons[key] || key).join(' · '))}</p>
+    <p>선택한 기간 ${esc(horizon)}거래일 · 적격 BUY ${esc(result.eligible_count)}건 · 만기 가격 확보율 ${pct(result.coverage_pct)} · 매수 추천일 ${esc(coverage.recommendation_days)} / ${esc(coverage.denominator_days)}일 (조건부 포함)</p>
+    <div style="overflow-x:auto"><table><thead><tr><th>비교 대상</th><th>평가 일수</th><th>평균 순수익</th><th>지수 대비</th></tr></thead>
+    <tbody>${rows.map(metricRow).join('')}</tbody></table></div>
+    <p>같은 날 현행 1위와 후보 평균 차이 ${points(vsBaseline.avg_vs_baseline_pct)}
+    (비교 ${esc(vsBaseline.days ?? 0)}일, 95% 신뢰구간 ${points(vsBaseline.baseline_ci_low_pct)} ~ ${points(vsBaseline.baseline_ci_high_pct)})</p>
+    <p>같은 날 신규 1위와 현행 1위 차이 ${points(paired.avg_uplift_pct)} ·
+    ${interval}</p>
+    <details><summary>평가 축별 비교</summary>
+    <table><thead><tr><th>제외한 정보</th><th>평가 일수</th><th>평균 순수익</th><th>지수 대비</th></tr></thead>
+    <tbody>${ablations}</tbody></table></details>${inputSummary(report)}${historicalText}</article>`;
+}
+async function loadSelection(market, horizon, id) {
+  const container = document.getElementById('selection-markets');
+  try {
+    const query = new URLSearchParams();
+    if (market) query.set('market', market);
+    const response = await fetch(`/api/validation/selection?${query}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (id === requestId) container.innerHTML = Object.entries(data.markets)
+      .map(([key, report]) => marketCard(key, report, horizon, data.model_cost?.markets?.[key])).join('');
+  } catch (error) {
+    if (id === requestId) container.textContent = `후보 선별 결과를 불러오지 못했습니다 (${error.message}).`;
   }
 }
 document.getElementById('reload').addEventListener('click', load);

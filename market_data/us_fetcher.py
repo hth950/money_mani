@@ -34,6 +34,7 @@ class USFetcher:
         df = df[["Open", "High", "Low", "Close", "Volume"]]
         df.index.name = "Date"
         df.index = df.index.tz_localize(None)
+        df.attrs.update(source="yfinance", symbol=ticker)
         return df
 
     def get_fundamentals(self, ticker: str) -> dict:

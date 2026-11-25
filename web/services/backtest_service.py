@@ -12,8 +12,9 @@ class BacktestService:
     def run_backtest(self, strategy_id: int, tickers: list[str], market: str = "KRX") -> list[dict]:
         """Fetch data, run backtest for each ticker, store results. Returns list of result dicts."""
         from strategy.models import Strategy
-        from backtester.engine import BacktestEngine
+        from backtester.engine import WARMUP_BARS, BacktestEngine, evaluation_start_bar, history_start
         from market_data import KRXFetcher, USFetcher
+        from utils.config_loader import load_config
 
         # Load strategy from SQLite
         with get_db() as db:
@@ -35,36 +36,27 @@ class BacktestService:
         )
 
         fetcher = KRXFetcher(delay=0.5) if market == "KRX" else USFetcher()
-        try:
-            from utils.config_loader import load_config
-            backtest_config = load_config().get("backtest", {})
-        except Exception:
-            backtest_config = {}
-        commission_key = "commission_us" if market == "US" else "commission_krx"
-        engine = BacktestEngine(
-            initial_capital=10_000_000 if market == "KRX" else 100_000,
-            commission=backtest_config.get(
-                commission_key, 0.00105 if market == "KRX" else 0.0
-            ),
-            slippage=backtest_config.get("slippage", 0.0),
-        )
+        backtest_config = load_config().get("backtest", {})
+        engine = BacktestEngine.for_market(market, backtest_config)
+        execution_policy = engine.execution_policy(market, WARMUP_BARS)
+        period_start = backtest_config.get("default_period", "2013-01-01")
+        fetch_start = history_start(period_start)
 
         results = []
         for ticker in tickers:
             try:
                 logger.info(f"Backtesting {strat.name} on {ticker} ({market})")
-                try:
-                    from utils.config_loader import load_config
-                    _period = load_config().get("backtest", {}).get("default_period", "2013-01-01")
-                except Exception:
-                    _period = "2013-01-01"
-                df = fetcher.get_ohlcv(ticker, _period)
-                if df.empty or len(df) < 100:
-                    logger.warning(f"Insufficient data for {ticker}")
+                df = fetcher.get_ohlcv(ticker, fetch_start)
+                start_bar = evaluation_start_bar(df.index, period_start, WARMUP_BARS) if not df.empty else 0
+                if len(df) - start_bar < 100:
+                    logger.warning("Insufficient data after warmup for %s", ticker)
                     continue
-                result = engine.run(df, strat, ticker)
+                result = engine.run(
+                    df.iloc[start_bar - WARMUP_BARS:],
+                    strat, ticker, market, evaluation_start=WARMUP_BARS,
+                )
                 # Store in SQLite
-                result_id = self._store_result(strategy_id, result, market)
+                result_id = self._store_result(strategy_id, result, market, execution_policy)
                 result_dict = {
                     "id": result_id,
                     "strategy_name": result.strategy_name,
@@ -83,7 +75,7 @@ class BacktestService:
                 logger.error(f"Backtest failed for {strat.name}/{ticker}: {e}")
         return results
 
-    def _store_result(self, strategy_id: int, result, market: str) -> int:
+    def _store_result(self, strategy_id: int, result, market: str, execution_policy: dict | None = None) -> int:
         """Insert BacktestResult into backtest_results table."""
         try:
             from utils.config_loader import load_config
@@ -93,6 +85,8 @@ class BacktestService:
             )
         except Exception:
             validation_policy = {}
+        if execution_policy is not None:
+            validation_policy = {**validation_policy, "execution": execution_policy}
 
         with get_db() as db:
             cursor = db.execute(

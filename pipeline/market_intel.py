@@ -3,10 +3,12 @@
 import hashlib
 import json
 import logging
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from llm.client import create_llm_client
 from llm.prompts import MARKET_INTEL_PROMPT, MARKET_INTEL_US_PROMPT
+from llm.selection_experiment import attach_production_scan, capture_packet, utc_now
 from market_data.fdr_fetcher import FDRFetcher
 from market_data.krx_fetcher import KRXFetcher
 from pipeline.web_search import WebSearcher
@@ -132,9 +134,19 @@ class MarketIntelScanner:
             scan_type_label=label,
             search_results=search_text,
         )
+        messages = [{"role": "user", "content": prompt}]
+        packet_id = None
+        try:
+            packet_id = capture_packet(
+                captured_at=utc_now(), market=market, scan_type=scan_type, articles=search_results,
+                messages=messages, temperature=0.2, max_tokens=4096,
+                production_model=self.llm._resolve_model("lite"), detection_date=now.date(),
+            )
+        except (sqlite3.Error, OSError, TypeError, ValueError):
+            logger.warning("Frozen market-intel packet could not be saved", exc_info=True)
         try:
             raw_response = self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 model="lite",
                 temperature=0.2,
                 max_tokens=4096,
@@ -142,13 +154,13 @@ class MarketIntelScanner:
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             return self._save_scan(scan_time, scan_type, status="failed",
-                                   error=str(e))
+                                   error=str(e), packet_id=packet_id)
 
         # Step 4: Parse JSON
         issues = self._parse_response(raw_response)
         if issues is None:
             return self._save_scan(scan_time, scan_type, raw_response=raw_response,
-                                   status="failed", error="JSON parse error")
+                                   status="failed", error="JSON parse error", packet_id=packet_id)
 
         # Step 5: Validate tickers (KRX only - US tickers don't need KRX validation)
         if market == "KRX":
@@ -160,7 +172,7 @@ class MarketIntelScanner:
 
         # Step 7: Save to DB
         result = self._save_scan_with_issues(
-            scan_time, scan_type, raw_response, issues, now.strftime("%Y-%m-%d")
+            scan_time, scan_type, raw_response, issues, now.strftime("%Y-%m-%d"), packet_id=packet_id,
         )
 
         # Step 8: Discord alert
@@ -280,7 +292,7 @@ class MarketIntelScanner:
         return issues
 
     def _save_scan(self, scan_time, scan_type, raw_response=None,
-                   status="success", error=None) -> dict:
+                   status="success", error=None, packet_id=None) -> dict:
         """Save scan record only (no issues)."""
         with get_db() as conn:
             cur = conn.execute(
@@ -292,11 +304,12 @@ class MarketIntelScanner:
                  raw_response, status, error),
             )
             scan_id = cur.lastrowid
+            self._attach_packet(conn, packet_id, scan_id)
         return {"scan_id": scan_id, "issues_count": 0, "tickers_count": 0,
                 "status": status}
 
     def _save_scan_with_issues(self, scan_time, scan_type, raw_response,
-                                issues, detection_date) -> dict:
+                                issues, detection_date, packet_id=None) -> dict:
         """Save scan + issues to DB."""
         status = "success" if issues else "partial"
 
@@ -314,6 +327,7 @@ class MarketIntelScanner:
                  raw_response, status),
             )
             scan_id = cur.lastrowid
+            self._attach_packet(conn, packet_id, scan_id)
 
             for issue in issues:
                 title = issue.get("title", "")
@@ -389,6 +403,13 @@ class MarketIntelScanner:
             "tickers_count": inserted_tickers,
             "status": status,
         }
+
+    @staticmethod
+    def _attach_packet(conn, packet_id, scan_id):
+        try:
+            attach_production_scan(conn, packet_id, scan_id)
+        except sqlite3.Error:
+            logger.warning("Frozen packet could not be linked to production scan %s", scan_id, exc_info=True)
 
     def _send_discord_alert(self, issues, scan_time, scan_type, label):
         """Send market intel alert to Discord."""

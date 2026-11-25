@@ -109,7 +109,7 @@ def download_yahoo_ohlcv(
     symbol, best = max(downloads, key=lambda item: len(item[1]))
     best = best.copy()
     best.index.name = "Date"
-    best.attrs["symbol"] = symbol
+    best.attrs.update(source="yfinance", symbol=symbol)
     return best
 
 
@@ -159,6 +159,7 @@ class KRXFetcher:
             try:
                 df = kis.get_daily_ohlcv(ticker, start_fmt, end_fmt)
                 if not df.empty:
+                    df.attrs.update(source="kis", symbol=ticker)
                     return df
                 logger.warning(f"KIS returned empty OHLCV for {ticker}, trying yfinance")
             except Exception as e:
@@ -183,6 +184,7 @@ class KRXFetcher:
             if not df.empty:
                 df.columns = ["Open", "High", "Low", "Close", "Volume", "Change"]
                 df.index.name = "Date"
+                df.attrs.update(source="pykrx", symbol=ticker)
                 return df[["Open", "High", "Low", "Close", "Volume"]]
         except Exception as e:
             logger.warning(f"pykrx fallback also failed for {ticker}: {e}")
