@@ -25,6 +25,9 @@ NAVER_TREND = "https://m.stock.naver.com/front-api/stock/domestic/trend"
 DART_SEARCH = "https://opendart.fss.or.kr/api/list.json"
 DART_CORPS = "https://opendart.fss.or.kr/api/corpCode.xml"
 DART_ACCOUNTS = "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
+NAVER_BASIC = "https://m.stock.naver.com/api/stock/{ticker}/basic"
+NAVER_CHART = "https://fchart.stock.naver.com/sise.nhn"
+KRX_INDICES = {"KS": ("^KS11", "KOSPI"), "KQ": ("^KQ11", "KOSDAQ")}
 KIS_FLOW_PATH = "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily"
 SEC_ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
 SECTOR_ETF = {
@@ -105,9 +108,8 @@ def _kis_rows(payload: dict) -> dict:
         close, volume = number(item.get("stck_clpr")), number(item.get("acml_vol"))
         if None in values or close is None or volume is None or close <= 0 or volume <= 0:
             continue
-        # The endpoint reports million KRW. Reject values inconsistent with the
-        # supplied price and volume rather than mixing quote units silently.
-        foreign, institution, traded = (value * 1_000_000 for value in values)
+        # FHPTJ04160001 reports investor amounts in millions and total turnover in won.
+        foreign, institution, traded = values[0] * 1_000_000, values[1] * 1_000_000, values[2]
         if not .5 <= traded / (close * volume) <= 1.5:
             continue
         day = f"{session[:4]}-{session[4:6]}-{session[6:]}"
@@ -437,10 +439,45 @@ class ShadowSources:
         # yfinance may make internal cookie or crumb requests, which this call cannot instrument.
         return value, 1
 
+    def _krx_board(self, symbol: str) -> str | None:
+        code, _, board = symbol.partition(".")
+        if board in KRX_INDICES:
+            return board
+        if not re.fullmatch(r"[0-9]{6}", code):
+            return None
+        response = self.http.get(NAVER_BASIC.format(ticker=code), timeout=8)
+        response.raise_for_status()
+        info = response.json()
+        if info.get("itemCode") == code:
+            return (info.get("stockExchangeType") or {}).get("code")
+        return None
+
+    def _krx_index_return(self, index: str, first: str, last: str) -> float | None:
+        key = index, first, last
+        if key not in self.benchmark_cache:
+            response = self.http.get(NAVER_CHART, params={
+                "symbol": index, "timeframe": "day", "count": 30, "requestType": 0,
+            }, timeout=8)
+            response.raise_for_status()
+            root = ET.fromstring(response.content.decode("euc-kr"))
+            chart = root.find(".//chartdata")
+            prices = {}
+            if chart is not None and chart.get("symbol") == index:
+                for item in chart.iter("item"):
+                    fields = item.get("data", "").split("|")
+                    if len(fields) >= 5:
+                        prices[fields[0]] = number(fields[4])
+            start, end = (prices.get(day.replace("-", "")) for day in (first, last))
+            value = end / start - 1 if start and start > 0 and end and end > 0 else None
+            self.benchmark_cache[key] = value
+        return self.benchmark_cache[key]
+
     def relative_strength(self, market: str, features: dict) -> Observation:
         sessions = features.get("return_sessions", [])
         if len(sessions) != 2:
             return Observation("missing", {"reason": "insufficient_aligned_sessions"}, 0)
+        benchmark_source = "yfinance"
+        benchmark_fetches = 0
         if market == "US":
             sector = features.get("sector") or ""
             asset = SECTOR_ETF.get(sector.casefold())
@@ -448,14 +485,25 @@ class ShadowSources:
             if not asset:
                 return Observation("missing", {"reason": "sector_metadata_unavailable", "sector": sector}, 0)
             asset_return, asset_fetches = self._benchmark_return(asset, *sessions)
+            benchmark_return, benchmark_fetches = self._benchmark_return(benchmark, *sessions)
         else:
-            asset = features.get("symbol")
-            benchmark = "^KQ11" if str(asset).endswith(".KQ") else "^KS11"
+            asset = features.get("symbol") or ""
+            board = self._krx_board(asset)
+            if board not in KRX_INDICES:
+                return Observation("missing", {"asset": asset, "reason": "unverified_krx_board", "sessions": sessions})
+            benchmark, index = KRX_INDICES[board]
             asset_return = features.get("stock_return_5d")
             asset_fetches = 0
-        benchmark_return, benchmark_fetches = self._benchmark_return(benchmark, *sessions)
+            try:
+                benchmark_return = self._krx_index_return(index, *sessions)
+            except (requests.RequestException, ET.ParseError, UnicodeError):
+                benchmark_return = None
+            if benchmark_return is None:
+                benchmark_return, benchmark_fetches = self._benchmark_return(benchmark, *sessions)
+            else:
+                benchmark_source = "naver_index_chart"
         details = {
-            "asset": asset, "benchmark": benchmark, "sessions": sessions, "source": "yfinance",
+            "asset": asset, "benchmark": benchmark, "sessions": sessions, "source": benchmark_source,
             "asset_return_5d": asset_return, "benchmark_return_5d": benchmark_return,
             "symbol_history_calls": asset_fetches + benchmark_fetches,
         }

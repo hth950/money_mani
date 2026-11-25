@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import pytest
 
-from market_data.selection_shadow_sources import Observation, _annual_sec_margin, _dart_annual_roe, _kis_rows, _naver_rows, flow_window
+from market_data.selection_shadow_sources import Observation, ShadowSources, _annual_sec_margin, _dart_annual_roe, _kis_rows, _naver_rows, flow_window
 from pipeline import selection_shadow as shadow
 from web.db import connection
 from web.services.decision_label_service import exchange_schedule
@@ -105,7 +105,7 @@ def test_novelty_dedup_and_zero_coverage(db_path):
 def test_flow_requires_exact_sessions_and_preserves_native_vs_proxy():
     dates = [f"2026-11-{day:02}" for day in range(16, 21)]
     kis = _kis_rows({"output2": [{"stck_bsop_date": day.replace("-", ""), "stck_clpr": "10000",
-                                 "acml_vol": "10000", "acml_tr_pbmn": "100", "frgn_ntby_tr_pbmn": "2",
+                                 "acml_vol": "10000", "acml_tr_pbmn": "100000000", "frgn_ntby_tr_pbmn": "2",
                                  "orgn_ntby_tr_pbmn": "-1"} for day in dates]})
     naver = _naver_rows({"result": {"items": [{"localTradedAt": day, "krx": {
         "regularMarketClosingPrice": "10,000", "closingPrice": "9,876", "tradingVolume": "10,000",
@@ -130,3 +130,35 @@ def test_financial_ratios_require_same_accession_period_and_currency():
             {**report, "account_id": "ifrs-full_ProfitLoss", "thstrm_amount": "-100"}]
     assert _dart_annual_roe(rows, "file")["value"] == -.1
     assert _dart_annual_roe([{**rows[0], "currency": "USD"}, rows[1]], "file") is None
+
+
+def test_krx_relative_strength_uses_verified_board_and_only_requested_closes(monkeypatch):
+    from types import SimpleNamespace
+
+    sources = ShadowSources()
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(url)
+        if url.endswith("/basic"):
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {
+                "itemCode": "247540", "stockExchangeType": {"code": "KQ"}})
+        assert kwargs["params"]["symbol"] == "KOSDAQ"
+        return SimpleNamespace(raise_for_status=lambda: None, content=(
+            '<root><chartdata symbol="KOSDAQ"><item data="20261117|0|0|0|100"/>'
+            '<item data="20261124|0|0|0|105"/><item data="20261125|0|0|0|300"/></chartdata></root>'
+        ).encode("euc-kr"))
+
+    monkeypatch.setattr(sources.http, "get", get)
+    monkeypatch.setattr(sources, "_benchmark_return", lambda *args: (None, 1))
+    features = {"symbol": "247540", "return_sessions": ["2026-11-17", "2026-11-24"], "stock_return_5d": .08}
+    result = sources.relative_strength("KRX", features)
+    assert result.details["relative_strength"] == pytest.approx(.03)
+    assert result.details["benchmark"] == "^KQ11"
+    assert result.details["source"] == "naver_index_chart"
+    cached = sources.relative_strength("KRX", {**features, "symbol": "247540.KQ"})
+    assert cached.details["relative_strength"] == result.details["relative_strength"]
+    assert len(calls) == 2
+    misaligned = {**features, "return_sessions": ["2026-11-18", "2026-11-24"]}
+    assert sources.relative_strength("KRX", misaligned).status == "missing"
+    assert sources.relative_strength("KRX", {**features, "symbol": "123456"}).details["reason"] == "unverified_krx_board"

@@ -378,8 +378,11 @@ def collect_pending(config=None) -> dict:
                     return summary
                 details = {**result.details, "started_at": started_at.isoformat()}
                 request_count = sources.request_count - previous_request_count
-                if provider.endswith("relative_strength"):
-                    request_count = 0 if details.get("symbol_history_calls") == 0 else result.request_count
+                if provider.endswith("relative_strength") and (
+                    details.get("symbol_history_calls", 0) or result.status == "error"
+                ):
+                    # yfinance does not expose its internal HTTP request count.
+                    request_count = None
                 sessions = details.get("sessions") or []
                 as_of_session = sessions[-1] if sessions else None
                 with get_db() as db:
